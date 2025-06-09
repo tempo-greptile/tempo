@@ -10,6 +10,8 @@ anyhow = "1.0.98"
 tokio = { version = "1.45.1", features = ["full"] }
 serde_json = "1.0.140"
 eyre = "0.6.12"
+serde = {version = "1.0.219", features = ["derive"]}
+rand = "0.9.1"
 
 # Reth dependencies
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-node-builder" }
@@ -18,6 +20,7 @@ reth-chainspec = { git = "https://github.com/paradigmxyz/reth", branch = "main",
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-ethereum-primitives" }
 reth-consensus= { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-consensus" }
 reth-ethereum = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-ethereum" }
+reth-primitives = { git = "https://github.com/paradigmxyz/reth", branch = "main", package = "reth-primitives" }
 
 # Alloy dependencies
 alloy = { version = "1.0.9", default-features = false }
@@ -26,4 +29,3 @@ alloy = { version = "1.0.9", default-features = false }
 malachite-core-types = { git = "https://github.com/informalsystems/malachite", branch = "main", package = "informalsystems-malachitebft-core-types" }
 malachitebft-app-channel = { git = "https://github.com/informalsystems/malachite", branch = "main", package = "informalsystems-malachitebft-app-channel" }
 malachitebft-proto = { git = "https://github.com/informalsystems/malachite", branch = "main", package = "informalsystems-malachitebft-proto" }
-malachitebft-test = { git = "https://github.com/informalsystems/malachite", branch = "main", package = "informalsystems-malachitebft-test" }
