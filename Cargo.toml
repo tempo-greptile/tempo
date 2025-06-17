@@ -49,5 +49,8 @@ alloy-consensus = "1.0.9"
 
 # Malachite dependencies
 malachite-core-types = { git = "https://github.com/informalsystems/malachite", branch = "main", package = "informalsystems-malachitebft-core-types" }
-malachitebft-app-channel = { git = "https://github.com/informalsystems/malachite", branch = "main", package = "informalsystems-malachitebft-app-channel" }
-malachitebft-proto = { git = "https://github.com/informalsystems/malachite", branch = "main", package = "informalsystems-malachitebft-proto" }
+malachite-app-channel = { git = "https://github.com/exdx/malachite", branch = "no-dns", package = "informalsystems-malachitebft-app-channel" }
+malachite-proto = { git = "https://github.com/informalsystems/malachite", branch = "main", package = "informalsystems-malachitebft-proto" }
+# malachitebft-app = { git = "https://github.com/informalsystems/malachite", branch = "main", package = "informalsystems-malachitebft-app" }
+# malachitebft-engine = { git = "https://github.com/informalsystems/malachite", branch = "main", package = "informalsystems-malachitebft-engine" }
+# malachitebft-config = { git = "https://github.com/informalsystems/malachite", branch = "main", package = "informalsystems-malachitebft-config" }
