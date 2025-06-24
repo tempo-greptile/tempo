@@ -21,7 +21,6 @@
 //! - **`State`**: The core application state that manages the current blockchain state,
 //!   handles block proposals, and interfaces with Reth's storage layer
 //! - **`node`**: Defines the `RethNode` type that integrates with Reth's node infrastructure
-//! - **`run`**: Contains the main application loop that processes consensus messages
 //!
 //! ## Consensus Interface
 //!
@@ -41,7 +40,6 @@
 //! - Utilizes Reth's EVM for transaction execution
 
 pub mod node;
-pub mod run;
 pub mod state;
 
 // Re-export commonly used types from state module
