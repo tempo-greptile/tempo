@@ -14,12 +14,12 @@ use malachitebft_app_channel::app::types::{
 use malachitebft_core_types::{CommitCertificate, Height as HeightTrait, Round, VoteExtensions};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
-use reth::payload::PayloadBuilderHandle;
-use reth_ethereum_engine_primitives::EthPayloadTypes;
+use reth_engine_primitives::BeaconConsensusEngineHandle;
+use reth_node_builder::NodeTypes;
+use reth_node_ethereum::EthereumNode;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
-use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::info;
 
@@ -42,14 +42,18 @@ pub struct State {
     pub streams_map: PartStreamsMap,
     pub rng: StdRng,
 
-    // Handle to the payload builder service
-    pub engine_handle: PayloadBuilderHandle<EthPayloadTypes>,
+    // Handle to the beacon consensus engine
+    pub engine_handle: BeaconConsensusEngineHandle<<EthereumNode as NodeTypes>::Payload>,
 }
 
 impl State {
-    pub fn new(ctx: MalachiteContext, config: Config, genesis: Genesis, address: Address) -> Self {
-        let (tx, _rx) = mpsc::unbounded_channel();
-
+    pub fn new(
+        ctx: MalachiteContext,
+        config: Config,
+        genesis: Genesis,
+        address: Address,
+        engine_handle: BeaconConsensusEngineHandle<<EthereumNode as NodeTypes>::Payload>,
+    ) -> Self {
         Self {
             ctx,
             config,
@@ -64,7 +68,7 @@ impl State {
             signing_provider: Ed25519Provider::new_test(),
             streams_map: PartStreamsMap::new(),
             rng: StdRng::seed_from_u64(seed_from_address(&address, std::process::id() as u64)),
-            engine_handle: PayloadBuilderHandle::new(tx),
+            engine_handle,
         }
     }
 
