@@ -72,26 +72,49 @@ pub use node::{ConsensusHandle, MalachiteNode};
 /// * `home_dir` - Directory for storing consensus data
 ///
 /// # Returns
-/// A handle to the running consensus engine
+/// A handle to the running consensus engine with app handler task
 pub async fn start_consensus_engine(
     app_state: State,
     config: EngineConfig,
     home_dir: PathBuf,
-) -> Result<ConsensusHandle> {
+) -> Result<AppHandle> {
     info!(
         "Starting Malachite consensus engine for chain {}",
         config.network.chain_id
     );
 
     // Create the node implementation
-    let node = MalachiteNode::new(config, home_dir, app_state);
+    let node = MalachiteNode::new(config, home_dir.clone(), app_state.clone());
 
     // Start the consensus engine
-    let handle = node.start().await?;
+    let mut handle = node.start().await?;
 
     info!("Malachite consensus engine started successfully");
 
-    Ok(handle)
+    // Spawn the application handler task
+    let app_handle = tokio::spawn(async move {
+        info!("Starting consensus handler loop");
+        if let Err(e) = handler::run_consensus_handler(&app_state, &mut handle.channels).await {
+            tracing::error!(%e, "Consensus handler error");
+        }
+        info!("Consensus handler loop ended");
+    });
+
+    Ok(AppHandle {
+        app: app_handle,
+        engine: handle.engine,
+        tx_event: handle.tx_event,
+    })
+}
+
+/// Handle returned by start_consensus_engine
+pub struct AppHandle {
+    /// Application task handle
+    pub app: tokio::task::JoinHandle<()>,
+    /// Engine handle from Malachite
+    pub engine: malachitebft_app::node::EngineHandle,
+    /// Event transmitter
+    pub tx_event: malachitebft_app::events::TxEvent<crate::context::MalachiteContext>,
 }
 
 /// Creates a default engine configuration

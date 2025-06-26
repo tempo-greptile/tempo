@@ -18,7 +18,6 @@ use malachitebft_app::{
 };
 use rand::{CryptoRng, RngCore};
 use std::path::PathBuf;
-use tokio::task::JoinHandle;
 
 /// Implementation of Malachite's Node trait for reth-malachite
 #[derive(Clone)]
@@ -53,8 +52,8 @@ impl MalachiteNode {
 
 /// Handle for the running consensus node
 pub struct ConsensusHandle {
-    /// Application task handle
-    pub app: JoinHandle<()>,
+    /// Channels for communicating with consensus
+    pub channels: malachitebft_app_channel::Channels<MalachiteContext>,
     /// Engine handle from Malachite
     pub engine: EngineHandle,
     /// Event transmitter
@@ -69,7 +68,6 @@ impl NodeHandle<MalachiteContext> for ConsensusHandle {
 
     async fn kill(&self, _reason: Option<String>) -> eyre::Result<()> {
         self.engine.actor.kill_and_wait(None).await?;
-        self.app.abort();
         self.engine.handle.abort();
         Ok(())
     }
@@ -164,7 +162,12 @@ impl Node for MalachiteNode {
 
         // Start the Malachite consensus engine
         let start_height = self.config.start_height.map(crate::height::Height);
-        let (mut channels, engine_handle) = malachitebft_app_channel::start_engine(
+        tracing::info!(
+            "Starting Malachite engine with start_height={:?}",
+            start_height
+        );
+
+        let (channels, engine_handle) = malachitebft_app_channel::start_engine(
             ctx.clone(),
             self.clone(),
             config,                   // Convert to Malachite's config type
@@ -175,26 +178,28 @@ impl Node for MalachiteNode {
         )
         .await?;
 
+        tracing::info!("Malachite engine started, channels created");
         let tx_event = channels.events.clone();
 
-        // Spawn the application handler task
-        let app_state = self.app_state.clone();
-        let app_handle = tokio::spawn(async move {
-            if let Err(e) = super::handler::run_consensus_handler(&app_state, &mut channels).await {
-                tracing::error!(%e, "Consensus handler error");
-            }
-        });
-
         Ok(ConsensusHandle {
-            app: app_handle,
+            channels,
             engine: engine_handle,
             tx_event,
         })
     }
 
     async fn run(self) -> eyre::Result<()> {
-        let handle = self.start().await?;
-        handle.app.await.map_err(Into::into)
+        let mut handle = self.start().await?;
+
+        // Run the consensus handler
+        let app_state = self.app_state.clone();
+        if let Err(e) =
+            super::handler::run_consensus_handler(&app_state, &mut handle.channels).await
+        {
+            tracing::error!(%e, "Consensus handler error");
+        }
+
+        Ok(())
     }
 }
 

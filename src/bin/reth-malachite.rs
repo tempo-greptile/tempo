@@ -163,14 +163,14 @@ fn main() -> eyre::Result<()> {
             );
 
             // Start the Malachite consensus engine
-            let consensus_handle = start_consensus_engine(state, engine_config, home_dir).await?;
+            let app_handle = start_consensus_engine(state, engine_config, home_dir).await?;
 
             // Wait for the node to exit
             tokio::select! {
                 _ = node_exit_future => {
                     tracing::info!("Reth node exited");
                 }
-                _ = consensus_handle.app => {
+                _ = app_handle.app => {
                     tracing::info!("Consensus engine exited");
                 }
                 _ = tokio::signal::ctrl_c() => {
