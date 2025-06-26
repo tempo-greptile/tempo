@@ -139,11 +139,9 @@ impl Node for MalachiteNode {
 
     fn get_signing_provider(
         &self,
-        _private_key: malachitebft_core_types::PrivateKey<MalachiteContext>,
+        private_key: malachitebft_core_types::PrivateKey<MalachiteContext>,
     ) -> Self::SigningProvider {
-        // Convert malachitebft_core_types::PrivateKey to our LocalPrivateKey
-        // For now, this is a placeholder
-        Ed25519Provider::new_test()
+        Ed25519Provider::new(private_key)
     }
 
     fn load_genesis(&self) -> eyre::Result<Self::Genesis> {
@@ -151,12 +149,14 @@ impl Node for MalachiteNode {
     }
 
     async fn start(&self) -> eyre::Result<ConsensusHandle> {
+        tracing::info!(
+            "Starting Malachite consensus engine with chain_id={}, node_id={}, home_dir={:?}",
+            self.config.network.chain_id,
+            self.config.node.moniker,
+            self.home_dir
+        );
+
         let config = self.load_config()?;
-        let private_key_file = self.load_private_key_file()?;
-        let private_key = self.load_private_key(private_key_file);
-        let public_key = self.get_public_key(&private_key);
-        let _address = self.get_address(&public_key);
-        let _signing_provider = self.get_signing_provider(private_key);
         let ctx = self.app_state.ctx.clone();
 
         let _genesis = self.load_genesis()?;
