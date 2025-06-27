@@ -2,6 +2,13 @@
 
 This directory contains scripts and configurations for running a local test network of reth-malachite nodes.
 
+## Prerequisites
+
+The testnet scripts require the following tools:
+- `openssl` - For generating validator keys
+- `xxd` - For hex encoding/decoding
+- `jq` or `python3` - For JSON processing in genesis generation
+
 ## Quick Start
 
 ```bash
@@ -50,7 +57,8 @@ testnet/
 │   └── template.toml    # Node configuration template
 ├── scripts/
 │   ├── generate_keys.sh # Generate validator keys
-│   └── generate_genesis.sh # Create genesis file
+│   ├── generate_genesis.sh # Create genesis file
+│   └── monitor.sh       # Real-time network monitoring
 └── nodes/               # Runtime directory (created on launch)
     ├── node0/
     ├── node1/
@@ -67,12 +75,26 @@ Each node uses the following ports (base + node_id):
 | Metrics | 9000 | 9000 | 9001 | 9002 | 9003 |
 | Reth P2P | 30303 | 30303 | 30304 | 30305 | 30306 |
 | Reth HTTP RPC | 8545 | 8545 | 8546 | 8547 | 8548 |
-| Reth WS RPC | 8546 | 8546 | 8547 | 8548 | 8549 |
 | Engine API | 8551 | 8551 | 8552 | 8553 | 8554 |
 
 ## Monitoring
 
-### View Logs
+### Using the Monitor Script
+The testnet includes a monitoring script that provides real-time network status:
+
+```bash
+# Start monitoring
+./scripts/monitor.sh
+
+# The monitor displays:
+# - Node status (running/stopped)
+# - Current block height
+# - Peer connections
+# - Consensus activity
+# - Recent logs
+```
+
+### View Logs Manually
 ```bash
 # Follow a specific node
 tail -f nodes/node0/node.log
