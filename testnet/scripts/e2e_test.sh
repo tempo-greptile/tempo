@@ -190,7 +190,8 @@ while true; do
         port=$((8545 + i))
         height=$(check_block_height $port)
         
-        if [ $height -gt 0 ]; then
+        # Check if we got a valid response (height will be -1 if no response)
+        if [ $height -ge 0 ]; then
             responsive_nodes=$((responsive_nodes + 1))
             printf "Node %d: block %3d | " "$i" "$height"
             
