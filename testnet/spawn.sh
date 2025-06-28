@@ -56,8 +56,9 @@ cleanup() {
     kill_reth_processes
     
     if [ "$1" == "clean" ]; then
-        log "Removing nodes directory..."
+        log "Removing nodes and logs directories..."
         rm -rf "$NODES_DIR"
+        rm -rf "$SCRIPT_DIR/logs"
         log "Clean complete"
         exit 0
     fi
@@ -99,6 +100,11 @@ fi
 # Clean and create nodes directory
 rm -rf "$NODES_DIR"
 mkdir -p "$NODES_DIR"
+
+# Create centralized logs directory
+LOGS_DIR="$SCRIPT_DIR/logs"
+rm -rf "$LOGS_DIR"
+mkdir -p "$LOGS_DIR"
 
 # Generate keys for all nodes
 log "Generating validator keys..."
@@ -156,7 +162,9 @@ done
 log "Launching nodes..."
 for ((i=0; i<$NUM_NODES; i++)); do
     NODE_DIR="$NODES_DIR/node$i"
-    LOG_FILE="$NODE_DIR/node.log"
+    NODE_LOG_DIR="$LOGS_DIR/$i"
+    mkdir -p "$NODE_LOG_DIR"
+    LOG_FILE="$NODE_LOG_DIR/console.log"
     
     log "Starting node$i..."
     
@@ -176,7 +184,7 @@ for ((i=0; i<$NUM_NODES; i++)); do
         --http.port $((RETH_RPC_PORT_BASE + i)) \
         --authrpc.port $((AUTH_RPC_PORT_BASE + i)) \
         --metrics $((METRICS_PORT_BASE + i)) \
-        --log.file.directory "$NODE_DIR/logs" \
+        --log.file.directory "$NODE_LOG_DIR" \
         --ipcdisable \
         --malachite-home "$NODE_DIR/malachite" \
         --consensus-config "$NODE_DIR/malachite/config/malachite.toml" \
@@ -194,11 +202,12 @@ done
 
 # Monitor nodes
 log "All nodes started. Press Ctrl+C to stop the network."
-log "Logs can be found in $NODES_DIR/node*/node.log"
+log "Logs can be found in $LOGS_DIR/*/"
 log ""
 log "Useful commands:"
-log "  tail -f $NODES_DIR/node0/node.log    # Follow node0 logs"
-log "  tail -f $NODES_DIR/node*/node.log    # Follow all logs"
+log "  tail -f $LOGS_DIR/0/console.log     # Follow node0 console output"
+log "  tail -f $LOGS_DIR/*/console.log     # Follow all console logs"
+log "  tail -f $LOGS_DIR/0/reth.log        # Follow node0 debug logs"
 log ""
 
 # Wait for interrupt

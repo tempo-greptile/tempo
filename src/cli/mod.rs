@@ -84,13 +84,6 @@ where
         ) -> Fut,
         Fut: std::future::Future<Output = eyre::Result<()>>,
     {
-        // Add network name if available to the logs dir
-        if let Some(chain_spec) = self.command.chain_spec() {
-            self.logs.log_file_directory = self
-                .logs
-                .log_file_directory
-                .join(chain_spec.chain().to_string());
-        }
 
         let _guard = self.init_tracing()?;
         tracing::info!(target: "malachite::cli", "Initialized tracing, debug log directory: {}", self.logs.log_file_directory);
