@@ -2,6 +2,68 @@
 
 This document describes the communication architecture between Malachite consensus and Reth execution engine in the reth-malachite implementation.
 
+## Architecture Diagram
+
+```mermaid
+graph TB
+    subgraph "P2P Network"
+        P1[Peer 1]
+        P2[Peer 2]
+        P3[Peer N]
+    end
+
+    subgraph "Malachite Node"
+        subgraph "Consensus Layer (Malachite)"
+            CE[Consensus Engine]
+            VM[Validator Management]
+            PS[Proposal Streaming]
+        end
+
+        subgraph "Integration Layer"
+            CH[Consensus Handler]
+            S[State]
+            CS[Consensus Store]
+        end
+
+        subgraph "Execution Layer (Reth)"
+            EA[Engine API]
+            PB[Payload Builder]
+            TX[Transaction Pool]
+            DB[(Blockchain DB)]
+            EVM[EVM Execution]
+        end
+    end
+
+    %% Network connections
+    P1 <--> PS
+    P2 <--> PS
+    P3 <--> PS
+
+    %% Consensus to Integration
+    CE <--> CH
+    VM --> CH
+    PS <--> S
+
+    %% Integration components
+    CH <--> S
+    S <--> CS
+    S <--> EA
+    S <--> PB
+
+    %% Execution components
+    EA <--> EVM
+    PB <--> TX
+    EVM <--> DB
+
+    %% Highlight Reth interactions
+    style EA fill:#f9f,stroke:#333,stroke-width:4px
+    style PB fill:#f9f,stroke:#333,stroke-width:4px
+    
+    %% Labels
+    S -.- |"GetValue<br/>Decided<br/>ProcessSyncedValue"| EA
+    S -.- |"GetValue"| PB
+```
+
 ## Overview
 
 The architecture follows a Tendermint-like pattern with ABCI-style separation:
@@ -35,31 +97,13 @@ In this architecture:
 
 ### State Structure
 
-```rust
-pub struct State {
-    // Engine API communication
-    pub engine_handle: BeaconConsensusEngineHandle<<EthereumNode as NodeTypes>::Payload>,
+The State component manages the integration between Malachite consensus and Reth execution:
 
-    // Payload building
-    pub payload_store: Arc<PayloadStore<<EthereumNode as NodeTypes>::Payload>>,
-
-    // Storage layer
-    pub store: Arc<Store>,
-    
-    // Configuration
-    pub config: Config,
-    pub genesis: Genesis,
-    
-    // Thread-safe state
-    pub last_finalized_height: Arc<AtomicU64>,
-    pub signing_provider: Arc<Ed25519Provider>,
-    pub rng: Arc<RwLock<ThreadSafeRng>>,
-    
-    // Proposal streaming
-    pub received_parts: Arc<RwLock<ReceivedPartsMap>>,
-    pub part_streams: Arc<RwLock<PartStreamsMap>>,
-}
-```
+- **Engine Handle**: Primary communication channel to Reth via Engine API
+- **Payload Store**: Manages block building operations through Reth's payload builder
+- **Store**: Consensus-specific storage layer for decided values and proposals
+- **Consensus State**: Tracks current height, round, role, and peer information
+- **Streaming**: Handles proposal streaming between validators
 
 ## Communication Flows
 
@@ -85,39 +129,12 @@ sequenceDiagram
     S-->>M: LocallyProposedValue
 ```
 
-**Implementation** (`State::propose_value`):
-```rust
-// 1. Prepare fork choice state
-let forkchoice_state = ForkchoiceState {
-    head_block_hash: parent_hash,
-    safe_block_hash: parent_hash,
-    finalized_block_hash: self.get_finalized_hash().await?,
-};
-
-// 2. Prepare payload attributes
-let payload_attrs = PayloadAttributes {
-    timestamp: current_timestamp(),
-    prev_randao: B256::ZERO,
-    suggested_fee_recipient: self.config.fee_recipient,
-    withdrawals: Some(vec![]),
-    parent_beacon_block_root: Some(B256::ZERO),
-};
-
-// 3. Send FCU to trigger building
-let fcu_response = self.engine_handle.fork_choice_updated(
-    forkchoice_state,
-    Some(payload_attrs),
-    EngineApiMessageVersion::V3,
-).await?;
-
-// 4. Get built payload (Reth has selected and ordered txs)
-let payload = self.payload_store
-    .resolve_kind(fcu_response.payload_id.unwrap(), PayloadKind::WaitForPending)
-    .await?;
-
-// 5. Store proposal for restreaming
-self.store.store_built_proposal(height, round, value_id, value.clone()).await?;
-```
+**Key Steps**:
+1. Get parent block information to ensure monotonic timestamp increase
+2. Prepare payload attributes with fee recipient and required post-merge fields
+3. Call `fork_choice_updated` with attributes to trigger Reth's payload building
+4. Use payload store to wait for and retrieve the built block
+5. Store the proposal locally for potential restreaming to other validators
 
 ### 2. Block Finalization Flow
 
@@ -138,32 +155,12 @@ sequenceDiagram
     S-->>M: Ok(())
 ```
 
-**Implementation** (`State::commit`):
-```rust
-// 1. Validate the block
-let payload = block_to_payload(sealed_block);
-let payload_status = self.engine_handle.new_payload(payload).await?;
-
-if payload_status.status != PayloadStatusEnum::Valid {
-    return Err(eyre::eyre!("Invalid payload: {:?}", payload_status));
-}
-
-// 2. Update fork choice (instant finality)
-let forkchoice_state = ForkchoiceState {
-    head_block_hash: block_hash,
-    safe_block_hash: block_hash,      // Same due to instant finality
-    finalized_block_hash: block_hash,  // Same due to instant finality
-};
-
-self.engine_handle.fork_choice_updated(
-    forkchoice_state,
-    None,  // No new payload to build
-    EngineApiMessageVersion::V3,
-).await?;
-
-// 3. Store decided value
-self.store.store_decided_value(certificate, value).await?;
-```
+**Key Steps**:
+1. Find the proposal matching the decided value_id from undecided proposals
+2. Store the decision certificate with the value for persistence
+3. Validate the block through `new_payload` to ensure execution correctness
+4. Update fork choice to make the block canonical in Reth
+5. Due to instant finality in Malachite, head = safe = finalized block
 
 ### 3. Sync Block Validation Flow
 
@@ -184,35 +181,11 @@ sequenceDiagram
     S-->>P: Ok(())
 ```
 
-**Implementation** (`State::validate_synced_block`):
-```rust
-pub async fn validate_synced_block(
-    &self,
-    certificate: CommitCertificate<MalachiteContext>,
-    block: Block,
-) -> Result<()> {
-    // Validate execution
-    let sealed_block = SealedBlock::seal_slow(block.clone());
-    let payload = block_to_payload(sealed_block);
-    let payload_status = self.engine_handle.new_payload(payload).await?;
-
-    if payload_status.status != PayloadStatusEnum::Valid {
-        return Err(eyre::eyre!("Invalid synced block: {:?}", payload_status));
-    }
-
-    // Store proposal for potential restreaming
-    let value = Value::new(block);
-    let value_id = value.id();
-    self.store.store_synced_proposal(
-        height, round, proposer, value_id, value.clone()
-    ).await?;
-
-    // Store for later finalization
-    self.store.store_decided_value(certificate, value).await?;
-
-    Ok(())
-}
-```
+**Key Steps**:
+1. Convert synced block to execution payload format
+2. Call `new_payload` to validate the block against Reth's execution rules
+3. Return validation result based on payload status
+4. Only proceed with storing the block if validation succeeds
 
 ### 4. Proposal Streaming Flow
 
@@ -236,48 +209,16 @@ sequenceDiagram
     S-->>R: ProposedValue
 ```
 
-**Implementation**:
-```rust
-// Streaming a proposal
-pub async fn stream_proposal(&self, height: Height, round: Round) -> Result<()> {
-    let value = self.get_proposal_for_restreaming(height, round).await?;
-    let value_bytes = encode_value(&value)?;
-    
-    // Stream header
-    let header = StreamMessage::new_header(
-        value.id(),
-        value_bytes.len(),
-        self.config.streaming_settings.chunk_size,
-    );
-    tx.send(header)?;
-    
-    // Stream chunks
-    for (i, chunk) in value_bytes.chunks(chunk_size).enumerate() {
-        let msg = StreamMessage::new_chunk(value.id(), i, chunk.to_vec());
-        tx.send(msg)?;
-    }
-}
+**Streaming Pattern**:
+- **Init**: Contains metadata (height, round, proposer, block hash)
+- **Data**: Multiple chunks containing the serialized block (32KB each)
+- **Fin**: Final message with signature for integrity verification
 
-// Receiving proposal parts
-pub async fn received_proposal_part(
-    &self,
-    height: Height,
-    round: Round,
-    part: ProposalPart,
-) -> Option<ProposedValue<MalachiteContext>> {
-    // Accumulate parts
-    let mut received_parts = self.received_parts.write().await;
-    let stream_state = received_parts.entry((height, round)).or_insert_with(...);
-    
-    match stream_state.add_part(part) {
-        StreamState::Complete(value_bytes) => {
-            let value = decode_value(&value_bytes)?;
-            Some(ProposedValue::new(height, round, validity, value))
-        }
-        StreamState::InProgress(_) => None,
-    }
-}
-```
+**Key Points**:
+- Large blocks are split into manageable chunks for network efficiency
+- Receivers accumulate parts and reassemble when complete
+- Signature verification ensures proposal integrity
+- Incomplete streams are tracked per peer with timeout handling
 
 ## Message Types
 
@@ -316,14 +257,27 @@ pub async fn received_proposal_part(
 
 Messages from Malachite to the State:
 
-1. **GetValue** - Request block proposal (triggers Reth to build payload)
-2. **Decided** - Finalize decided block
-3. **ProcessSyncedValue** - Validate synced block
-4. **GetDecidedValue** - Query decided blocks
-5. **GetValidatorSet** - Query validator information
-6. **GetMaxDecidedHeight** - Query highest decided block
+1. **GetValue** - Request block proposal ✅ **Interacts with Reth**
+   - Calls `fork_choice_updated` via Engine API to trigger payload building
+   - Uses `payload_store.resolve_kind` to wait for and retrieve the built payload
+   - Payload builder selects transactions from mempool and builds the block
+   - Returns built block wrapped as `LocallyProposedValue`
+2. **Decided** - Finalize decided block ✅ **Interacts with Reth**
+   - Calls `new_payload` via Engine API to validate block execution
+   - Calls `fork_choice_updated` to make block canonical in Reth
+   - Updates chain head, safe block, and finalized block (all same due to instant finality)
+3. **ProcessSyncedValue** - Validate synced block ✅ **Interacts with Reth**
+   - Calls `new_payload` via Engine API to validate the synced block
+   - Only stores block if Reth validation returns VALID or ACCEPTED
+   - Returns None if block is INVALID or node is still SYNCING
+4. **ConsensusReady** - Initialize consensus with starting height
+5. **StartedRound** - New round started, update internal consensus state
+6. **ExtendVote** / **VerifyVoteExtension** - Vote extension handling (not implemented)
 7. **ReceivedProposalPart** - Handle streamed proposal chunks
-8. **RestreamProposal** - Request proposal restreaming
+8. **GetValidatorSet** - Query validator information from genesis config
+9. **GetDecidedValue** - Query decided blocks from consensus store
+10. **GetHistoryMinHeight** - Query earliest available height from store
+11. **RestreamProposal** - Request proposal restreaming from store
 
 ## Store Abstraction Layer
 
@@ -331,45 +285,15 @@ The Store provides a clean abstraction for consensus data persistence:
 
 ### Store Interface
 
-```rust
-pub trait Store {
-    // Decision storage
-    async fn store_decided_value(
-        &self,
-        certificate: CommitCertificate<MalachiteContext>,
-        value: Value,
-    ) -> Result<()>;
-    
-    async fn get_decided_value(&self, height: Height) -> Result<Option<DecidedValue>>;
-    
-    // Proposal storage
-    async fn store_built_proposal(
-        &self,
-        height: Height,
-        round: Round,
-        value_id: ValueId,
-        value: Value,
-    ) -> Result<()>;
-    
-    async fn store_synced_proposal(
-        &self,
-        height: Height,
-        round: Round,
-        proposer: PublicKey,
-        value_id: ValueId,
-        value: Value,
-    ) -> Result<()>;
-    
-    async fn get_proposal_for_restreaming(
-        &self,
-        height: Height,
-        round: Round,
-    ) -> Result<Option<(PublicKey, Value)>>;
-    
-    // Validator set management
-    async fn get_validator_set(&self, height: Height) -> Result<Option<ValidatorSet>>;
-}
-```
+The Store provides persistence for consensus-specific data, separate from Reth's blockchain database:
+
+**Key Responsibilities**:
+- **Decided Values**: Store finalized blocks with their commit certificates
+- **Undecided Proposals**: Cache proposals during consensus rounds
+- **Block Data**: Store full block data indexed by hash
+- **Height Tracking**: Track minimum and maximum decided heights
+
+The Store uses Reth's database infrastructure but maintains separate tables for consensus data, ensuring clean separation between execution state and consensus metadata.
 
 ### Storage Organization
 
@@ -381,244 +305,59 @@ The Store manages:
 
 ## Thread Safety and Concurrency
 
-The State uses several thread-safety patterns:
+The integration ensures thread-safe operation across async boundaries:
 
-### Shared State Management
-
-```rust
-// Atomic values for lock-free reads
-pub last_finalized_height: Arc<AtomicU64>,
-
-// RwLock for complex state requiring consistency
-pub received_parts: Arc<RwLock<ReceivedPartsMap>>,
-pub part_streams: Arc<RwLock<PartStreamsMap>>,
-
-// Thread-safe RNG wrapper
-pub struct ThreadSafeRng(StdRng);
-unsafe impl Send for ThreadSafeRng {}
-unsafe impl Sync for ThreadSafeRng {}
-```
-
-### Concurrent Access Patterns
-
-1. **Read-heavy operations** use RwLock for optimized concurrent reads
-2. **Atomic operations** for simple numeric values like height
-3. **Arc wrapping** for shared ownership across async tasks
-4. **Explicit Send + Sync** bounds for cross-thread usage
+- **Consensus State**: Uses RwLock for concurrent read access to height, round, and role
+- **Streaming State**: Manages per-peer proposal streams with thread-safe maps
+- **Engine Communication**: Both engine handle and payload store are Arc-wrapped for safe sharing
+- **Storage Layer**: Store implementation is inherently thread-safe
 
 ## Value Encoding/Decoding
 
-Blocks are serialized using bincode for efficient binary encoding:
+The system uses different encoding strategies for different purposes:
 
-```rust
-pub fn encode_value(value: &Value) -> Result<Vec<u8>> {
-    bincode::serialize(value)
-        .map_err(|e| eyre::eyre!("Failed to encode value: {}", e))
-}
-
-pub fn decode_value(bytes: &[u8]) -> Result<Value> {
-    bincode::deserialize(bytes)
-        .map_err(|e| eyre::eyre!("Failed to decode value: {}", e))
-}
-```
-
-This encoding is used for:
-- Proposal streaming over the network
-- Storage persistence
-- Hash computation for value IDs
+- **Value Representation**: Blocks are represented by their hash (32 bytes) in consensus messages
+- **Block Serialization**: Full blocks use Ethereum's standard encoding for storage and streaming
+- **Proposal Streaming**: Blocks are chunked and streamed with metadata for efficient network transfer
+- **Storage Format**: Consensus data uses binary encoding optimized for quick retrieval
 
 ## Consensus Handler
 
-The consensus handler bridges Malachite consensus events to the application:
+The consensus handler is the main event loop that:
 
-```rust
-pub async fn run_consensus_handler(
-    mut app_rx: AppReceiver<MalachiteContext>,
-    state: Arc<State>,
-) -> Result<()> {
-    while let Some((msg, reply_tx)) = app_rx.recv().await {
-        let result = match msg {
-            AppMsg::StartedRound(h, r) => {
-                state.started_round(h, r).await.map(|_| AppResponse::StartedRound)
-            }
-            AppMsg::GetValue(h, r, timeout) => {
-                state.propose_value(h, r, timeout).await.map(AppResponse::GetValue)
-            }
-            AppMsg::ReceivedProposalPart(h, r, part) => {
-                state.received_proposal_part(h, r, part).await.map(AppResponse::ReceivedProposalPart)
-            }
-            AppMsg::Decided(cert, value_bytes) => {
-                let value = decode_value(&value_bytes)?;
-                state.commit(cert, value).await.map(|_| AppResponse::Decided)
-            }
-            AppMsg::ProcessSyncedValue(cert, value_bytes) => {
-                let value = decode_value(&value_bytes)?;
-                state.validate_synced_block(cert, value).await.map(|_| AppResponse::ProcessSyncedValue)
-            }
-            // ... other message handlers
-        };
-        
-        reply_tx.send(result)?;
-    }
-}
-```
+- Receives messages from Malachite consensus engine
+- Delegates to appropriate State methods
+- Manages async request/reply pattern
+- Handles errors and edge cases gracefully
 
-## Node Configuration and Setup
+This clean separation allows the consensus engine to remain agnostic about execution details while the State module handles all Reth-specific integration.
 
-### Custom Node Type
+## Node Configuration
 
-```rust
-#[derive(Debug, Clone, Default)]
-struct RethNode {
-    common: RethNodeCommon,
-}
+The integration configures Reth with custom components:
 
-impl NodeTypes for RethNode {
-    type Engine = MalachiteConsensusEngine;
-    // ... other associated types
-}
-```
+- **RethNode**: Custom node type that uses Malachite consensus instead of default PoS/PoW
+- **MalachiteConsensusBuilder**: Replaces standard consensus validation (blocks are validated through Malachite)
+- **Standard Reth Components**: Reuses transaction pool, networking, and execution components
 
-### Consensus Engine Builder
+This modular approach allows replacing just the consensus layer while keeping all other Reth functionality intact.
 
-```rust
-pub struct MalachiteConsensusBuilder {
-    state: Arc<State>,
-}
 
-impl ConsensusBuilder<Node> for MalachiteConsensusBuilder {
-    async fn build(self, ctx: &BuilderContext<Node>) -> eyre::Result<Arc<dyn Consensus>> {
-        Ok(Arc::new(MalachiteConsensusEngine {
-            state: self.state,
-        }))
-    }
-}
-```
+## Key Design Decisions
 
-### Payload Service Configuration
+### Instant Finality
+Malachite provides instant finality, unlike Ethereum's probabilistic finality. When a block is decided:
+- It's immediately final (no reorgs possible)
+- Fork choice update sets head = safe = finalized
+- Simplifies state management and client behavior
 
-The custom payload service integrates with Malachite's proposal system:
+### Separation of Concerns
+- **Consensus (Malachite)**: Block ordering, validator management, Byzantine fault tolerance
+- **Execution (Reth)**: Transaction execution, state management, block building
+- **Clean Interface**: Engine API provides standard separation between layers
 
-```rust
-pub struct MalachitePayloadServiceBuilder {
-    state: Arc<State>,
-}
+### Storage Architecture
+- **Reth Database**: Blockchain state, transactions, receipts
+- **Consensus Store**: Certificates, proposals, validator sets
+- **No Overlap**: Each layer manages its own data
 
-impl PayloadServiceBuilder<Node> for MalachitePayloadServiceBuilder {
-    async fn spawn_payload_service(
-        self,
-        ctx: &BuilderContext<Node>,
-    ) -> eyre::Result<PayloadBuilderHandle<EngineTypes>> {
-        // Configure payload builder with custom settings
-        let payload_builder = EthereumPayloadBuilder::new(config);
-        
-        // Spawn service
-        let service = PayloadBuilderService::new(payload_builder);
-        
-        Ok(handle)
-    }
-}
-```
-
-## State Queries
-
-### Finalization Status
-
-```rust
-// Get finalized block hash
-let finalized_hash = state.get_finalized_hash().await?;
-
-// Get last finalized height
-let height = state.last_finalized_height.load(Ordering::Relaxed);
-```
-
-### Block Queries
-
-```rust
-// Get decided block by height
-let value = state.get_decided_value(height).await?;
-
-// Get block by hash
-let block = state.provider.block_by_hash(hash)?;
-
-// Get undecided proposals
-let proposals = state.get_undecided_proposals(min_height, max_height).await?;
-```
-
-### Validator Queries
-
-```rust
-// Get validator set at height
-let validator_set = state.get_validator_set(height).await?;
-
-// Get own validator address
-let address = state.signing_provider.address();
-```
-
-## Error Handling
-
-The engine interaction includes robust error handling:
-
-1. **Invalid Payloads**
-   - Detected via `PayloadStatusEnum::Invalid`
-   - Block is rejected and not finalized
-
-2. **Engine Unavailable**
-   - Connection errors propagated as `EngineApiError`
-   - Consensus can retry or handle gracefully
-
-3. **Payload Build Timeout**
-   - Configurable timeout in `PayloadStore`
-   - Falls back to empty block if needed
-
-4. **Streaming Errors**
-   - Timeout for incomplete streams
-   - Automatic cleanup of stale streaming state
-
-## Instant Finality
-
-A key difference from standard Ethereum:
-- Malachite provides **instant finality**
-- When committing: `head = safe = finalized`
-- No need for separate finalization process
-- Simplifies fork choice updates
-
-## Configuration
-
-Engine interaction is configured through:
-
-```rust
-Config {
-    fee_recipient: Address,           // Block rewards recipient
-    engine_endpoint: String,          // Engine API endpoint
-    jwt_secret: String,               // Authentication secret
-    streaming_settings: StreamingSettings {
-        chunk_size: usize,            // Size of streaming chunks
-        timeout: Duration,            // Streaming timeout
-    },
-    // ...
-}
-```
-
-## Genesis and Validator Management
-
-The genesis configuration defines the initial validator set:
-
-```rust
-pub struct Genesis {
-    pub validators: Vec<ValidatorConfig>,
-    pub genesis_time: u64,
-    pub chain_id: String,
-}
-
-pub struct ValidatorConfig {
-    pub signing_key: String,         // Ed25519 private key
-    pub address: Address,            // Ethereum address
-    pub voting_power: u64,           // Validator weight
-}
-```
-
-Validators are managed through:
-- Ed25519 keys for consensus signing
-- Ethereum addresses for block rewards
-- Configurable voting power for weighted consensus
