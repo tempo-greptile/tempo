@@ -4,7 +4,7 @@
 
 use alloy::signers::{
     local::{MnemonicBuilder, coins_bip39::English},
-    utils::secret_key_to_address
+    utils::secret_key_to_address,
 };
 use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -68,7 +68,7 @@ fn main() -> Result<()> {
 
     // Create genesis accounts
     let mut alloc = BTreeMap::new();
-    for (_, address) in accounts.iter().enumerate() {
+    for address in accounts.iter() {
         alloc.insert(
             *address,
             GenesisAccount {
