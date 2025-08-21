@@ -64,6 +64,7 @@ where
     type Error = ERROR;
     type HaltReason = HaltReason;
 
+    #[inline]
     fn run(
         &mut self,
         evm: &mut Self::Evm,

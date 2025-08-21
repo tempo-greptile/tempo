@@ -20,6 +20,8 @@ sol! {
     }
 
     #[derive(Debug, PartialEq, Eq)]
+    #[sol(rpc)]
+    #[allow(clippy::too_many_arguments)]
     interface ITIP20 {
         // Standard token functions
         function name() external view returns (string);
@@ -135,6 +137,7 @@ sol! {
     }
 
     #[derive(Debug, PartialEq, Eq)]
+    #[sol(rpc)]
     interface IFeeManager {
         // Structs (represented as tuples in Solidity interface)
         struct Pool {
