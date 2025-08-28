@@ -1,4 +1,4 @@
-use crate::args::TempoArgs;
+use crate::{args::TempoArgs, rpc::TempoEthApiBuilder};
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
 use alloy_rpc_types_engine::{ExecutionData, PayloadAttributes};
 use reth_chainspec::{EthChainSpec, EthereumHardforks, Hardforks};
@@ -27,7 +27,7 @@ use reth_node_builder::{
 };
 use reth_node_ethereum::{
     EthEngineTypes, EthEvmConfig, EthereumEngineValidator, EthereumEngineValidatorBuilder,
-    EthereumEthApiBuilder, EthereumNetworkBuilder, EthereumPayloadBuilder,
+    EthereumNetworkBuilder, EthereumPayloadBuilder,
 };
 use reth_provider::{EthStorage, providers::ProviderFactoryBuilder};
 use reth_rpc_builder::Identity;
@@ -109,21 +109,13 @@ where
     }
 }
 
-impl<N> Default for TempoAddOns<N, EthereumEthApiBuilder, EthereumEngineValidatorBuilder>
+impl<N> Default for TempoAddOns<NodeAdapter<N>, TempoEthApiBuilder, EthereumEngineValidatorBuilder>
 where
-    N: FullNodeComponents<
-        Types: NodeTypes<
-            ChainSpec: EthereumHardforks + Clone + 'static,
-            Payload: EngineTypes<ExecutionData = ExecutionData>
-                         + PayloadTypes<PayloadAttributes = PayloadAttributes>,
-            Primitives = EthPrimitives,
-        >,
-    >,
-    EthereumEthApiBuilder: EthApiBuilder<N>,
+    N: FullNodeTypes<Types = TempoNode>,
 {
     fn default() -> Self {
         Self::new(RpcAddOns::new(
-            EthereumEthApiBuilder::default(),
+            TempoEthApiBuilder::default(),
             EthereumEngineValidatorBuilder::default(),
             BasicEngineApiBuilder::default(),
             BasicEngineValidatorBuilder::default(),
@@ -220,8 +212,7 @@ where
         MalachiteConsensusBuilder,
     >;
 
-    type AddOns =
-        TempoAddOns<NodeAdapter<N>, EthereumEthApiBuilder, EthereumEngineValidatorBuilder>;
+    type AddOns = TempoAddOns<NodeAdapter<N>, TempoEthApiBuilder, EthereumEngineValidatorBuilder>;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
         Self::components()
@@ -393,32 +384,3 @@ where
         Ok(transaction_pool)
     }
 }
-
-///// Builds [`TempoEthApi`]
-//#[derive(Debug, Default)]
-//pub struct TempoEthApiBuilder {
-//    inner: EthereumEthApiBuilder,
-//}
-//
-//impl<N> EthApiBuilder<N> for TempoEthApiBuilder
-//where
-//    N: FullNodeComponents<
-//            Types: NodeTypes<
-//                ChainSpec: EthereumHardforks + Clone + 'static,
-//                Payload: EngineTypes<ExecutionData = ExecutionData>
-//                             + PayloadTypes<PayloadAttributes = PayloadAttributes>,
-//                Primitives = EthPrimitives,
-//            >,
-//            Evm: ConfigureEvm<NextBlockEnvCtx = NextBlockEnvAttributes>,
-//        >,
-//    EthereumEthApiBuilder: EthApiBuilder<N>,
-//    EthApiError: FromEvmError<N::Evm>,
-//    EvmFactoryFor<N::Evm>: EvmFactory<Tx = TxEnv>,
-//{
-//    type EthApi = TempoEthApi<N, EthRpcConverterFor<N>>;
-//
-//    async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
-//        let eth_api_inner = self.inner.build_eth_api(ctx).await?;
-//        Ok(TempoEthApi::new(eth_api_inner))
-//    }
-//}
