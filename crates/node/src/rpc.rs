@@ -26,7 +26,6 @@ use reth_rpc_eth_types::{
     EthApiError, EthStateCache, FeeHistoryCache, GasPriceOracle, PendingBlock,
     builder::config::PendingBlockKind,
 };
-use std::ops::Deref;
 use tokio::sync::Mutex;
 
 /// Tempo `Eth` API implementation.
@@ -49,15 +48,6 @@ impl<N: FullNodeTypes<Types = TempoNode>> TempoEthApi<N> {
     /// Creates a new `TempoEthApi`.
     pub fn new(eth_api: EthApi<NodeAdapter<N>, EthRpcConverterFor<NodeAdapter<N>>>) -> Self {
         Self { inner: eth_api }
-    }
-}
-
-// Delegate all methods to the inner EthApi
-impl<N: FullNodeTypes<Types = TempoNode>> Deref for TempoEthApi<N> {
-    type Target = EthApi<NodeAdapter<N>, EthRpcConverterFor<NodeAdapter<N>>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
     }
 }
 
