@@ -34,8 +34,10 @@ use reth_node_ethereum::{
 };
 use reth_provider::{EthStorage, providers::ProviderFactoryBuilder};
 use reth_rpc_builder::Identity;
-use reth_rpc_eth_api::{FromEvmError, RpcConvert, helpers::pending_block::BuildPendingEnv};
-use reth_rpc_eth_types::EthApiError;
+use reth_rpc_eth_api::{
+    FromEvmError, RpcConvert, RpcConverter, helpers::pending_block::BuildPendingEnv,
+};
+use reth_rpc_eth_types::{EthApiError, receipt::EthReceiptConverter};
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore};
 use std::{default::Default, sync::Arc, time::SystemTime};
@@ -398,31 +400,35 @@ where
     }
 }
 
-/// Builds [`TempoEthApi`]
-#[derive(Debug, Default)]
-pub struct TempoEthApiBuilder;
-
-impl<N> EthApiBuilder<N> for TempoEthApiBuilder
-where
-    N: FullNodeComponents<
-            Types: NodeTypes<ChainSpec: Hardforks + EthereumHardforks>,
-            Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<HeaderTy<N::Types>>>,
-        >,
-    EthRpcConverterFor<N>: RpcConvert<
-            Primitives = EthPrimitives,
-            TxEnv = TxEnv,
-            Error = EthApiError,
-            Network = Ethereum,
-            Spec = EthSpec,
-        >,
-    EthApiError: FromEvmError<N::Evm>,
-{
-    type EthApi = TempoEthApi<N>;
-
-    async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
-        Ok(ctx
-            .eth_api_builder()
-            .map_converter(|r| r.with_network())
-            .build())
-    }
-}
+///// Builds [`TempoEthApi`]
+//#[derive(Debug, Default)]
+//pub struct TempoEthApiBuilder;
+//
+//pub type TempoRpcConverter<N> =
+//    RpcConverter<Ethereum, <N as FullNodeComponents>::Evm, EthReceiptConverter<TempoChainSpec>>;
+//
+//impl<N> EthApiBuilder<N> for TempoEthApiBuilder
+//where
+//    N: FullNodeComponents<
+//            Types: NodeTypes<ChainSpec: Hardforks + EthereumHardforks>,
+//            Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<HeaderTy<N::Types>>>,
+//        >,
+//    EthRpcConverterFor<N>: RpcConvert<
+//            Primitives = EthPrimitives,
+//            TxEnv = TxEnv,
+//            Error = EthApiError,
+//            Network = Ethereum,
+//            Spec = EthSpec,
+//        >,
+//    EthApiError: FromEvmError<N::Evm>,
+//{
+//    type EthApi = TempoEthApi<N, TempoRpcConverter<N>>;
+//
+//    async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
+//        let eth_api_inner = ctx
+//            .eth_api_builder()
+//            .map_converter(|converter| converter.with_network())
+//            .build();
+//        Ok(TempoEthApi::new(eth_api_inner))
+//    }
+//}

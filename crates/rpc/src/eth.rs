@@ -1,6 +1,8 @@
-use reth_rpc::eth::{RpcNodeCore, core::EthApiInner};
+use reth_rpc::eth::{EthApi, RpcNodeCore};
 use reth_rpc_convert::RpcConvert;
-use std::sync::Arc;
+use reth_rpc_eth_api::{EthApiTypes, helpers::FullEthApi};
+use reth_rpc_eth_types::EthApiError;
+use std::ops::Deref;
 
 /// Tempo `Eth` API implementation.
 ///
@@ -15,14 +17,35 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct TempoEthApi<N: RpcNodeCore, Rpc: RpcConvert> {
     /// Gateway to node's core components.
-    inner: Arc<EthApiInner<N, Rpc>>,
+    inner: EthApi<N, Rpc>,
 }
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> TempoEthApi<N, Rpc> {
-    /// Creates a new `OpEthApi`.
-    pub fn new(eth_api: EthApiInner<N, Rpc>) -> Self {
-        Self {
-            inner: Arc::new(eth_api),
-        }
+    /// Creates a new `TempoEthApi`.
+    pub fn new(eth_api: EthApi<N, Rpc>) -> Self {
+        Self { inner: eth_api }
+    }
+}
+
+// Delegate all methods to the inner EthApi
+impl<N: RpcNodeCore, Rpc: RpcConvert> Deref for TempoEthApi<N, Rpc> {
+    type Target = EthApi<N, Rpc>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<N, Rpc> EthApiTypes for TempoEthApi<N, Rpc>
+where
+    N: RpcNodeCore,
+    Rpc: RpcConvert<Primitives = N::Primitives>,
+{
+    type Error = EthApiError;
+    type NetworkTypes = Rpc::Network;
+    type RpcConvert = Rpc;
+
+    fn tx_resp_builder(&self) -> &Self::RpcConvert {
+        self.inner.tx_resp_builder()
     }
 }
