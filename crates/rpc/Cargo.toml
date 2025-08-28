@@ -1,0 +1,11 @@
+[package]
+name = "tempo-rpc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+# [lints]
+# workspace = true
+
+[dependencies]
+alloy-evm = { workspace = true, features = ["overrides"] }

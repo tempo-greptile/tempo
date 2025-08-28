@@ -12014,6 +12014,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tempo-rpc"
+version = "0.1.0"
+dependencies = [
+ "alloy-evm",
+]
+
+[[package]]
 name = "tempo-sidecar"
 version = "0.1.0"
 dependencies = [
