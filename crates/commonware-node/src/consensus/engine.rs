@@ -118,12 +118,16 @@ where
             ExecutionData = alloy_rpc_types_engine::ExecutionData,
             BuiltPayload = reth_ethereum_engine_primitives::EthBuiltPayload,
         >,
-    <TFullNodeComponents::Types as NodeTypes>::Primitives:
-        NodePrimitives<BlockHeader = alloy_consensus::Header>,
+    <TFullNodeComponents::Types as NodeTypes>::Primitives: NodePrimitives<
+            Block = reth_ethereum_primitives::Block,
+            BlockHeader = alloy_consensus::Header,
+        >,
     <<TFullNodeComponents as FullNodeTypes>::Provider as DatabaseProviderFactory>::ProviderRW: Send,
     TRethRpcAddons: RethRpcAddOns<TFullNodeComponents> + 'static,
 {
-    pub async fn init(self) -> Engine<TBlocker, TContext, TFullNodeComponents, TRethRpcAddons> {
+    pub async fn try_init(
+        self,
+    ) -> eyre::Result<Engine<TBlocker, TContext, TFullNodeComponents, TRethRpcAddons>> {
         let supervisor = Supervisor::new(
             self.polynomial.clone(),
             self.participants.clone(),
@@ -187,7 +191,8 @@ where
             // engine_handle: self.execution_engine,
             // payload_builder: self.execution_payload_builder,
         }
-        .init();
+        .try_init()
+        .wrap_err("failed initializing execution driver")?;
 
         let execution_driver_mailbox = execution_driver.mailbox().clone();
 
@@ -221,7 +226,7 @@ where
             },
         );
 
-        Engine {
+        Ok(Engine {
             context: self.context,
 
             broadcast,
@@ -233,7 +238,7 @@ where
             syncer,
 
             consensus,
-        }
+        })
     }
 }
 

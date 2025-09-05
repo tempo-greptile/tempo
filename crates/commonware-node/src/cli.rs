@@ -242,8 +242,10 @@ where
             ExecutionData = alloy_rpc_types_engine::ExecutionData,
             BuiltPayload = reth_ethereum_engine_primitives::EthBuiltPayload,
         >,
-    <TFullNodeComponents::Types as NodeTypes>::Primitives:
-        NodePrimitives<BlockHeader = alloy_consensus::Header>,
+    <TFullNodeComponents::Types as NodeTypes>::Primitives: NodePrimitives<
+            Block = reth_ethereum_primitives::Block,
+            BlockHeader = alloy_consensus::Header,
+        >,
     <<TFullNodeComponents as FullNodeTypes>::Provider as DatabaseProviderFactory>::ProviderRW: Send,
     TRethRpcAddons: RethRpcAddOns<TFullNodeComponents> + 'static,
 {
@@ -302,8 +304,9 @@ where
         fetch_rate_per_peer: RESOLVER_LIMIT,
         // indexer: Option<TIndexer>,
     }
-    .init()
-    .await;
+    .try_init()
+    .await
+    .wrap_err("failed initializing consensus engine")?;
 
     Ok(ConsensusStack {
         network: network.start(),

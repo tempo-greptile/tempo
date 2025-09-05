@@ -22,7 +22,7 @@ use reth_node_builder::{
     PayloadTypes,
 };
 
-use reth_provider::DatabaseProviderFactory;
+use reth_provider::{BlockReader as _, DatabaseProviderFactory};
 use sequential_futures_queue::SequentialFuturesQueue;
 use tokio::sync::RwLock;
 use tracing::{Level, info, instrument};
@@ -83,15 +83,26 @@ where
             ExecutionData = alloy_rpc_types_engine::ExecutionData,
             BuiltPayload = reth_ethereum_engine_primitives::EthBuiltPayload,
         >,
-    <TFullNodeComponents::Types as NodeTypes>::Primitives:
-        NodePrimitives<BlockHeader = alloy_consensus::Header>,
+    <TFullNodeComponents::Types as NodeTypes>::Primitives: NodePrimitives<
+            Block = reth_ethereum_primitives::Block,
+            BlockHeader = alloy_consensus::Header,
+        >,
     <<TFullNodeComponents as FullNodeTypes>::Provider as DatabaseProviderFactory>::ProviderRW: Send,
     TRethRpcAddons: RethRpcAddOns<TFullNodeComponents>,
 {
-    pub(super) fn init(self) -> ExecutionDriver<TContext, TFullNodeComponents, TRethRpcAddons> {
+    pub(super) fn try_init(
+        self,
+    ) -> eyre::Result<ExecutionDriver<TContext, TFullNodeComponents, TRethRpcAddons>> {
         let (tx, rx) = mpsc::channel(self.mailbox_size);
         let my_mailbox = Mailbox::from_sender(tx);
-        ExecutionDriver {
+        let block = self
+            .execution_node
+            .provider
+            .block_by_number(0)
+            .map_err(Into::<eyre::Report>::into)
+            .and_then(|maybe| maybe.ok_or_eyre("block reader returned empty genesis block"))
+            .wrap_err("failed reading genesis block from execution node")?;
+        Ok(ExecutionDriver {
             context: self.context,
 
             fee_recipient: self.fee_recipient,
@@ -100,15 +111,14 @@ where
             my_mailbox,
             syncer_mailbox: self.syncer_mailbox,
 
-            genesis_block: Arc::new(Block::genesis_from_chainspec(
-                &self.execution_node.chain_spec(),
-            )),
+            genesis_block: Arc::new(Block::from_execution_block(block.into())),
+
             latest_proposed_block: Arc::new(RwLock::new(None)),
 
             execution_node: self.execution_node,
 
             finalization_queue: SequentialFuturesQueue::new(),
-        }
+        })
     }
 }
 
