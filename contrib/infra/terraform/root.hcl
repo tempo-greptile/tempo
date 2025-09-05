@@ -17,6 +17,11 @@ terraform {
       source = "latitudesh/latitudesh"
       version = "2.3.0"
     }
+    
+    argocd = {
+      source = "argoproj-labs/argocd"
+      version = "7.11.0"
+    }
   }
 }
 

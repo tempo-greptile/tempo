@@ -22,3 +22,18 @@ generate "kubernetes.tf" {
   provider "tailscale" {}
 EOF
 }
+
+generate "argocd.tf" {
+  path = "argocd.tf"
+  if_exists = "overwrite_terragrunt"
+  disable = local.kubernetes_vars.locals.argocd_token == ""
+
+  contents = <<EOF
+  provider "argocd" {
+    grpc_web = true
+    server_addr = "${local.kubernetes_vars.locals.argocd_url}"
+    auth_token = "${local.kubernetes_vars.locals.argocd_token}"
+  }
+EOF
+
+}

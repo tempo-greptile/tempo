@@ -16,7 +16,7 @@ inputs = {
   cluster_name = "dev-dal-01"
   
   # Tailscale operator configuration
-  tailscale_operator_version = "1.76.6"
+  tailscale_operator_version = "1.86.5"
   
   # ArgoCD configuration
   argocd_version            = "7.6.12"
