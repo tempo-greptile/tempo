@@ -1,4 +1,4 @@
-//! The foundational datastructure the Tempo network comes to concensus over.
+//! The foundational datastructure the Tempo network comes to consensus over.
 //!
 //! The Tempo [`Block`] at its core is just a thin wrapper around an Ethereum
 //! block.

@@ -256,12 +256,12 @@ where
     <<TFullNodeComponents as FullNodeTypes>::Provider as DatabaseProviderFactory>::ProviderRW: Send,
     TRethRpcAddons: RethRpcAddOns<TFullNodeComponents>,
     // XXX: alto also defines an Indexer trait (not part of commonwarexyz itself); we will
-    // not define it for nwo.
+    // not define it for now.
     // TIndexer,
 {
     context: TContext,
 
-    /// broadcasts messages to and cahces messages from untrusted peers.
+    /// broadcasts messages to and caches messages from untrusted peers.
     // XXX: alto calls this `buffered`. That's confusing. We call it `broadcast`.
     broadcast: buffered::Engine<TContext, PublicKey, Block<reth_ethereum_primitives::Block>>,
     broadcast_mailbox: buffered::Mailbox<PublicKey, Block<reth_ethereum_primitives::Block>>,
@@ -277,7 +277,7 @@ where
 
     /// Responsible for syncing(?) messages from/to other nodes.
     // FIXME: This is a complex beast, interacting with very many parts of the system. At
-    // its core it seems to be responsible for maintaing an ordered history of the chain,
+    // its core it seems to be responsible for maintaining an ordered history of the chain,
     // which means tracking the chain, finalizing blocks after getting a finalization signal
     // from consensus, writign finalized blocks to the filesystem, backfilling missing blocks from
     // its peers...

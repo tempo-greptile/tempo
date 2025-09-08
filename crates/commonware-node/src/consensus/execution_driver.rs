@@ -677,7 +677,7 @@ where
 /// Verifies `block` given its `parent` against the execution layer.
 ///
 /// Returns whether the block is valid or not. Returns an error if validation
-/// was not possible, for example if communication with the exection layer
+/// was not possible, for example if communication with the execution layer
 /// failed.
 ///
 /// Reason the reason for why a block was not valid is communicated as a
