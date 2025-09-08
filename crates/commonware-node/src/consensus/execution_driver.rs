@@ -95,13 +95,21 @@ where
     ) -> eyre::Result<ExecutionDriver<TContext, TFullNodeComponents, TRethRpcAddons>> {
         let (tx, rx) = mpsc::channel(self.mailbox_size);
         let my_mailbox = Mailbox::from_sender(tx);
+
+        // TODO: simplify this to use `block_at_number` again once reth merges
+        // https://github.com/paradigmxyz/reth/pull/18300
+        //
+        // Needs `.sealed_block_with_senders` and `TransactionVariant::NoHash`,
+        // because the DEV chainspec uses a hard coded hash. `into_sealed_block`
+        // forces a recomputation of the block.
         let block = self
             .execution_node
             .provider
-            .block_by_number(0)
+            .sealed_block_with_senders(0.into(), reth_provider::TransactionVariant::NoHash)
             .map_err(Into::<eyre::Report>::into)
             .and_then(|maybe| maybe.ok_or_eyre("block reader returned empty genesis block"))
-            .wrap_err("failed reading genesis block from execution node")?;
+            .wrap_err("failed reading genesis block from execution node")?
+            .into_sealed_block();
         Ok(ExecutionDriver {
             context: self.context,
 
@@ -111,7 +119,7 @@ where
             my_mailbox,
             syncer_mailbox: self.syncer_mailbox,
 
-            genesis_block: Arc::new(Block::from_execution_block(block.into())),
+            genesis_block: Arc::new(Block::from_execution_block(block)),
 
             latest_proposed_block: Arc::new(RwLock::new(None)),
 
