@@ -204,7 +204,7 @@ impl CommonwareRunnerExt for commonware_runtime::tokio::Runner {
         F: Future<Output = Result<(), E>>,
         E: Send + Sync + From<std::io::Error> + From<reth_tasks::PanickedTaskError> + 'static,
     {
-        let res = self.start(move |ctx| async {
+        self.start(move |ctx| async {
             let mut reth_task_manager = TaskManager::current();
             let reth_cli_context = reth::CliContext {
                 task_executor: reth_task_manager.executor(),
@@ -227,7 +227,7 @@ impl CommonwareRunnerExt for commonware_runtime::tokio::Runner {
             }
 
             res
-        });
+        })
 
         // TODO: leaving this - taken straight from reth.
         //
@@ -247,7 +247,6 @@ impl CommonwareRunnerExt for commonware_runtime::tokio::Runner {
         // let _ = rx.recv_timeout(Duration::from_secs(5)).inspect_err(|err| {
         //     debug!(target: "reth::cli", %err, "tokio runtime shutdown timed out");
         // });
-        res
     }
 
     fn run_until_ctrl_c<F, E>(self, fut: F) -> Result<(), E>
