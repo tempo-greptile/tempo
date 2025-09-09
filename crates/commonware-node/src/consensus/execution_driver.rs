@@ -500,7 +500,7 @@ where
     }
 }
 
-/// Holds all objects to run a proposal via [`RunPropose::given_time`].
+/// Holds all objects to run a proposal via [`Self::given_timestamp`].
 struct RunPropose<TBlock, TPayload>
 where
     TBlock: reth_primitives_traits::Block + 'static,

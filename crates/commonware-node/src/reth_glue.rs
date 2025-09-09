@@ -1,22 +1,23 @@
 //! Glue to run a reth node inside a commonware runtime context.
 //!
-//! None of the code here is actually specific to commonware-xyz. It just so happens
-//! that in order to spawn a reth instance, all that is needed is a
-//! [`reth_tasks::TaskManager`] instance, which can be done from inside any tokio
-//! runtime instance.
+//! None of the code here is actually specific to commonware-xyz. It just so
+//! happens that in order to spawn a reth instance, all that is needed is a
+//! [`reth_tasks::TaskManager`] instance, which can be done from inside any
+//! tokio runtime instance.
 //!
 //! # Why this exists
 //!
-//! The peculiarity of commonwarexyz is that it fully wraps a tokio runtime and passes
-//! an abstracted `S: Spawner` into all code that needs to spawn tasks. So rather than
-//! using `tokio::runtime::Handle::spawn` it uses `<S as Spawner>::spawn` to run async
-//! tasks on the runtime while tracking the amount and (named) context of all tasks.
+//! The peculiarity of commonwarexyz is that it fully wraps a tokio runtime and
+//! passes an abstracted `S: Spawner` into all code that needs to spawn tasks.
+//! So rather than using [`tokio::runtime::Handle::spawn`] it uses
+//! `<S as Spawner>::spawn` to run async tasks on the runtime while tracking
+//! the amount and (named) context of all tasks.
 //!
 //! In a similar manner, reth's primary way of launching nodes is through a
-//! [`reth_cli::CliRunner`], which also takes possession of a tokio runtime.
-//! However, it then uses a tokio runtime's *handle* to construct a
-//! `[reth_tasks::TaskManager]` and [`reth_tasks::Executor`], passing the latter
-//! to through its stack to spawn tasks (and track tasks, etc).
+//! [`reth_cli_runner::CliRunner`], which also takes possession of a tokio
+//! runtime. However, it then uses a tokio runtime's *handle* to construct a
+//! `[reth_tasks::TaskManager]` and [`reth_tasks::TaskExecutor`], passing the
+//! latter to through its stack to spawn tasks (and track tasks, etc).
 
 use std::{sync::Arc, time::Duration};
 
@@ -63,8 +64,8 @@ impl<TArgs: std::fmt::Debug + clap::Args> std::fmt::Debug for ContextEnrichedArg
     }
 }
 
-/// Execute the configured cli command with the provided [`CliRunner`] and
-/// [`CliComponentsBuilder`].
+/// Execute the provided cli `args` inside `runner`. `components` and `launcher`
+/// are command specific configurations.
 ///
 /// This is essentially [`reth_ethereum_cli::Cli::with_runner_and_components`]
 /// adapted to work with [`commonware_runtime::tokio::Runner`].

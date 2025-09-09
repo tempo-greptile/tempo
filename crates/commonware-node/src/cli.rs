@@ -50,7 +50,7 @@ pub struct Args {
     /// they are very noisy. For more information on how to specify filter
     /// directives see the tracing-subscriber documentation [1].
     ///
-    /// 1: https://docs.rs/tracing-subscriber/0.3.19/tracing_subscriber/filter/struct.EnvFilter.html
+    /// [1]: https://docs.rs/tracing-subscriber/0.3.19/tracing_subscriber/filter/struct.EnvFilter.html
     // TODO: look into how commonware and reth set up their logging/tracing/metrics.
     // reth has `LogArgs` for example, which we are altogether ignoring for now.
     #[clap(
