@@ -99,7 +99,7 @@ impl Args {
             runtime_config = runtime_config
                 .with_tcp_nodelay(Some(true))
                 .with_worker_threads(consensus_config.worker_threads)
-                .with_storage_directory(&consensus_config.storage_directory)
+                .with_storage_directory(node_cmd.datadir.datadir.unwrap_or_default().join("commonware").as_ref())
                 .with_catch_panics(true);
         };
 

@@ -47,7 +47,6 @@ pub struct Config {
     pub listen_port: u16,
     pub metrics_port: u16,
 
-    pub storage_directory: camino::Utf8PathBuf,
     pub worker_threads: usize,
 
     // XXX: alto has a config `allowed_peers`, which it does not make any use of, instead relying
@@ -149,7 +148,6 @@ struct DeserConfig {
     listen_port: u16,
     metrics_port: u16,
 
-    storage_directory: camino::Utf8PathBuf,
     worker_threads: usize,
 
     // XXX: alto has a config `allowed_peers`, which it does not make any use of, instead relying
@@ -183,7 +181,6 @@ impl TryFrom<DeserConfig> for Config {
             polynomial,
             listen_port,
             metrics_port,
-            storage_directory,
             worker_threads,
             peers,
             bootstrappers,
@@ -208,7 +205,6 @@ impl TryFrom<DeserConfig> for Config {
                 .map_err(Error::Polynomial)?,
             listen_port,
             metrics_port,
-            storage_directory,
             worker_threads,
             peers,
             bootstrappers,
