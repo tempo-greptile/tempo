@@ -3,6 +3,5 @@
 //! The main (and currently only) intended entry point to this crate is
 //! [`cli::run`].
 pub mod cli;
-pub mod config;
 pub mod consensus;
 pub mod reth_glue;

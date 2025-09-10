@@ -129,7 +129,7 @@ where
                 view_retention_timeout: self
                     .activity_timeout
                     .saturating_mul(SYNCER_ACTIVITY_TIMEOUT_MULTIPLIER),
-                namespace: crate::config::NAMESPACE.to_vec(),
+                namespace: tempo_commonware_node_config::config::NAMESPACE.to_vec(),
                 prunable_items_per_section: PRUNABLE_ITEMS_PER_SECTION,
                 immutable_items_per_section: IMMUTABLE_ITEMS_PER_SECTION,
                 freezer_table_initial_size: self.blocks_freezer_table_initial_size,
@@ -166,7 +166,7 @@ where
         let consensus = threshold_simplex::Engine::new(
             self.context.with_label("consensus"),
             threshold_simplex::Config {
-                namespace: crate::config::NAMESPACE.to_vec(),
+                namespace: tempo_commonware_node_config::config::NAMESPACE.to_vec(),
                 crypto: self.signer,
                 automaton: execution_driver.mailbox().clone(),
                 relay: execution_driver.mailbox().clone(),

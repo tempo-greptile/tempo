@@ -1,12 +1,16 @@
 use std::{net::SocketAddr, path::Path};
-
+use std::time::Duration;
 use commonware_codec::Decode;
 use commonware_utils::quorum;
 use indexmap::IndexMap;
 use tempo_commonware_node_cryptography::{GroupShare, PrivateKey, PublicKey, PublicPolynomial};
+use crate::config::{
+    NOTARIZATION_TIMEOUT, FETCH_TIMEOUT, TIME_TO_NULLIFY_RETRY, LEADER_TIMEOUT, NUMBER_OF_VIEWS_TO_TRACK, NUMBER_OF_VIEWS_UNTIL_LEADER_SKIP,
+};
 
 #[cfg(test)]
 mod tests;
+pub mod config;
 
 /// Configuration for the [engine::Engine].
 ///
@@ -65,6 +69,8 @@ pub struct Config {
     // TODO: enforce the invariant that all `bootstrappers` are part of `peers`.
     pub bootstrappers: Bootstrappers,
 
+    pub timeouts: TimeoutConfig,
+
     pub message_backlog: usize,
     pub mailbox_size: usize,
     pub deque_size: usize,
@@ -111,6 +117,30 @@ pub enum Error {
     BootstrapperWithoutPeer { key: Box<PublicKey> },
     #[error("failed decoding provided hex encoded bytes as a public polynomial")]
     Polynomial(#[source] commonware_codec::Error),
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct TimeoutConfig {
+    pub leader_timeout: Duration,
+    pub notarization_timeout: Duration,
+    pub nullify_retry: Duration,
+    pub fetch_timeout: Duration,
+    pub activity_timeout: u64,
+    pub skip_timeout: u64,
+}
+
+impl Default for TimeoutConfig {
+    fn default() -> Self {
+        Self {
+            leader_timeout: LEADER_TIMEOUT,
+            notarization_timeout: NOTARIZATION_TIMEOUT,
+            nullify_retry: TIME_TO_NULLIFY_RETRY,
+            fetch_timeout: FETCH_TIMEOUT,
+            activity_timeout: NUMBER_OF_VIEWS_TO_TRACK,
+            skip_timeout: NUMBER_OF_VIEWS_UNTIL_LEADER_SKIP,
+        }
+    }
 }
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -166,6 +196,8 @@ struct DeserConfig {
 
     bootstrappers: Bootstrappers,
 
+    timeouts: TimeoutConfig,
+
     message_backlog: usize,
     mailbox_size: usize,
     deque_size: usize,
@@ -187,6 +219,7 @@ impl TryFrom<DeserConfig> for Config {
             worker_threads,
             peers,
             bootstrappers,
+            timeouts,
             message_backlog,
             mailbox_size,
             deque_size,
@@ -212,6 +245,7 @@ impl TryFrom<DeserConfig> for Config {
             worker_threads,
             peers,
             bootstrappers,
+            timeouts,
             message_backlog,
             mailbox_size,
             deque_size,
@@ -258,7 +292,7 @@ mod _serde {
 
     pub(crate) mod bootstrappers {
 
-        use serde::{Deserializer, Serializer, de::Visitor, ser::SerializeSeq}; // # codespell:ignore ser
+        use serde::{de::Visitor, ser::SerializeSeq, Deserializer, Serializer}; // # codespell:ignore ser
 
         use tempo_commonware_node_cryptography::PublicKey;
 
@@ -362,7 +396,7 @@ mod _serde {
         use std::net::SocketAddr;
 
         use indexmap::IndexMap;
-        use serde::{Deserializer, Serializer, de::Visitor, ser::SerializeMap}; // # codespell:ignore ser
+        use serde::{de::Visitor, ser::SerializeMap, Deserializer, Serializer}; // # codespell:ignore ser
 
         use tempo_commonware_node_cryptography::PublicKey;
 

@@ -14,8 +14,10 @@ alloy-primitives = { workspace = true, features = ["serde"] }
 camino = { workspace = true, features = ["serde1"] }
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
+commonware-p2p.workspace = true
 commonware-utils.workspace = true
 const-hex = { version = "1.15.0", features = ["serde"] }
+governor = "0.6.3"
 indexmap = { workspace = true, features = ["serde"] }
 rand.workspace = true
 serde = { version = "1.0.219", features = ["derive"] }

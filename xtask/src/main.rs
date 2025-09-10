@@ -7,7 +7,7 @@ use commonware_cryptography::{PrivateKeyExt as _, Signer as _};
 use eyre::{Context, ensure};
 use indexmap::IndexMap;
 use rand::{rngs::OsRng, seq::IteratorRandom as _};
-use tempo_commonware_node_config::Config;
+use tempo_commonware_node_config::{Config, TimeoutConfig};
 use tempo_commonware_node_cryptography::PrivateKey;
 
 fn main() -> eyre::Result<()> {
@@ -158,6 +158,7 @@ fn generate_config(
             // this will be updated after we have collected all peers
             peers: IndexMap::new(),
             bootstrappers: bootstrappers.clone().into(),
+            timeouts: TimeoutConfig::default(),
             message_backlog,
             mailbox_size,
             deque_size,

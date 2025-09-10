@@ -4,27 +4,25 @@ use clap::Parser;
 use commonware_cryptography::Signer;
 use commonware_p2p::authenticated::discovery;
 use commonware_runtime::{Handle, Metrics as _};
-use eyre::{WrapErr as _, eyre};
-use futures_util::{FutureExt as _, future::try_join_all};
+use eyre::{eyre, WrapErr as _};
+use futures_util::{future::try_join_all, FutureExt as _};
 use reth_ethereum_cli;
 use reth_node_builder::NodeHandle;
 use reth_node_ethereum::EthEvmConfig;
 use tempo_chainspec::spec::{TempoChainSpec, TempoChainSpecParser};
-use tempo_faucet::faucet::{TempoFaucetExt, TempoFaucetExtApiServer as _};
-use tempo_node::{TempoFullNode, args::TempoArgs, node::TempoNode};
-
-use crate::{
-    config::{
-        BACKFILL_BY_DIGEST_CHANNE_IDENTL, BACKFILL_QUOTA, BLOCKS_FREEZER_TABLE_INITIAL_SIZE_BYTES,
-        BROADCASTER_CHANNEL_IDENT, BROADCASTER_LIMIT, FETCH_TIMEOUT,
-        FINALIZED_FREEZER_TABLE_INITIAL_SIZE_BYTES, LEADER_TIMEOUT, MAX_FETCH_SIZE_BYTES,
-        NOTARIZATION_TIMEOUT, NUMBER_CONCURRENT_FETCHES, NUMBER_MAX_FETCHES,
-        NUMBER_OF_VIEWS_TO_TRACK, NUMBER_OF_VIEWS_UNTIL_LEADER_SKIP, PENDING_CHANNEL_IDENT,
-        PENDING_LIMIT, RECOVERED_CHANNEL_IDENT, RECOVERED_LIMIT, RESOLVER_CHANNEL_IDENT,
-        RESOLVER_LIMIT, TIME_TO_NULLIFY_RETRY,
-    },
-    reth_glue::ContextEnrichedArgs,
+use tempo_commonware_node_config::config::{
+    BACKFILL_BY_DIGEST_CHANNE_IDENTL, BACKFILL_QUOTA, BLOCKS_FREEZER_TABLE_INITIAL_SIZE_BYTES,
+    BROADCASTER_CHANNEL_IDENT, BROADCASTER_LIMIT, FETCH_TIMEOUT,
+    FINALIZED_FREEZER_TABLE_INITIAL_SIZE_BYTES, LEADER_TIMEOUT, MAX_FETCH_SIZE_BYTES,
+    NOTARIZATION_TIMEOUT, NUMBER_CONCURRENT_FETCHES, NUMBER_MAX_FETCHES,
+    NUMBER_OF_VIEWS_TO_TRACK, NUMBER_OF_VIEWS_UNTIL_LEADER_SKIP, PENDING_CHANNEL_IDENT,
+    PENDING_LIMIT, RECOVERED_CHANNEL_IDENT, RECOVERED_LIMIT, RESOLVER_CHANNEL_IDENT,
+    RESOLVER_LIMIT, TIME_TO_NULLIFY_RETRY,
 };
+use tempo_faucet::faucet::{TempoFaucetExt, TempoFaucetExtApiServer as _};
+use tempo_node::{args::TempoArgs, node::TempoNode, TempoFullNode};
+
+use crate::reth_glue::ContextEnrichedArgs;
 use tempo_commonware_node_cryptography::{PrivateKey, PublicKey};
 
 /// Parses command line args and launches the node.
@@ -316,7 +314,7 @@ fn instantiate_network(
 
     // TODO: Find out why `union_unique` should be used at all. This is the only place
     // where `NAMESPACE` is used at all. We follow alto's example for now.
-    let p2p_namespace = commonware_utils::union_unique(crate::config::NAMESPACE, b"_P2P");
+    let p2p_namespace = commonware_utils::union_unique(tempo_commonware_node_config::config::NAMESPACE, b"_P2P");
     let p2p_cfg = discovery::Config {
         mailbox_size: config.mailbox_size,
         ..discovery::Config::aggressive(
@@ -326,7 +324,7 @@ fn instantiate_network(
             SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), config.listen_port),
             SocketAddr::new(my_ip, config.listen_port),
             bootstrappers,
-            crate::config::MAX_MESSAGE_SIZE_BYTES,
+            tempo_commonware_node_config::config::MAX_MESSAGE_SIZE_BYTES,
         )
     };
 
