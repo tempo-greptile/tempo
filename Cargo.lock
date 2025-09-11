@@ -12664,6 +12664,7 @@ dependencies = [
  "tempo-precompiles",
  "tempo-transaction-pool",
  "thiserror 2.0.16",
+ "tokio",
  "url",
 ]
 

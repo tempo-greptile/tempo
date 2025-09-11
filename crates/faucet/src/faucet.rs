@@ -18,8 +18,10 @@ use jsonrpsee::{
 };
 use reth_rpc_server_types::result::rpc_err;
 use reth_transaction_pool::{TransactionOrigin, TransactionPool, error::PoolError};
+use std::sync::Arc;
 use tempo_precompiles::contracts::ITIP20;
 use tempo_transaction_pool::transaction::TempoPooledTransaction;
+use tokio::sync::Mutex;
 
 #[rpc(server, namespace = "tempo")]
 pub trait TempoFaucetExtApi {
@@ -36,6 +38,7 @@ where
     tip20_address: Address,
     funding_amount: U256,
     provider: FillProvider<F, P, Ethereum>,
+    fill_lock: Arc<Mutex<()>>,
 }
 
 impl<Pool, P, F> TempoFaucetExt<Pool, P, F>
@@ -54,6 +57,7 @@ where
             tip20_address,
             funding_amount,
             provider,
+            fill_lock: Arc::new(Mutex::new(())),
         }
     }
 }
@@ -104,11 +108,13 @@ where
             .to(self.tip20_address)
             .input(TransactionInput::from(transfer_call_data));
 
-        let filled_tx = self
-            .provider
-            .fill(request)
-            .await
-            .map_err(FaucetError::FillError)?;
+        let filled_tx = {
+            let _lock = self.fill_lock.lock().await;
+            self.provider
+                .fill(request)
+                .await
+                .map_err(FaucetError::FillError)?
+        };
 
         let tx: TxEnvelope = filled_tx
             .try_into_envelope()
