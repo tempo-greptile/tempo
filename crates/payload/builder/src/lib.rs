@@ -252,6 +252,8 @@ where
                 cached_reads,
             });
         }
+        
+        // TODO: transact `executeBlock`, could potentially be part of the blockassembler instead if fixed signature
 
         let BlockBuilderOutcome {
             execution_result,

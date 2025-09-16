@@ -77,6 +77,7 @@ impl Consensus<Block> for TempoConsensus {
     }
 
     fn validate_block_pre_execution(&self, block: &SealedBlock<Block>) -> Result<(), Self::Error> {
+        // TODO: validate that last tx is system `executeBlock`
         self.inner.validate_block_pre_execution(block)
     }
 }
