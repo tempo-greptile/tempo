@@ -13,6 +13,9 @@ ExecStart=/usr/local/bin/tempo node --datadir {{ ansible_env.HOME }}/malachite/r
   --dev \
   --dev.block-time 1sec \
 {% endif %}
+{% if tempo_proposer == 'false' %}
+  --debug.rpc-consensus-ws ws://{{ tempo_producer }}:8546 \
+{% endif %}
 {% if tempo_faucet_privkey is defined %}
   --faucet.enabled \
   --faucet.private-key 0x{{ tempo_faucet_privkey }} \
@@ -26,6 +29,9 @@ ExecStart=/usr/local/bin/tempo node --datadir {{ ansible_env.HOME }}/malachite/r
   --http.addr 0.0.0.0 \
   --http.port 8545 \
   --http.api eth,net,web3,txpool,trace \
+  --ws \
+  --ws.addr 0.0.0.0 \
+  --ws.port 8546 \
   --authrpc.port 8551 \
   --metrics 9000 \
   --ipcdisable \

@@ -17,7 +17,7 @@
 
 - name: Copy reth genesis file
   copy:
-    src: "files/reth_genesis.json"
+    src: "files/{{ tempo_chain_id }}.json"
     dest: "{{ ansible_env.HOME }}/malachite/config/reth_genesis.json"
 
 - name: Create reth directory
