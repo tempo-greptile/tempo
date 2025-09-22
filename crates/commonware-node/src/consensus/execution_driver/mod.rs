@@ -25,6 +25,7 @@ use tracing::{Level, info, instrument};
 
 use tempo_commonware_node_cryptography::{BlsScheme, Digest};
 
+mod engine;
 mod finalizer;
 
 use super::{View, block::Block};
