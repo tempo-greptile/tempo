@@ -5,7 +5,6 @@ use std::{
 
 use crossbeam_utils::CachePadded;
 use thousands::Separable;
-use tokio_util::sync::CancellationToken;
 
 pub struct NetworkStats {
     requests: AtomicU64,
@@ -30,16 +29,12 @@ impl NetworkStats {
         self.errors.fetch_add(count as u64, Ordering::Relaxed);
     }
 
-    pub async fn start_reporter(
-        &self,
-        measurement_interval: Duration,
-        cancellation_token: CancellationToken,
-    ) {
+    pub async fn start_reporter(&self, measurement_interval: Duration) {
         let mut last_requests = 0u64;
         let mut last_errors = 0u64;
         let mut interval = tokio::time::interval(measurement_interval);
         interval.tick().await;
-        while !cancellation_token.is_cancelled() {
+        loop {
             interval.tick().await;
             let requests = self.requests.load(Ordering::Relaxed);
             let errors = self.errors.load(Ordering::Relaxed);

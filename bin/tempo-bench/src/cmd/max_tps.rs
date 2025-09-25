@@ -82,19 +82,19 @@ impl TPSArgs {
             match worker_type {
                 WorkerType::TxGen => {
                     let tx_gen_clone: Arc<TxGenerator> = Arc::clone(&tx_generator);
-                    let cloned_token = cancellation_token.clone();
+                    let cancellation_token = cancellation_token.clone();
                     thread::spawn(move || {
                         utils::maybe_pin_thread(core_id);
                         tx_gen_clone.tx_gen_worker(
                             tx_gen_worker_id,
                             tx_gen_worker_count,
-                            cloned_token,
+                            cancellation_token,
                         );
                     });
                     tx_gen_worker_id += 1;
                 }
                 WorkerType::Network => {
-                    let cloned_token = cancellation_token.clone();
+                    let cancellation_token = cancellation_token.clone();
                     thread::spawn(move || {
                         utils::maybe_pin_thread(core_id);
                         let rt = tokio::runtime::Builder::new_current_thread()
@@ -107,10 +107,10 @@ impl TPSArgs {
                                 tokio::spawn(workers::network_worker(
                                     (network_worker_id * connections_per_network_worker + i)
                                         as usize,
-                                    cloned_token.clone(),
+                                    cancellation_token.clone(),
                                 ));
                             }
-                            cloned_token.cancelled().await;
+                            cancellation_token.cancelled().await;
                         });
                     });
                     network_worker_id += 1;
@@ -121,15 +121,21 @@ impl TPSArgs {
         println!("[*] Starting reporters...");
 
         // Start reporters.
-        tokio::spawn(TX_QUEUE.start_reporter(
-            Duration::from_secs(config::get().reporters.tx_queue_report_interval_secs),
-            cancellation_token.clone(),
-        ));
-        tokio::spawn(NETWORK_STATS.start_reporter(
-            Duration::from_secs(config::get().reporters.network_stats_report_interval_secs),
-            cancellation_token.clone(),
-        ));
+        let cloned_token = cancellation_token.clone();
+        tokio::spawn(async move {
+            _ = cloned_token.run_until_cancelled(TX_QUEUE.start_reporter(Duration::from_secs(
+                config::get().reporters.tx_queue_report_interval_secs,
+            )));
+        });
 
+        let cloned_token = cancellation_token.clone();
+        tokio::spawn(async move {
+            _ = cloned_token.run_until_cancelled(NETWORK_STATS.start_reporter(
+                Duration::from_secs(config::get().reporters.network_stats_report_interval_secs),
+            ));
+        });
+
+        let cancellation_token = cancellation_token.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(config::get().benchmark.run_duration)).await;
             println!("[*] Stopping reporters...");

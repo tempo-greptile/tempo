@@ -8,7 +8,6 @@ use std::{
     time::Duration,
 };
 use thousands::Separable;
-use tokio_util::sync::CancellationToken;
 
 pub struct TxQueue {
     // TODO: RwLock? Natively concurrent deque?
@@ -74,18 +73,14 @@ impl TxQueue {
         Some(drained)
     }
 
-    pub async fn start_reporter(
-        &self,
-        measurement_interval: Duration,
-        cancellation_token: CancellationToken,
-    ) {
+    pub async fn start_reporter(&self, measurement_interval: Duration) {
         let mut last_total_added = 0u64;
         let mut last_total_popped = 0u64;
         let mut last_queue_len = 0usize;
         let mut interval = tokio::time::interval(measurement_interval);
         interval.tick().await;
 
-        while !cancellation_token.is_cancelled() {
+        loop {
             interval.tick().await;
             let total_added = self.total_added.load(Ordering::Relaxed);
             let total_popped = self.total_popped.load(Ordering::Relaxed);
