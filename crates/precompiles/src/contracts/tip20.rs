@@ -1,4 +1,4 @@
-use std::sync::LazyLock;
+use std::{cell::RefCell, rc::Rc, sync::LazyLock};
 
 use crate::{
     TIP_FEE_MANAGER_ADDRESS,
@@ -6,14 +6,16 @@ use crate::{
         ITIP20, ITIP403Registry, ITIP4217Registry, StorageProvider, TIP403Registry,
         TIP4217Registry, address_is_token_address,
         roles::{DEFAULT_ADMIN_ROLE, RolesAuthContract},
-        storage::slots::{double_mapping_slot, mapping_slot},
+        storage::mapping::{DoubleMapping, Mapping},
         token_id_to_address,
         types::{TIP20Error, TIP20Event},
     },
 };
 use alloy::{
     consensus::crypto::secp256k1 as eth_secp256k1,
-    primitives::{Address, B256, Bytes, IntoLogData, Signature as EthSignature, U256, keccak256},
+    primitives::{
+        Address, B256, Bytes, IntoLogData, Signature as EthSignature, U256, aliases::B32, keccak256,
+    },
     sol_types::SolStruct,
 };
 use revm::state::Bytecode;
@@ -43,7 +45,11 @@ pub mod slots {
 #[derive(Debug)]
 pub struct TIP20Token<'a, S: StorageProvider> {
     pub token_address: Address,
-    pub storage: &'a mut S,
+    pub storage: Rc<RefCell<&'a mut S>>,
+    pub allowances: DoubleMapping<'a, S, Address, Address>,
+    pub salts: DoubleMapping<'a, S, Address, B32>,
+    pub balances: Mapping<'a, S, Address>,
+    pub nonces: Mapping<'a, S, Address>,
 }
 
 pub static PAUSE_ROLE: LazyLock<B256> = LazyLock::new(|| keccak256(b"PAUSE_ROLE"));
@@ -116,16 +122,12 @@ impl<'a, S: StorageProvider> TIP20Token<'a, S> {
     }
 
     pub fn nonces(&mut self, call: ITIP20::noncesCall) -> U256 {
-        let slot = mapping_slot(call.owner, slots::NONCES);
-        self.storage
-            .sload(self.token_address, slot)
-            .expect("TODO: handle error")
+        self.nonces.get(call.owner).expect("TODO: handle error")
     }
 
     pub fn salts(&mut self, call: ITIP20::saltsCall) -> bool {
-        let slot = double_mapping_slot(call.owner, call.salt, slots::SALTS);
-        self.storage
-            .sload(self.token_address, slot)
+        self.salts
+            .get(call.owner, call.salt)
             .expect("TODO: handle error")
             != U256::ZERO
     }
@@ -343,7 +345,7 @@ impl<'a, S: StorageProvider> TIP20Token<'a, S> {
 
         // Check if the address is blocked from transferring
         let transfer_policy_id = self.transfer_policy_id();
-        let mut registry = TIP403Registry::new(self.storage);
+        let mut registry = TIP403Registry::new(&mut self.storage);
         if registry.is_authorized(ITIP403Registry::isAuthorizedCall {
             policyId: transfer_policy_id,
             user: call.from,
@@ -529,22 +531,30 @@ impl<'a, S: StorageProvider> TIP20Token<'a, S> {
             return Err(TIP20Error::expired());
         }
 
+        let domain_separator = self.domain_separator();
+
         // Get current nonce (increment after successful verification)
-        let nonce_slot = mapping_slot(call.owner, slots::NONCES);
-        let nonce = self
-            .storage
-            .sload(self.token_address, nonce_slot)
-            .expect("TODO: handle error");
+        let mut nonce = self.nonces.get_mut(call.owner).expect("TODO: handle error");
 
         // Recover address from signature
         let recovered_addr = {
-            let digest = self.compute_permit_digest(
-                call.owner,
-                call.spender,
-                call.value,
-                nonce,
-                U256::from(call.deadline),
-            );
+            // Build EIP-712 struct hash for Permit
+            let struct_hash = ITIP20::Permit {
+                owner: call.owner,
+                spender: call.spender,
+                value: call.value,
+                nonce: *nonce,
+                deadline: call.deadline,
+            }
+            .eip712_hash_struct();
+
+            // EIP-191 digest: 0x19 0x01 || domainSeparator || structHash
+            let mut digest_data = [0u8; 66];
+            digest_data[0] = 0x19;
+            digest_data[1] = 0x01;
+            digest_data[2..34].copy_from_slice(domain_separator.as_slice());
+            digest_data[34..66].copy_from_slice(struct_hash.as_slice());
+            let digest = keccak256(digest_data);
 
             let v_norm = if call.v >= 27 { call.v - 27 } else { call.v };
             if v_norm > 1 {
@@ -564,9 +574,7 @@ impl<'a, S: StorageProvider> TIP20Token<'a, S> {
         }
 
         // Increment nonce after successful verification
-        self.storage
-            .sstore(self.token_address, nonce_slot, nonce + U256::ONE)
-            .expect("TODO: handle error");
+        nonce.inc(U256::ONE).expect("TODO: handle error");
 
         self.set_allowance(&call.owner, &call.spender, call.value);
 
@@ -618,9 +626,14 @@ impl<'a, S: StorageProvider> TIP20Token<'a, S> {
 impl<'a, S: StorageProvider> TIP20Token<'a, S> {
     pub fn new(token_id: u64, storage: &'a mut S) -> Self {
         let token_address = token_id_to_address(token_id);
+        let storage = Rc::new(RefCell::new(storage));
 
         Self {
             token_address,
+            allowances: DoubleMapping::new(token_address, storage.clone(), slots::ALLOWANCES),
+            salts: DoubleMapping::new(token_address, storage.clone(), slots::SALTS),
+            balances: Mapping::new(token_address, storage.clone(), slots::BALANCES),
+            nonces: Mapping::new(token_address, storage.clone(), slots::NONCES),
             storage,
         }
     }
@@ -687,9 +700,9 @@ impl<'a, S: StorageProvider> TIP20Token<'a, S> {
     }
 
     // Helper to get a RolesAuthContract instance
-    pub fn get_roles_contract(&mut self) -> RolesAuthContract<'_, S> {
+    pub fn get_roles_contract(&mut self) -> RolesAuthContract<'_, impl StorageProvider> {
         RolesAuthContract::new(
-            self.storage,
+            &mut self.storage,
             self.token_address,
             slots::ROLES_BASE_SLOT,
             slots::ROLE_ADMIN_BASE_SLOT,
@@ -697,30 +710,24 @@ impl<'a, S: StorageProvider> TIP20Token<'a, S> {
     }
 
     fn get_balance(&mut self, account: &Address) -> U256 {
-        let slot = mapping_slot(account, slots::BALANCES);
-        self.storage
-            .sload(self.token_address, slot)
-            .expect("TODO: handle error")
+        self.balances.get(account).expect("TODO: handle error")
     }
 
     fn set_balance(&mut self, account: &Address, amount: U256) {
-        let slot = mapping_slot(account, slots::BALANCES);
-        self.storage
-            .sstore(self.token_address, slot, amount)
+        self.balances
+            .set(account, amount)
             .expect("TODO: handle error");
     }
 
     fn get_allowance(&mut self, owner: &Address, spender: &Address) -> U256 {
-        let slot = double_mapping_slot(owner, spender, slots::ALLOWANCES);
-        self.storage
-            .sload(self.token_address, slot)
+        self.allowances
+            .get(owner, spender)
             .expect("TODO: handle error")
     }
 
     fn set_allowance(&mut self, owner: &Address, spender: &Address, amount: U256) {
-        let slot = double_mapping_slot(owner, spender, slots::ALLOWANCES);
-        self.storage
-            .sstore(self.token_address, slot, amount)
+        self.allowances
+            .set(owner, spender, amount)
             .expect("TODO: handle error");
     }
 
@@ -755,7 +762,7 @@ impl<'a, S: StorageProvider> TIP20Token<'a, S> {
     /// Checks if the transfer is authorized.
     pub fn is_transfer_authorized(&mut self, from: &Address, to: &Address) -> bool {
         let transfer_policy_id = self.transfer_policy_id();
-        let mut registry = TIP403Registry::new(self.storage);
+        let mut registry = TIP403Registry::new(&mut self.storage);
 
         // Check if 'from' address is authorized
         let from_authorized = registry.is_authorized(ITIP403Registry::isAuthorizedCall {
@@ -910,33 +917,6 @@ impl<'a, S: StorageProvider> TIP20Token<'a, S> {
             .expect("TODO: handle error");
         Ok(())
     }
-
-    fn compute_permit_digest(
-        &mut self,
-        owner: Address,
-        spender: Address,
-        value: U256,
-        nonce: U256,
-        deadline: U256,
-    ) -> B256 {
-        // Build EIP-712 struct hash for Permit
-        let struct_hash = ITIP20::Permit {
-            owner,
-            spender,
-            value,
-            nonce,
-            deadline,
-        }
-        .eip712_hash_struct();
-
-        // EIP-191 digest: 0x19 0x01 || domainSeparator || structHash
-        let mut digest_data = [0u8; 66];
-        digest_data[0] = 0x19;
-        digest_data[1] = 0x01;
-        digest_data[2..34].copy_from_slice(self.domain_separator().as_slice());
-        digest_data[34..66].copy_from_slice(struct_hash.as_slice());
-        keccak256(digest_data)
-    }
 }
 
 #[cfg(test)]
@@ -972,12 +952,7 @@ mod tests {
         let deadline = U256::from(deadline_u64);
 
         // Build EIP-712 struct hash
-        let nonce_slot =
-            crate::contracts::storage::slots::mapping_slot(owner, super::slots::NONCES);
-        let nonce = token
-            .storage
-            .sload(token.token_address, nonce_slot)
-            .expect("Could not get nonce");
+        let nonce = token.nonces.get(owner).expect("Could not get nonce");
 
         let struct_hash = ITIP20::Permit {
             owner,
@@ -1021,10 +996,7 @@ mod tests {
 
         // Effects: allowance set and nonce incremented
         assert_eq!(token.get_allowance(&owner, &spender), value);
-        let nonce_after = token
-            .storage
-            .sload(token.token_address, nonce_slot)
-            .expect("Could not get nonce");
+        let nonce_after = token.nonces.get(owner).expect("Could not get nonce");
         assert_eq!(nonce_after, U256::ONE);
     }
 
@@ -1052,12 +1024,7 @@ mod tests {
         let deadline = U256::from(deadline_u64);
 
         // Build digest
-        let nonce_slot =
-            crate::contracts::storage::slots::mapping_slot(owner, super::slots::NONCES);
-        let nonce = token
-            .storage
-            .sload(token.token_address, nonce_slot)
-            .expect("Could not get nonce");
+        let nonce = token.nonces.get(owner).expect("Could not get nonce");
 
         let struct_hash = ITIP20::Permit {
             owner,

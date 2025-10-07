@@ -29,10 +29,7 @@ pub fn double_mapping_slot<T: AsRef<[u8]>, U: AsRef<[u8]>>(
     base_slot: U256,
 ) -> U256 {
     let intermediate_slot = mapping_slot(key1, base_slot);
-    let mut buf = [0u8; 64];
-    buf[..32].copy_from_slice(&pad_to_32(key2.as_ref()));
-    buf[32..].copy_from_slice(&intermediate_slot.to_be_bytes::<32>());
-    U256::from_be_bytes(keccak256(buf).0)
+    mapping_slot(key2, intermediate_slot)
 }
 
 #[cfg(test)]
