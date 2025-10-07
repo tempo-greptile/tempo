@@ -35,6 +35,7 @@ impl<'a, S: StorageProvider> Precompile for TIP20Factory<'a, S> {
 #[cfg(test)]
 mod tests {
     use crate::{
+        LINKING_USD_ADDRESS,
         contracts::{HashMapStorageProvider, types::TIP20Error},
         precompiles::{MUTATE_FUNC_GAS, VIEW_FUNC_GAS, expect_precompile_error},
     };
@@ -71,6 +72,7 @@ mod tests {
             name: "Test Token".to_string(),
             symbol: "TEST".to_string(),
             currency: "USD".to_string(),
+            linkingToken: LINKING_USD_ADDRESS,
             admin: sender,
         };
         let calldata = create_call.abi_encode();
@@ -81,7 +83,7 @@ mod tests {
 
         // Decode the return value (should be token_id)
         let token_id = U256::abi_decode(&result.bytes).unwrap();
-        assert_eq!(token_id, U256::ZERO);
+        assert_eq!(token_id, U256::ONE);
     }
 
     #[test]
@@ -90,36 +92,38 @@ mod tests {
         let mut factory = TIP20Factory::new(&mut factory_storage);
         let sender = Address::from([1u8; 20]);
 
-        // Get initial counter
+        // Get initial counter (starts at 1, since 0 is reserved for LinkingUSD)
         let counter_call = ITIP20Factory::tokenIdCounterCall {};
         let calldata = counter_call.abi_encode();
         let result = factory.call(&Bytes::from(calldata), &sender).unwrap();
         assert_eq!(result.gas_used, VIEW_FUNC_GAS);
         let initial_counter = U256::abi_decode(&result.bytes).unwrap();
-        assert_eq!(initial_counter, U256::ZERO);
+        assert_eq!(initial_counter, U256::from(1));
 
         // Create first token (USD supported)
         let create_call = ITIP20Factory::createTokenCall {
             name: "Token 1".to_string(),
             symbol: "TOK1".to_string(),
             currency: "USD".to_string(),
+            linkingToken: LINKING_USD_ADDRESS,
             admin: sender,
         };
         let calldata = create_call.abi_encode();
         factory.call(&Bytes::from(calldata), &sender).unwrap();
 
-        // Check counter increased
+        // Check counter increased (now 2, for the next token)
         let counter_call = ITIP20Factory::tokenIdCounterCall {};
         let calldata = counter_call.abi_encode();
         let result = factory.call(&Bytes::from(calldata), &sender).unwrap();
         let new_counter = U256::abi_decode(&result.bytes).unwrap();
-        assert_eq!(new_counter, U256::from(1));
+        assert_eq!(new_counter, U256::from(2));
 
         // Create second token with unsupported currency should fail
         let create_call = ITIP20Factory::createTokenCall {
             name: "Token 2".to_string(),
             symbol: "TOK2".to_string(),
             currency: "EUR".to_string(),
+            linkingToken: LINKING_USD_ADDRESS,
             admin: sender,
         };
         let calldata = create_call.abi_encode();
@@ -131,7 +135,7 @@ mod tests {
         let calldata = counter_call.abi_encode();
         let result = factory.call(&Bytes::from(calldata), &sender).unwrap();
         let final_counter = U256::abi_decode(&result.bytes).unwrap();
-        assert_eq!(final_counter, U256::from(2));
+        assert_eq!(final_counter, U256::from(3));
     }
 
     #[test]
@@ -146,18 +150,20 @@ mod tests {
             name: "High Precision Token".to_string(),
             symbol: "HPT".to_string(),
             currency: "USD".to_string(),
+            linkingToken: LINKING_USD_ADDRESS,
             admin: admin1,
         };
         let calldata = create_call.abi_encode();
         let result = factory.call(&Bytes::from(calldata), &admin1).unwrap();
         let token_id1 = U256::abi_decode(&result.bytes).unwrap();
-        assert_eq!(token_id1, U256::ZERO);
+        assert_eq!(token_id1, U256::ONE);
 
         // Create token with unsupported currency should fail
         let create_call = ITIP20Factory::createTokenCall {
             name: "Low Precision Token".to_string(),
             symbol: "LPT".to_string(),
             currency: "EUR".to_string(),
+            linkingToken: LINKING_USD_ADDRESS,
             admin: admin2,
         };
         let calldata = create_call.abi_encode();
@@ -169,6 +175,7 @@ mod tests {
             name: "Japanese Yen Token".to_string(),
             symbol: "JYT".to_string(),
             currency: "JPY".to_string(),
+            linkingToken: LINKING_USD_ADDRESS,
             admin: admin1,
         };
         let calldata = create_call.abi_encode();
@@ -187,6 +194,7 @@ mod tests {
             name: "No Currency Token".to_string(),
             symbol: "NCT".to_string(),
             currency: String::new(),
+            linkingToken: LINKING_USD_ADDRESS,
             admin: sender,
         };
         let calldata = create_call.abi_encode();
@@ -208,6 +216,7 @@ mod tests {
             name,
             symbol,
             currency: "USD".to_string(),
+            linkingToken: LINKING_USD_ADDRESS,
             admin: sender,
         };
         let calldata = create_call.abi_encode();
@@ -215,7 +224,7 @@ mod tests {
         assert_eq!(result.gas_used, MUTATE_FUNC_GAS);
 
         let token_id = U256::abi_decode(&result.bytes).unwrap();
-        assert_eq!(token_id, U256::ZERO);
+        assert_eq!(token_id, U256::ONE);
     }
 
     #[test]
@@ -231,6 +240,7 @@ mod tests {
             name: "Caller1 Token".to_string(),
             symbol: "C1T".to_string(),
             currency: "USD".to_string(),
+            linkingToken: LINKING_USD_ADDRESS,
             admin: caller1,
         };
         let calldata = create_call.abi_encode();
@@ -242,6 +252,7 @@ mod tests {
             name: "Caller2 Token".to_string(),
             symbol: "C2T".to_string(),
             currency: "EUR".to_string(),
+            linkingToken: LINKING_USD_ADDRESS,
             admin: caller2,
         };
         let calldata = create_call.abi_encode();
@@ -253,13 +264,14 @@ mod tests {
             name: "Caller3 Token".to_string(),
             symbol: "C3T".to_string(),
             currency: "GBP".to_string(),
+            linkingToken: LINKING_USD_ADDRESS,
             admin: caller1, // Different admin than caller
         };
         let calldata = create_call.abi_encode();
         let result = factory.call(&Bytes::from(calldata), &caller3);
         expect_precompile_error(&result, TIP20Error::invalid_currency());
 
-        // Verify only first token was created
-        assert_eq!(token_id1, U256::ZERO);
+        // Verify only first token was created (ID 1, since ID 0 reserved for LinkingUSD)
+        assert_eq!(token_id1, U256::from(1));
     }
 }

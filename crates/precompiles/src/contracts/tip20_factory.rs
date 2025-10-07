@@ -1,6 +1,7 @@
 use crate::{
     TIP20_FACTORY_ADDRESS,
     contracts::{
+        is_tip20,
         storage::StorageProvider,
         tip20::TIP20Token,
         token_id_to_address,
@@ -30,7 +31,8 @@ impl<'a, S: StorageProvider> TIP20Factory<'a, S> {
 
     /// Initializes the TIP20 factory contract.
     ///
-    /// This ensures the [`TIP20Factory`] account isn't empty and prevents state clear.
+    /// Sets the initial token counter to 1, reserving token ID 0 for the LinkingUSD precompile.
+    /// Also ensures the [`TIP20Factory`] account isn't empty and prevents state clear.
     pub fn initialize(&mut self) -> Result<(), TIP20Error> {
         // must ensure the account is not empty, by setting some code
         self.storage
@@ -39,6 +41,7 @@ impl<'a, S: StorageProvider> TIP20Factory<'a, S> {
                 Bytecode::new_legacy(Bytes::from_static(&[0xef])),
             )
             .expect("TODO: handle error");
+
         Ok(())
     }
 
@@ -47,6 +50,10 @@ impl<'a, S: StorageProvider> TIP20Factory<'a, S> {
         sender: &Address,
         call: ITIP20Factory::createTokenCall,
     ) -> Result<U256, TIP20Error> {
+        if !is_tip20(&call.linkingToken) {
+            return Err(TIP20Error::invalid_linking_token());
+        }
+
         let token_id = self.token_id_counter();
         trace!(%sender, %token_id, ?call, "Create token");
 
@@ -63,6 +70,7 @@ impl<'a, S: StorageProvider> TIP20Factory<'a, S> {
             &call.name,
             &call.symbol,
             &call.currency,
+            call.linkingToken,
             &call.admin,
         )?;
 
@@ -85,9 +93,16 @@ impl<'a, S: StorageProvider> TIP20Factory<'a, S> {
     }
 
     pub fn token_id_counter(&mut self) -> U256 {
-        self.storage
+        let counter = self
+            .storage
             .sload(TIP20_FACTORY_ADDRESS, slots::TOKEN_ID_COUNTER)
-            .expect("TODO: handle error")
+            .expect("TODO: handle error");
+
+        if counter.is_zero() {
+            U256::ONE
+        } else {
+            counter
+        }
     }
 }
 
@@ -110,6 +125,7 @@ mod tests {
             name: "Test Token".to_string(),
             symbol: "TEST".to_string(),
             currency: "USD".to_string(),
+            linkingToken: crate::LINKING_USD_ADDRESS,
             admin: sender,
         };
 

@@ -29,6 +29,7 @@ sol! {
         function symbol() external view returns (string);
         function decimals() external view returns (uint8);
         function totalSupply() external view returns (uint256);
+        function linkingToken() external view returns (address);
         function balanceOf(address account) external view returns (uint256);
         function transfer(address to, uint256 amount) external returns (bool);
         function approve(address spender, uint256 amount) external returns (bool);
@@ -48,7 +49,7 @@ sol! {
         function mintWithMemo(address to, uint256 amount, bytes32 memo) external;
         function burnWithMemo(uint256 amount, bytes32 memo) external;
         function transferWithMemo(address to, uint256 amount, bytes32 memo) external;
-        function transferFromWithMemo(address from, address to, uint256 amount, bytes32 memo) external;
+        function transferFromWithMemo(address from, address to, uint256 amount, bytes32 memo) external bool;
 
         // Admin Functions
         function changeTransferPolicyId(uint64 newPolicyId) external;
@@ -92,6 +93,8 @@ sol! {
         error SaltAlreadyUsed();
         error ContractPaused();
         error InvalidCurrency();
+        error InvalidLinkingToken();
+        error TransfersDisabled();
     }
 
     #[derive(Debug, PartialEq, Eq)]
@@ -103,6 +106,7 @@ sol! {
             string memory name,
             string memory symbol,
             string memory currency,
+            address linkingToken,
             address admin
         ) external returns (uint256);
 
@@ -437,6 +441,11 @@ impl TIP20Error {
         Self::InvalidPayload(ITIP20::InvalidPayload {})
     }
 
+    /// Creates an error for invalid linking token.
+    pub const fn invalid_linking_token() -> Self {
+        Self::InvalidLinkingToken(ITIP20::InvalidLinkingToken {})
+    }
+
     /// Creates an error for invalid or reused nonce.
     pub const fn invalid_nonce() -> Self {
         Self::InvalidNonce(ITIP20::InvalidNonce {})
@@ -475,6 +484,11 @@ impl TIP20Error {
     /// Creates an error for invalid currency.
     pub const fn invalid_currency() -> Self {
         Self::InvalidCurrency(ITIP20::InvalidCurrency {})
+    }
+
+    /// Creates an error for transfers being disabled.
+    pub const fn transfers_disabled() -> Self {
+        Self::TransfersDisabled(ITIP20::TransfersDisabled {})
     }
 }
 
