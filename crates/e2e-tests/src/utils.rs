@@ -28,7 +28,7 @@ impl Node {
 pub async fn setup_validators(count: usize) -> Vec<Node> {
     let prefix = &Uuid::new_v4().to_string()[..8];
     let hostnames = (1..count)
-        .map(|i| format!("{}-node-{i}", prefix))
+        .map(|i| format!("{prefix}-node-{i}"))
         .collect::<Vec<_>>();
 
     let configs = generate_commonware_config(hostnames.clone());
@@ -55,7 +55,7 @@ pub async fn setup_validators(count: usize) -> Vec<Node> {
 
     let trusted_peers = reth_peers
         .iter()
-        .map(|(_, peer)| format!("{}", peer))
+        .map(|(_, peer)| format!("{peer}"))
         .collect::<Vec<_>>()
         .join(",");
 
@@ -120,8 +120,7 @@ pub async fn setup_validators(count: usize) -> Vec<Node> {
 }
 
 fn generate_commonware_config(hostnames: Vec<String>) -> Vec<(String, String, Config)> {
-    let seed = Some(10);
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed.unwrap_or_else(rand::random::<u64>));
+    let mut rng = rand::rngs::StdRng::seed_from_u64(10);
     let mut signers = (0..hostnames.len())
         .map(|_| PrivateKey::from_rng(&mut rng))
         .collect::<Vec<_>>();

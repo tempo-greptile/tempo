@@ -12,8 +12,10 @@ workspace = true
 
 [dependencies]
 alloy = { workspace = true, features = [
-    "full",
+    "network",
     "providers",
+    "reqwest",
+    "reqwest-rustls-tls",
     "signers",
     "signer-mnemonic-all-languages",
 ] }
