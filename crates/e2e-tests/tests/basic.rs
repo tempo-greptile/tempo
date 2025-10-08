@@ -1,37 +1,44 @@
-use alloy::providers::{Provider, ProviderBuilder};
 use std::time::Duration;
-use tempo_e2e_tests::utils::setup_validators;
-use tokio::time::sleep;
-use url::Url;
+use tempo_e2e_tests::{
+    node::setup_validators,
+    utils::{wait_for_block, wait_for_blocks, wait_for_live_rpc},
+};
 
 #[tokio::test]
 async fn basic_spin_up() {
     let validators = setup_validators(4).await;
 
-    let first_node_url = validators
-        .first()
-        .unwrap()
-        .get_eth_rpc_url()
-        .await
-        .expect("there's more than one node");
+    let provider = validators.first().unwrap().get_eth_provider().await;
+    assert!(
+        wait_for_live_rpc(provider.clone(), Duration::from_secs(45)).await,
+        "network failed to start"
+    );
+    assert!(
+        wait_for_block(provider, 4, Duration::from_secs(45)).await,
+        "network failed to produce blocks"
+    );
+}
 
-    let provider = ProviderBuilder::new()
-        .connect_http(Url::parse(&first_node_url).unwrap());
+#[tokio::test]
+async fn network_survives_one_validator_down() {
+    let validators = setup_validators(4).await;
 
-    for _ in 1..30 {
-        sleep(Duration::from_secs(1)).await;
+    let provider = validators.first().unwrap().get_eth_provider().await;
 
-        let block_number_result = provider.get_block_number().await;
+    assert!(
+        wait_for_live_rpc(provider.clone(), Duration::from_secs(45)).await,
+        "network failed to start"
+    );
+    assert!(
+        wait_for_block(provider.clone(), 4, Duration::from_secs(45)).await,
+        "network failed to produce blocks"
+    );
 
-        match block_number_result {
-            Ok(block_number) => {
-                if block_number > 4 {
-                    break;
-                }
-            }
-            Err(_) => continue,
-        }
-    }
+    let container = validators.get(1).unwrap().container();
+    container.stop().await.unwrap();
 
-    assert!(provider.get_block_number().await.is_ok_and(|i| i > 4));
+    assert!(
+        wait_for_blocks(provider.clone(), 5, Duration::from_secs(30)).await,
+        "network stopped producing blocks"
+    );
 }
