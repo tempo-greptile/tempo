@@ -58,6 +58,7 @@ done
 
 echo "Step 1: Running tempo-bench with max-tps..."
 cargo run --bin tempo-bench run-max-tps \
+  --duration 300 \
   --tps 20000 \
   --target-urls http://localhost:8545 \
   --disable-thread-pinning true \
