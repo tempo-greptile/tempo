@@ -121,6 +121,7 @@ def parse_log_file(log_file: Path, block_range: Optional[Sequence[int]] = None) 
     payload_to_received_times: list[float] = []
 
     built_payload_times: dict[int, dict[str, object]] = {}
+    current_block_context: Optional[dict[str, object]] = None
 
     with log_file.open("r", encoding="utf-8") as handle:
         for raw_line in handle:
@@ -157,6 +158,12 @@ def parse_log_file(log_file: Path, block_range: Optional[Sequence[int]] = None) 
                     block_number = int(number_match.group(1))
                     block_info = built_payload_times.get(block_number)
                     if block_info:
+                        # Set current block context for subsequent state root processing
+                        current_block_context = {
+                            "block_number": block_number,
+                            "include": block_info["include"],
+                            "in_range": block_range is None or (block_range[0] <= block_number <= block_range[1])
+                        }
                         if (
                             block_info["include"]
                             and (block_range is None or (block_range[0] <= block_number <= block_range[1]))
@@ -169,10 +176,12 @@ def parse_log_file(log_file: Path, block_range: Optional[Sequence[int]] = None) 
 
             elif "State root task finished" in clean_line:
                 match = re.search(r"elapsed\s*=\s*([\d.]+(?:ms|µs|s))", clean_line)
-                if match:
-                    time_ms = parse_time_to_ms(match.group(1))
-                    if time_ms is not None:
-                        explicit_state_root_times.append(time_ms)
+                if match and current_block_context:
+                    # Only include state root times if the block meets the same filtering criteria as other metrics
+                    if current_block_context["include"] and current_block_context["in_range"]:
+                        time_ms = parse_time_to_ms(match.group(1))
+                        if time_ms is not None:
+                            explicit_state_root_times.append(time_ms)
 
             elif "Block added to canonical chain" in clean_line:
                 number_match = re.search(r"number\s*=\s*(\d+)", clean_line)
@@ -187,6 +196,8 @@ def parse_log_file(log_file: Path, block_range: Optional[Sequence[int]] = None) 
                         time_ms = parse_time_to_ms(match.group(1))
                         if time_ms is not None:
                             block_added_times.append(time_ms)
+                # Clear the block context after processing the block
+                current_block_context = None
 
     return build_times, explicit_state_root_times, payload_to_received_times, block_added_times
 
