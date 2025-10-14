@@ -2,41 +2,41 @@
   "label": "main",
   "log_file": "/Users/yongkang/Code/tempo/tempo/debug_main.log",
   "block_range": [
-    21049,
-    21056
+    21384,
+    21392
   ],
   "metrics": {
     "Build Payload Time": {
-      "count": 8,
-      "mean": 481.6597865,
-      "median": 405.3758755,
-      "min": 83.7995,
-      "max": 1277.406,
-      "std_dev": 372.6708515638298
+      "count": 9,
+      "mean": 380.33025,
+      "median": 368.995667,
+      "min": 218.107083,
+      "max": 510.013666,
+      "std_dev": 96.06324663091054
     },
     "Payload Delivery Lag": {
-      "count": 8,
-      "mean": 8.1175,
-      "median": 5.532,
-      "min": 2.0309999999999997,
-      "max": 24.605999999999998,
-      "std_dev": 7.302413730111043
+      "count": 9,
+      "mean": 5.7603333333333335,
+      "median": 5.063,
+      "min": 3.8890000000000002,
+      "max": 8.706,
+      "std_dev": 1.5593844939590749
     },
     "Explicit State Root Task": {
-      "count": 227,
-      "mean": 16.71103908370044,
-      "median": 7.971584,
-      "min": 0.006125,
-      "max": 162.278791,
-      "std_dev": 21.041025655021222
+      "count": 9,
+      "mean": 0.008546222222222222,
+      "median": 0.0055,
+      "min": 0.005,
+      "max": 0.03241599999999999,
+      "std_dev": 0.008975136332916866
     },
     "Block Added to Canonical Chain": {
-      "count": 8,
-      "mean": 2251.57192725,
-      "median": 2343.6900835,
-      "min": 810.733167,
-      "max": 3067.3350419999997,
-      "std_dev": 748.1639568163639
+      "count": 9,
+      "mean": 2238.9918332222223,
+      "median": 2090.5855,
+      "min": 1290.1447079999998,
+      "max": 3550.105334,
+      "std_dev": 660.5007020660964
     }
   }
 }

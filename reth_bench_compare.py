@@ -288,7 +288,8 @@ def parse_log_file(log_file: Path, block_range: Optional[Sequence[int]] = None) 
                 if match and number_match:
                     block_number = int(number_match.group(1))
                     total_transactions = int(txs_match.group(1)) if txs_match else 0
-                    if total_transactions <= 1:
+                    # Apply consistent filtering: exclude block #1 and blocks with ≤1 tx
+                    if total_transactions <= 1 or block_number == 1:
                         continue
                     if block_range is None or (block_range[0] <= block_number <= block_range[1]):
                         time_ms = parse_time_to_ms(match.group(1))
@@ -533,7 +534,9 @@ def start_tempo_node(log_path: Path) -> None:
             for line in stream:
                 sys.stdout.write(line)
                 sys.stdout.flush()
-                bench_handle.write(line)
+                # Strip ANSI color codes before writing to bench.log
+                clean_line = strip_ansi_codes(line)
+                bench_handle.write(clean_line)
                 bench_handle.flush()
                 if LOG_SELECTORS.search(line):
                     log_handle.write(line)
