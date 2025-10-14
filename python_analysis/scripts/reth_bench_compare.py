@@ -641,10 +641,11 @@ def print_comparison(before_file: Path, after_file: Path) -> None:
 
 
 def main() -> None:
-    main_log = SCRIPT_DIR / "debug_main.log"
-    feature_log = SCRIPT_DIR / "debug_feature.log"
-    main_metrics = SCRIPT_DIR / "metrics_main.json"
-    feature_metrics = SCRIPT_DIR / "metrics_feature.json"
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    main_log = SCRIPT_DIR / f"debug_main_{timestamp}.log"
+    feature_log = SCRIPT_DIR / f"debug_feature_{timestamp}.log"
+    main_metrics = SCRIPT_DIR / f"metrics_main_{timestamp}.json"
+    feature_metrics = SCRIPT_DIR / f"metrics_feature_{timestamp}.json"
 
     # Feature-specific arguments for testing engine worker counts
     feature_args = [
