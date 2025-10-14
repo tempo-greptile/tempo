@@ -19,12 +19,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ANALYZE_SCRIPT = REPO_ROOT / "analyze_log.py"
 
 
+DEFAULT_LOG_PATH = os.environ.get(
+    "TEMPO_LOG_FILE",
+    str(Path(__file__).resolve().parents[1] / "logs" / "debug.log"),
+)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run tempo bench workload and stop the node.")
     parser.add_argument(
         "--log",
-        default=os.environ.get("TEMPO_LOG_FILE", "debug.log"),
-        help="Path to debug log produced by the tempo node (default: TEMPO_LOG_FILE or debug.log)",
+        default=DEFAULT_LOG_PATH,
+        help="Path to debug log produced by the tempo node (default: logs/debug.log or TEMPO_LOG_FILE env)",
     )
     parser.add_argument(
         "--json-output",
@@ -62,8 +68,6 @@ def run_tempo_bench(duration_seconds: int) -> None:
         "--bin",
         "tempo-bench",
         "run-max-tps",
-        "--duration",
-        str(duration_seconds),
         "--tps",
         "20000",
         "--target-urls",
@@ -170,6 +174,9 @@ def analyze_logs(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = parse_args()
+
+    log_path = Path(args.log)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     run_tempo_bench(args.duration_seconds)
 
