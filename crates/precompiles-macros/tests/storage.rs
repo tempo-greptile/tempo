@@ -7,6 +7,7 @@ mod storage {
 
 use alloy::primitives::{Address, U256};
 use storage::{PrecompileStorageProvider, hashmap::HashMapStorageProvider};
+use tempo_precompiles::error;
 use tempo_precompiles_macros::contract;
 
 // Helper to generate addresses

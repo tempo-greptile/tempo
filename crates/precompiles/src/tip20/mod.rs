@@ -8,8 +8,11 @@ use tempo_precompiles_macros::contract;
 
 use crate::{
     LINKING_USD_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
-    error::Result,
-    storage::PrecompileStorageProvider,
+    error::TempoPrecompileError,
+    storage::{
+        PrecompileStorageProvider,
+        slots::{double_mapping_slot, mapping_slot},
+    },
     tip20::roles::{DEFAULT_ADMIN_ROLE, RolesAuthContract},
     tip20_factory::TIP20Factory,
     tip403_registry::{ITIP403Registry, TIP403Registry},

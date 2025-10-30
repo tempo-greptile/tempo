@@ -76,9 +76,9 @@ fn gen_match_arm(trait_name: &Ident, result: &GetterFn<'_>) -> TokenStream {
         }
         FunctionKind::Mutate => {
             let call_expr = if func.params.is_empty() {
-                quote! { #trait_name::#method_name(self, s) }
+                quote! { #trait_name::#method_name(self, *s) }
             } else {
-                quote! { #trait_name::#method_name(self, s, call) }
+                quote! { #trait_name::#method_name(self, *s, call) }
             };
             quote! {
                 #call_type::SELECTOR => {
@@ -92,9 +92,9 @@ fn gen_match_arm(trait_name: &Ident, result: &GetterFn<'_>) -> TokenStream {
         }
         FunctionKind::MutateVoid => {
             let call_expr = if func.params.is_empty() {
-                quote! { #trait_name::#method_name(self, s) }
+                quote! { #trait_name::#method_name(self, *s) }
             } else {
-                quote! { #trait_name::#method_name(self, s, call) }
+                quote! { #trait_name::#method_name(self, *s, call) }
             };
             quote! {
                 #call_type::SELECTOR => {

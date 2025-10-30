@@ -262,12 +262,12 @@ fn gen_call_trait_method(result: &GetterFn<'_>) -> TokenStream {
             }
         },
         false if has_params => quote! {
-            fn #method_name(&mut self, msg_sender: &::alloy::primitives::Address, call: #call_type) -> crate::error::Result<#return_type> {
+            fn #method_name(&mut self, msg_sender: ::alloy::primitives::Address, call: #call_type) -> crate::error::Result<#return_type> {
                 #body
             }
         },
         false => quote! {
-            fn #method_name(&mut self, msg_sender: &::alloy::primitives::Address) -> crate::error::Result<#return_type> {
+            fn #method_name(&mut self, msg_sender: ::alloy::primitives::Address) -> crate::error::Result<#return_type> {
                 #body
             }
         },
@@ -486,7 +486,7 @@ mod tests_trait {
             GetterInfo::Direct { field: &field },
         )];
 
-        let trait_code = gen_trait_and_impl(&struct_name, &interface_type, &matches);
+        let trait_code = gen_trait_and_impl(&struct_name, &[interface_type], &matches);
         let trait_str = trait_code.to_string();
 
         assert!(trait_str.contains("trait _TIP20TokenStorage"));
@@ -511,7 +511,7 @@ mod tests_trait {
 
         let matches = vec![create_match_result(&func, GetterInfo::NoMatch)];
 
-        let trait_code = gen_trait_and_impl(&struct_name, &interface_type, &matches);
+        let trait_code = gen_trait_and_impl(&struct_name, &[interface_type], &matches);
         let trait_str = trait_code.to_string();
 
         assert!(trait_str.contains("fn transfer"));

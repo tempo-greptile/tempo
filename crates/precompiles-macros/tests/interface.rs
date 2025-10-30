@@ -56,7 +56,8 @@ pub use ITestToken::ITestTokenErrors as TestTokenError;
 
 // Re-export helper functions so macro-generated code can find them via `crate::`
 pub use tempo_precompiles::{
-    METADATA_GAS, MUTATE_FUNC_GAS, Precompile, VIEW_FUNC_GAS, metadata, mutate, mutate_void, view,
+    METADATA_GAS, MUTATE_FUNC_GAS, Precompile, VIEW_FUNC_GAS, error, metadata, mutate, mutate_void,
+    view,
 };
 
 // Helper to generate addresses
@@ -91,7 +92,7 @@ impl<S: storage::PrecompileStorageProvider> TestTokenCall for TestToken<'_, S> {
         s: Address,
         call: ITestToken::transferCall,
     ) -> tempo_precompiles::error::Result<bool> {
-        let balance = self._get_balances(*s)?;
+        let balance = self._get_balances(s)?;
         if call.amount > balance {
             return Err(tempo_precompiles::error::TempoPrecompileError::Fatal(
                 format!(
@@ -100,7 +101,7 @@ impl<S: storage::PrecompileStorageProvider> TestTokenCall for TestToken<'_, S> {
                 ),
             ));
         }
-        self._set_balances(*s, balance - call.amount)?;
+        self._set_balances(s, balance - call.amount)?;
         let to_balance = self._get_balances(call.to)?;
         self._set_balances(call.to, to_balance + call.amount)?;
         Ok(true)
@@ -111,7 +112,7 @@ impl<S: storage::PrecompileStorageProvider> TestTokenCall for TestToken<'_, S> {
         s: Address,
         call: ITestToken::approveCall,
     ) -> tempo_precompiles::error::Result<bool> {
-        self._set_allowances(*s, call.spender, call.amount)?;
+        self._set_allowances(s, call.spender, call.amount)?;
         Ok(true)
     }
 
@@ -130,7 +131,7 @@ impl<S: storage::PrecompileStorageProvider> TestTokenCall for TestToken<'_, S> {
         s: Address,
         call: ITestToken::burnCall,
     ) -> tempo_precompiles::error::Result<()> {
-        let balance = self._get_balances(*s)?;
+        let balance = self._get_balances(s)?;
         if call.amount > balance {
             return Err(tempo_precompiles::error::TempoPrecompileError::Fatal(
                 format!(
@@ -139,7 +140,7 @@ impl<S: storage::PrecompileStorageProvider> TestTokenCall for TestToken<'_, S> {
                 ),
             ));
         }
-        self._set_balances(*s, balance - call.amount)?;
+        self._set_balances(s, balance - call.amount)?;
         Ok(())
     }
 }
@@ -665,13 +666,13 @@ fn test_multi_interface_contract() {
             s: Address,
             call: ITestToken::transferCall,
         ) -> tempo_precompiles::error::Result<bool> {
-            let balance = self._get_balances(*s)?;
+            let balance = self._get_balances(s)?;
             if call.amount > balance {
                 return Err(tempo_precompiles::error::TempoPrecompileError::Fatal(
                     "InsufficientBalance".to_string(),
                 ));
             }
-            self._set_balances(*s, balance - call.amount)?;
+            self._set_balances(s, balance - call.amount)?;
             let to_balance = self._get_balances(call.to)?;
             self._set_balances(call.to, to_balance + call.amount)?;
             Ok(true)
@@ -682,7 +683,7 @@ fn test_multi_interface_contract() {
             s: Address,
             call: ITestToken::approveCall,
         ) -> tempo_precompiles::error::Result<bool> {
-            self._set_allowances(*s, call.spender, call.amount)?;
+            self._set_allowances(s, call.spender, call.amount)?;
             Ok(true)
         }
 
@@ -701,13 +702,13 @@ fn test_multi_interface_contract() {
             s: Address,
             call: ITestToken::burnCall,
         ) -> tempo_precompiles::error::Result<()> {
-            let balance = self._get_balances(*s)?;
+            let balance = self._get_balances(s)?;
             if call.amount > balance {
                 return Err(tempo_precompiles::error::TempoPrecompileError::Fatal(
                     "InsufficientBalance".to_string(),
                 ));
             }
-            self._set_balances(*s, balance - call.amount)?;
+            self._set_balances(s, balance - call.amount)?;
             Ok(())
         }
 
