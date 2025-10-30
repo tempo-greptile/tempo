@@ -1,7 +1,9 @@
+pub mod amm;
 pub mod dex;
 
 mod request;
 
+pub use amm::{TempoAmm, TempoAmmApiServer};
 pub use dex::{TempoDex, TempoDexApiServer};
 pub use request::TempoTransactionRequest;
 

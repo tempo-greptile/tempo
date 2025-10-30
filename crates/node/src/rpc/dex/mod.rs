@@ -6,8 +6,9 @@ use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_node_core::rpc::result::internal_rpc_err;
 use reth_rpc_eth_api::RpcNodeCore;
 
-mod books;
 pub mod types;
+
+mod books;
 
 #[rpc(server, namespace = "dex")]
 pub trait TempoDexApi {
