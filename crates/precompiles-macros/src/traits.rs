@@ -3,7 +3,11 @@
 //! This module generates custom traits, with a default implementation for getter functions,
 //! that allow for easy call interactions with the contract.
 
-use crate::{FieldInfo, interface::InterfaceFunction, utils::extract_mapping_types};
+use crate::{
+    FieldInfo,
+    interface::{Interface, InterfaceFunction},
+    utils::extract_mapping_types,
+};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Ident, Type};
@@ -96,23 +100,103 @@ fn match_by_type<'a>(func: &'a InterfaceFunction, field: &'a FieldInfo) -> Gette
     }
 }
 
-/// Generates storage trait, storage impl, and interface trait with default methods.
-pub(crate) fn gen_trait_and_impl<'a>(
-    ident: &Ident,
-    _interface_types: &[Type],
-    match_results: &[GetterFn<'a>],
+/// Generates storage trait, storage impl, and per-interface traits with default methods.
+pub(crate) fn gen_traits_and_impls(
+    struct_name: &Ident,
+    interface_data: &[(Type, Interface)],
+    fields: &[FieldInfo],
 ) -> TokenStream {
-    let s_name = format_ident!("_{}Storage", ident);
-    let c_name = format_ident!("{}Call", ident);
+    let storage_trait_name = format_ident!("_{}Storage", struct_name);
 
-    let storage_trait = gen_storage_trait(&s_name, match_results);
-    let storage_impl = gen_storage_impl(ident, &s_name, match_results);
-    let call_trait = gen_call_trait(&c_name, &s_name, match_results);
+    // Collect all functions across all interfaces for storage trait generation
+    let all_funcs: Vec<InterfaceFunction> = interface_data
+        .iter()
+        .flat_map(|(_, interface)| interface.functions.clone())
+        .collect();
+
+    let all_getters = find_getters(&all_funcs, fields);
+
+    let storage_trait = gen_storage_trait(&storage_trait_name, &all_getters);
+    let storage_impl = gen_storage_impl(struct_name, &storage_trait_name, &all_getters);
+
+    // Generate one trait per interface
+    let num_interfaces = interface_data.len();
+    let interface_traits: Vec<TokenStream> = interface_data
+        .iter()
+        .map(|(interface_type, interface)| {
+            let interface_getters = find_getters(&interface.functions, fields);
+            gen_interface_trait(
+                struct_name,
+                interface_type,
+                &storage_trait_name,
+                &interface_getters,
+                num_interfaces,
+            )
+        })
+        .collect();
 
     quote! {
         #storage_trait
         #storage_impl
-        #call_trait
+        #(#interface_traits)*
+    }
+}
+
+/// Generates a single interface trait.
+///
+/// Naming pattern:
+/// - Single interface: `<ContractName>Call`
+/// - Multiple interfaces: `<ContractName>_<InterfaceName>Call`
+fn gen_interface_trait(
+    struct_name: &Ident,
+    interface_type: &Type,
+    storage_trait_name: &Ident,
+    match_results: &[GetterFn<'_>],
+    num_interfaces: usize,
+) -> TokenStream {
+    // Extract interface name from type
+    let interface_ident = crate::utils::try_extract_type_ident(interface_type)
+        .expect("Failed to extract interface identifier");
+
+    // Use simpler naming for single-interface contracts
+    let trait_name = if num_interfaces == 1 {
+        format_ident!("{}Call", struct_name)
+    } else {
+        format_ident!("{}_{}", struct_name, interface_ident)
+    };
+
+    let interface_methods: Vec<TokenStream> = match_results
+        .iter()
+        .map(|result| gen_call_trait_method(result))
+        .collect();
+
+    // Collect auto-implemented getter signatures for documentation
+    let auto_impl_getters: Vec<String> = match_results
+        .iter()
+        .filter(|result| !matches!(result.field_match, GetterInfo::NoMatch))
+        .map(|result| format!("- `{}`", gen_method_signature(result.function)))
+        .collect();
+
+    let trait_doc = if auto_impl_getters.is_empty() {
+        quote! {
+            #[doc = concat!("Trait for `", stringify!(#interface_ident), "` interface implementation.")]
+        }
+    } else {
+        let getter_list = auto_impl_getters.join("\n");
+        let doc = format!(
+            "Trait for `{interface_ident}` interface implementation.\n\n## Auto-implemented getters:\n{getter_list}",
+        );
+        quote! {
+            #[doc = #doc]
+        }
+    };
+
+    quote! {
+        #trait_doc
+        #[allow(non_camel_case_types)]
+        pub trait #trait_name: #storage_trait_name {
+            #(#interface_methods)*
+        }
     }
 }
 
@@ -211,46 +295,6 @@ fn gen_storage_method_sig_or_impl(gen_sig: bool, result: &GetterFn<'_>) -> Token
             }
         }
         GetterInfo::NoMatch => unreachable!("`GetterInfo::NoMatch` should be filtered out"),
-    }
-}
-
-/// Generates the call trait with default implementations for getter methods.
-fn gen_call_trait(
-    trait_name: &Ident,
-    storage_trait_name: &Ident,
-    match_results: &[GetterFn<'_>],
-) -> TokenStream {
-    let interface_methods: Vec<TokenStream> = match_results
-        .iter()
-        .map(|result| gen_call_trait_method(result))
-        .collect();
-
-    // Collect auto-implemented getter signatures
-    let auto_impl_getters: Vec<String> = match_results
-        .iter()
-        .filter(|result| !matches!(result.field_match, GetterInfo::NoMatch))
-        .map(|result| format!("- `{}`", gen_method_signature(result.function)))
-        .collect();
-
-    let trait_doc = if auto_impl_getters.is_empty() {
-        quote! {
-            /// Trait for contract call implementation.
-        }
-    } else {
-        let getter_list = auto_impl_getters.join("\n");
-        let doc = format!(
-            "Trait for contract call implementation.\n\n## Auto-implemented getters:\n{getter_list}\n"
-        );
-        quote! {
-            #[doc = #doc]
-        }
-    };
-
-    quote! {
-        #trait_doc
-        pub trait #trait_name: #storage_trait_name {
-            #(#interface_methods)*
-        }
     }
 }
 
@@ -530,16 +574,6 @@ mod tests_trait {
     use crate::{FieldInfo, interface::InterfaceFunction};
     use syn::parse_quote;
 
-    fn create_match_result<'a>(
-        function: &'a InterfaceFunction,
-        field_match: GetterInfo<'a>,
-    ) -> GetterFn<'a> {
-        GetterFn {
-            function,
-            field_match,
-        }
-    }
-
     #[test]
     fn test_generate_trait_with_direct_match() {
         let struct_name: Ident = parse_quote!(TIP20Token);
@@ -561,15 +595,19 @@ mod tests_trait {
             effective_name: std::cell::OnceCell::new(),
         };
 
-        let matches = vec![create_match_result(
-            &func,
-            GetterInfo::Direct { field: &field },
-        )];
+        let interface = crate::interface::Interface {
+            functions: vec![func],
+            events: vec![],
+            errors: vec![],
+        };
 
-        let trait_code = gen_trait_and_impl(&struct_name, &[interface_type], &matches);
+        let interface_data = vec![(interface_type, interface)];
+
+        let trait_code = gen_traits_and_impls(&struct_name, &interface_data, &[field]);
         let trait_str = trait_code.to_string();
 
         assert!(trait_str.contains("trait _TIP20TokenStorage"));
+        // Single interface uses simpler naming
         assert!(trait_str.contains("trait TIP20TokenCall"));
         assert!(trait_str.contains("fn name"));
         assert!(trait_str.contains("impl"));
@@ -589,9 +627,15 @@ mod tests_trait {
             call_type_path: quote!(ITIP20::transferCall),
         };
 
-        let matches = vec![create_match_result(&func, GetterInfo::NoMatch)];
+        let interface = crate::interface::Interface {
+            functions: vec![func],
+            events: vec![],
+            errors: vec![],
+        };
 
-        let trait_code = gen_trait_and_impl(&struct_name, &[interface_type], &matches);
+        let interface_data = vec![(interface_type, interface)];
+
+        let trait_code = gen_traits_and_impls(&struct_name, &interface_data, &[]);
         let trait_str = trait_code.to_string();
 
         assert!(trait_str.contains("fn transfer"));

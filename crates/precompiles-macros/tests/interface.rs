@@ -654,8 +654,9 @@ fn test_multi_interface_contract() {
         pub owner: Address,
     }
 
-    impl<S: storage::PrecompileStorageProvider> MultiInterfaceTokenCall for MultiInterfaceToken<'_, S> {
-        // ITestToken methods (some auto-generated: name, symbol, balanceOf, allowance)
+    // Implement ITestToken methods
+    impl<S: storage::PrecompileStorageProvider> MultiInterfaceToken_ITestToken for MultiInterfaceToken<'_, S> {
+        // Some methods auto-generated: name, symbol, balanceOf, allowance
         fn decimals(&mut self) -> tempo_precompiles::error::Result<u8> {
             Ok(18)
         }
@@ -709,9 +710,10 @@ fn test_multi_interface_contract() {
             self._set_balances(s, balance - amount)?;
             Ok(())
         }
-
-        // IMetadata methods (auto-generated: version, owner)
     }
+
+    // Implement IMetadata methods (all auto-generated: version, owner)
+    impl<S: storage::PrecompileStorageProvider> MultiInterfaceToken_IMetadata for MultiInterfaceToken<'_, S> {}
 
     let mut storage = HashMapStorageProvider::new(1);
     let addr = test_address(1);

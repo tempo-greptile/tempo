@@ -120,27 +120,34 @@ fn gen_contract_impl(
     interfaces: &[Type],
     fields: &[FieldInfo],
 ) -> syn::Result<proc_macro2::TokenStream> {
-    // Parse and aggregate functions/events/errors from all interfaces
-    let (all_funcs, all_errors, events) = interfaces.iter().try_fold(
-        (Vec::new(), Vec::new(), Vec::new()),
-        |(mut funcs, mut errs, mut events), interface| {
+    // Parse each interface and collect per-interface data
+    let interface_data: Vec<_> = interfaces
+        .iter()
+        .map(|interface| {
             let parsed = interface::parse_interface(interface)?;
-            funcs.extend(parsed.functions);
+            Ok::<_, syn::Error>((interface.clone(), parsed))
+        })
+        .collect::<syn::Result<_>>()?;
+
+    // Aggregate functions, errors, and events for dispatcher and error generation
+    let (all_funcs, all_errors, events) = interface_data.iter().fold(
+        (Vec::new(), Vec::new(), Vec::new()),
+        |(mut funcs, mut errs, mut events), (interface, parsed)| {
+            funcs.extend(parsed.functions.clone());
 
             if !parsed.errors.is_empty() {
-                errs.push((interface.clone(), parsed.errors));
+                errs.push((interface.clone(), parsed.errors.clone()));
             }
 
             events.push(events::gen_event_helpers(ident, interface, &parsed.events));
-            Ok::<_, syn::Error>((funcs, errs, events))
+            (funcs, errs, events)
         },
-    )?;
+    );
 
     // TODO(rusowsky): Check for selector collisions across all interfaces
 
-    let getters = traits::find_getters(&all_funcs, fields);
-    let trait_output = traits::gen_trait_and_impl(ident, interfaces, &getters);
-    let dispatcher_output = dispatcher::gen_dispatcher(ident, interfaces, &getters);
+    let trait_output = traits::gen_traits_and_impls(ident, &interface_data, fields);
+    let dispatcher_output = dispatcher::gen_dispatcher(ident, interfaces, &all_funcs, fields);
     let errors = errors::gen_error_helpers(&all_errors);
 
     Ok(quote! {
