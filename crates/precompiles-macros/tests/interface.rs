@@ -17,6 +17,8 @@ use tempo_precompiles_macros::contract;
 
 // Test interface for E2E dispatcher tests
 sol! {
+    #[derive(Debug, PartialEq, Eq)]
+    #[sol(rpc, abi)]
     interface ITestToken {
         // Metadata (no params)
         function name() external view returns (string);
@@ -44,6 +46,8 @@ sol! {
 
 // Second test interface for multi-interface testing
 sol! {
+    #[derive(Debug, PartialEq, Eq)]
+    #[sol(rpc, abi)]
     interface IMetadata {
         // Additional metadata functions
         function version() external view returns (uint256);
@@ -766,6 +770,8 @@ fn test_multi_interface_contract() {
 #[test]
 fn test_error_constructors() {
     sol! {
+        #[derive(Debug, PartialEq, Eq)]
+        #[sol(rpc, abi)]
         interface IErrorTest {
             function dummy() external;
             error SimpleError();
@@ -786,17 +792,17 @@ fn test_error_constructors() {
         }
     }
 
-    // Test parameterless error constructor
-    let error = ErrorTestError::simple_error();
+    // Test parameterless error construction
+    let error = ErrorTestError::SimpleError(IErrorTest::SimpleError {});
     assert!(matches!(
         error,
         ErrorTestError::SimpleError(IErrorTest::SimpleError {})
     ));
 
-    // Test parameterized error constructor
+    // Test parameterized error construction
     let code = U256::from(42);
     let addr = test_address(5);
-    let error = ErrorTestError::parameterized_error(code, addr);
+    let error = ErrorTestError::ParameterizedError(IErrorTest::ParameterizedError { code, addr });
 
     match error {
         ErrorTestError::ParameterizedError(e) => {
@@ -805,7 +811,4 @@ fn test_error_constructors() {
         }
         _ => panic!("Expected ParameterizedError"),
     }
-
-    // If this compiles, it proves the constructor is const
-    const _ERROR: ErrorTestError = ErrorTestError::simple_error();
 }

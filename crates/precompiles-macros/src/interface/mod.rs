@@ -12,13 +12,34 @@ use syn::{Ident, Type};
 mod registry;
 use registry::*;
 
+/// Stores both Rust-style (snake_case) and Solidity-style (camelCase) parameter names.
+///
+/// This allows generated trait methods to use idiomatic Rust naming while still correctly
+/// accessing fields on Alloy-generated `solCall` structs which preserve Solidity naming.
+#[derive(Debug, Clone)]
+pub(crate) struct ParamName {
+    /// Rust-style parameter name (snake_case) for trait method signatures
+    pub rust: String,
+    /// Solidity-style parameter name (camelCase) for accessing `solCall` struct fields
+    pub sol: &'static str,
+}
+
+impl ParamName {
+    pub(crate) fn new(solidity: &'static str) -> Self {
+        Self {
+            rust: utils::normalize_to_snake_case(solidity),
+            sol: solidity,
+        }
+    }
+}
+
 /// Represents a single function from a sol! interface.
 #[derive(Debug, Clone)]
 pub(crate) struct InterfaceFunction {
     /// Function name, normalized to snake_case
     pub name: &'static str,
-    /// Function parameters as (name, type) pairs
-    pub params: Vec<(&'static str, Type)>,
+    /// Function parameters as (ParamName, type) pairs
+    pub params: Vec<(ParamName, Type)>,
     /// Return type of the function
     pub return_type: Type,
     /// Whether this is a view function
@@ -84,131 +105,123 @@ impl InterfaceFunction {
     }
 }
 
-/// Constructs the event enum type path from an interface type.
+/// Constructs the event enum type path from an interface identifier.
 /// Convention: ITIP20 -> ITIP20Events
-pub(crate) fn get_event_enum_path(interface_type: &Type) -> syn::Result<TokenStream> {
-    let interface_ident = try_extract_type_ident(interface_type)?;
+pub(crate) fn get_event_enum_path(interface_ident: &Ident) -> syn::Result<TokenStream> {
     let event_enum_ident = format!("{interface_ident}Events");
     let event_enum: Ident = syn::parse_str(&event_enum_ident).expect("Valid identifier");
-
-    if let Type::Path(type_path) = interface_type {
-        // Preserve the path prefix if it exists (e.g., crate::ITIP20 -> crate::ITIP20Events)
-        let mut path = type_path.path.clone();
-        if let Some(last_segment) = path.segments.last_mut() {
-            last_segment.ident = event_enum;
-        }
-        Ok(quote!(#path))
-    } else {
-        Ok(quote!(#event_enum))
-    }
+    Ok(quote!(#event_enum))
 }
 
 // TODO(rusowsky): Implement automatic method discovery from sol! generated interfaces.
-pub(crate) fn parse_interface(interface_type: &Type) -> syn::Result<Interface> {
-    let interface_ident = try_extract_type_ident(interface_type)?;
-    get_interface_metadata(&interface_ident, interface_type)
+pub(crate) fn parse_interface(interface_ident: &Ident) -> syn::Result<Interface> {
+    get_interface_metadata(interface_ident)
 }
 
 // TODO(rusowsky): Implement automatic method discovery from sol! generated interfaces.
 fn get_interface_metadata(
     interface_ident: &Ident,
-    interface_type: &Type,
 ) -> syn::Result<Interface> {
     let interface_name = interface_ident.to_string();
     match interface_name.as_str() {
         // crates/contracts/src/precompiles/tip20.rs
         "ITIP20" => Ok(Interface {
-            functions: tip20::get_functions(interface_type),
-            events: tip20::get_events(interface_type),
-            errors: tip20::get_errors(interface_type),
+            functions: tip20::get_functions(interface_ident),
+            events: tip20::get_events(interface_ident),
+            errors: tip20::get_errors(interface_ident),
+        }),
+        "ITIP20Rewards" => Ok(Interface {
+            functions: tip20_rewards::get_functions(interface_ident),
+            events: tip20_rewards::get_events(interface_ident),
+            errors: tip20_rewards::get_errors(interface_ident),
         }),
         "IRolesAuth" => Ok(Interface {
-            functions: roles_auth::get_functions(interface_type),
-            events: roles_auth::get_events(interface_type),
-            errors: roles_auth::get_errors(interface_type),
+            functions: roles_auth::get_functions(interface_ident),
+            events: roles_auth::get_events(interface_ident),
+            errors: roles_auth::get_errors(interface_ident),
         }),
 
         // crates/contracts/src/precompiles/tip20_factory.rs
         "ITIP20Factory" => Ok(Interface {
-            functions: tip20_factory::get_functions(interface_type),
-            events: tip20_factory::get_events(interface_type),
-            errors: tip20_factory::get_errors(interface_type),
+            functions: tip20_factory::get_functions(interface_ident),
+            events: tip20_factory::get_events(interface_ident),
+            errors: tip20_factory::get_errors(interface_ident),
         }),
 
         // crates/contracts/src/precompiles/tip20_rewards_registry.rs
         "ITIP20RewardsRegistry" => Ok(Interface {
-            functions: tip20_rewards_registry::get_functions(interface_type),
-            events: tip20_rewards_registry::get_events(interface_type),
-            errors: tip20_rewards_registry::get_errors(interface_type),
+            functions: tip20_rewards_registry::get_functions(interface_ident),
+            events: tip20_rewards_registry::get_events(interface_ident),
+            errors: tip20_rewards_registry::get_errors(interface_ident),
         }),
 
         // crates/contracts/src/precompiles/tip403_registry.rs
         "ITIP403Registry" => Ok(Interface {
-            functions: tip403_registry::get_functions(interface_type),
-            events: tip403_registry::get_events(interface_type),
-            errors: tip403_registry::get_errors(interface_type),
+            functions: tip403_registry::get_functions(interface_ident),
+            events: tip403_registry::get_events(interface_ident),
+            errors: tip403_registry::get_errors(interface_ident),
         }),
 
         // crates/contracts/src/precompiles/tip4217_registry.rs
         "ITIP4217Registry" => Ok(Interface {
-            functions: tip4217_registry::get_functions(interface_type),
-            events: tip4217_registry::get_events(interface_type),
-            errors: tip4217_registry::get_errors(interface_type),
+            functions: tip4217_registry::get_functions(interface_ident),
+            events: tip4217_registry::get_events(interface_ident),
+            errors: tip4217_registry::get_errors(interface_ident),
         }),
 
         // crates/contracts/src/precompiles/tip_fee_manager.rs
         "IFeeManager" => Ok(Interface {
-            functions: fee_manager::get_functions(interface_type),
-            events: fee_manager::get_events(interface_type),
-            errors: fee_manager::get_errors(interface_type),
+            functions: fee_manager::get_functions(interface_ident),
+            events: fee_manager::get_events(interface_ident),
+            errors: fee_manager::get_errors(interface_ident),
         }),
         "ITIPFeeAMM" => Ok(Interface {
-            functions: tip_fee_amm::get_functions(interface_type),
-            events: tip_fee_amm::get_events(interface_type),
-            errors: tip_fee_amm::get_errors(interface_type),
+            functions: tip_fee_amm::get_functions(interface_ident),
+            events: tip_fee_amm::get_events(interface_ident),
+            errors: tip_fee_amm::get_errors(interface_ident),
         }),
 
         // crates/contracts/src/precompiles/stablecoin_exchange.rs
         "IStablecoinExchange" => Ok(Interface {
-            functions: stablecoin_exchange::get_functions(interface_type),
-            events: stablecoin_exchange::get_events(interface_type),
-            errors: stablecoin_exchange::get_errors(interface_type),
+            functions: stablecoin_exchange::get_functions(interface_ident),
+            events: stablecoin_exchange::get_events(interface_ident),
+            errors: stablecoin_exchange::get_errors(interface_ident),
         }),
 
         // crates/contracts/src/precompiles/nonce.rs
         "INonce" => Ok(Interface {
-            functions: nonce::get_functions(interface_type),
-            events: nonce::get_events(interface_type),
-            errors: nonce::get_errors(interface_type),
+            functions: nonce::get_functions(interface_ident),
+            events: nonce::get_events(interface_ident),
+            errors: nonce::get_errors(interface_ident),
         }),
 
         // crates/contracts/src/precompiles/tip_account_registrar.rs
         "ITipAccountRegistrar" => Ok(Interface {
-            functions: tip_account_registrar::get_functions(interface_type),
-            events: tip_account_registrar::get_events(interface_type),
-            errors: tip_account_registrar::get_errors(interface_type),
+            functions: tip_account_registrar::get_functions(interface_ident),
+            events: tip_account_registrar::get_events(interface_ident),
+            errors: tip_account_registrar::get_errors(interface_ident),
         }),
 
         // Test interfaces
         "ITestToken" => Ok(Interface {
-            functions: tests::get_itest_token_functions(interface_type),
+            functions: tests::get_itest_token_functions(interface_ident),
             events: Vec::new(),
             errors: Vec::new(),
         }),
         "IMetadata" => Ok(Interface {
-            functions: tests::get_imetadata_functions(interface_type),
+            functions: tests::get_imetadata_functions(interface_ident),
             events: Vec::new(),
             errors: Vec::new(),
         }),
         "IMiniToken" => Ok(Interface {
-            functions: tests::get_imini_token_functions(interface_type),
-            events: tests::get_imini_token_events(interface_type),
+            functions: tests::get_imini_token_functions(interface_ident),
+            events: tests::get_imini_token_events(interface_ident),
             errors: Vec::new(),
         }),
         "IErrorTest" => Ok(Interface {
-            functions: tests::get_ierror_test_functions(interface_type),
+            functions: tests::get_ierror_test_functions(interface_ident),
             events: Vec::new(),
-            errors: tests::get_ierror_test_errors(interface_type),
+            errors: tests::get_ierror_test_errors(interface_ident),
         }),
 
         // Unknown interface

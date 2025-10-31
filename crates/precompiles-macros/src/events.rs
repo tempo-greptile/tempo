@@ -25,7 +25,7 @@ fn extract_event_variant_name(event_type_path: &TokenStream) -> Ident {
 /// and call `self.storage.emit_event()` with the properly constructed event.
 pub(crate) fn gen_event_helpers(
     contract_ident: &Ident,
-    interface_type: &Type,
+    interface_ident: &Ident,
     events: &[InterfaceEvent],
 ) -> TokenStream {
     if events.is_empty() {
@@ -33,7 +33,7 @@ pub(crate) fn gen_event_helpers(
     }
 
     // Get the event enum type path (e.g., ITIP20Events)
-    let event_enum_path = match get_event_enum_path(interface_type) {
+    let event_enum_path = match get_event_enum_path(interface_ident) {
         Ok(path) => path,
         Err(_) => return quote! {}, // Skip if we can't determine the event enum
     };

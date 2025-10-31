@@ -80,9 +80,23 @@ fn find_field_getter<'a>(func: &'a InterfaceFunction, fields: &'a [FieldInfo]) -
         .unwrap_or(GetterInfo::NoMatch)
 }
 
-/// Compares `syn::Type` instances for equality by comparing their token streams.
+/// Compares `syn::Type` instances for equality.
+///
+/// For custom structs, this compares only the base type name (last path segment)
+/// since custom types can be converted via `.into()`. For primitive and known types,
+/// this requires exact token stream equality.
 fn types_equal(a: &Type, b: &Type) -> bool {
+    use crate::utils::{is_custom_struct, try_extract_type_ident};
     use quote::ToTokens;
+
+    // For custom structs, compare base names only (allows conversion via .into())
+    if is_custom_struct(a) && is_custom_struct(b) {
+        if let (Ok(ident_a), Ok(ident_b)) = (try_extract_type_ident(a), try_extract_type_ident(b)) {
+            return ident_a == ident_b;
+        }
+    }
+
+    // For primitives and known types, require exact match
     a.to_token_stream().to_string() == b.to_token_stream().to_string()
 }
 
@@ -108,7 +122,7 @@ fn match_by_type<'a>(func: &'a InterfaceFunction, field: &'a FieldInfo) -> Gette
             if types_equal(param_ty, key_ty) && types_equal(&func.return_type, value_ty) {
                 GetterInfo::Mapping {
                     field,
-                    key_param: func.params[0].0,
+                    key_param: &func.params[0].0.rust,
                 }
             } else {
                 GetterInfo::NoMatch
@@ -127,8 +141,8 @@ fn match_by_type<'a>(func: &'a InterfaceFunction, field: &'a FieldInfo) -> Gette
             {
                 GetterInfo::NestedMapping {
                     field,
-                    key1_param: func.params[0].0,
-                    key2_param: func.params[1].0,
+                    key1_param: &func.params[0].0.rust,
+                    key2_param: &func.params[1].0.rust,
                 }
             } else {
                 GetterInfo::NoMatch
@@ -141,7 +155,7 @@ fn match_by_type<'a>(func: &'a InterfaceFunction, field: &'a FieldInfo) -> Gette
 /// Generates storage trait, storage impl, and per-interface traits with default methods.
 pub(crate) fn gen_traits_and_impls(
     struct_name: &Ident,
-    interface_data: &[(Type, Interface)],
+    interface_data: &[(Ident, Interface)],
     fields: &[FieldInfo],
 ) -> TokenStream {
     let storage_trait_name = format_ident!("_{}Storage", struct_name);
@@ -161,11 +175,11 @@ pub(crate) fn gen_traits_and_impls(
     let num_interfaces = interface_data.len();
     let interface_traits: Vec<TokenStream> = interface_data
         .iter()
-        .map(|(interface_type, interface)| {
+        .map(|(interface_ident, interface)| {
             let interface_getters = find_getters(&interface.functions, fields);
             gen_interface_trait(
                 struct_name,
-                interface_type,
+                interface_ident,
                 &storage_trait_name,
                 &interface_getters,
                 num_interfaces,
@@ -187,15 +201,11 @@ pub(crate) fn gen_traits_and_impls(
 /// - Multiple interfaces: `<ContractName>_<InterfaceName>Call`
 fn gen_interface_trait(
     struct_name: &Ident,
-    interface_type: &Type,
+    interface_ident: &Ident,
     storage_trait_name: &Ident,
     match_results: &[GetterFn<'_>],
     num_interfaces: usize,
 ) -> TokenStream {
-    // Extract interface name from type
-    let interface_ident = crate::utils::try_extract_type_ident(interface_type)
-        .expect("Failed to extract interface identifier");
-
     // Use simpler naming for single-interface contracts
     let trait_name = if num_interfaces == 1 {
         format_ident!("{}Call", struct_name)
@@ -296,7 +306,7 @@ fn gen_storage_method_sig_or_impl(gen_sig: bool, result: &GetterFn<'_>) -> Token
             } else {
                 quote! {
                     fn #getter_name(&mut self) -> crate::error::Result<#return_type> {
-                        self.#getter_name()
+                        self.#getter_name().map(|v| v.into())
                     }
                 }
             }
@@ -309,7 +319,7 @@ fn gen_storage_method_sig_or_impl(gen_sig: bool, result: &GetterFn<'_>) -> Token
             } else {
                 quote! {
                     fn #getter_name(&mut self, #key: #ty) -> crate::error::Result<#return_type> {
-                        self.#getter_name(#key)
+                        self.#getter_name(#key).map(|v| v.into())
                     }
                 }
             }
@@ -327,7 +337,7 @@ fn gen_storage_method_sig_or_impl(gen_sig: bool, result: &GetterFn<'_>) -> Token
             } else {
                 quote! {
                     fn #getter_name(&mut self, #key1: #ty1, #key2: #ty2) -> crate::error::Result<#return_type> {
-                        self.#getter_name(#key1, #key2)
+                        self.#getter_name(#key1, #key2).map(|v| v.into())
                     }
                 }
             }
@@ -343,7 +353,7 @@ fn gen_method_signature(func: &InterfaceFunction) -> String {
     let params_str = if func.is_view {
         func.params
             .iter()
-            .map(|(name, ty)| format!("{}: {}", name, quote!(#ty)))
+            .map(|(param_name, ty)| format!("{}: {}", param_name.rust, quote!(#ty)))
             .collect::<Vec<_>>()
             .join(", ")
     } else {
@@ -352,7 +362,7 @@ fn gen_method_signature(func: &InterfaceFunction) -> String {
         params.extend(
             func.params
                 .iter()
-                .map(|(name, ty)| format!("{}: {}", name, quote!(#ty))),
+                .map(|(param_name, ty)| format!("{}: {}", param_name.rust, quote!(#ty))),
         );
         params.join(", ")
     };
@@ -373,7 +383,7 @@ fn gen_method_doc_comment(func: &InterfaceFunction, is_auto_implemented: bool) -
     } else {
         ""
     };
-    let doc = format!("```rust\n{sig}\n```{auto_impl_note}");
+    let doc = format!("```rust,ignore\n{sig}\n```{auto_impl_note}");
 
     quote! { #[doc = #doc] }
 }
@@ -390,10 +400,10 @@ fn gen_call_trait_method(result: &GetterFn<'_>) -> TokenStream {
     let return_type = &func.return_type;
     let has_params = !func.params.is_empty();
 
-    // Extract individual parameters
-    let params = func.params.iter().map(|(name, ty)| {
-        let param_name = format_ident!("{}", name);
-        quote! { #param_name: #ty }
+    // Extract individual parameters using Rust-style (snake_case) names
+    let params = func.params.iter().map(|(param_name, ty)| {
+        let ident = format_ident!("{}", param_name.rust);
+        quote! { #ident: #ty }
     });
 
     // Generate default impl for getter methods
@@ -413,13 +423,13 @@ fn gen_call_trait_method(result: &GetterFn<'_>) -> TokenStream {
         },
         false if has_params => quote! {
             #doc_comment
-            fn #method_name(&mut self, msg_sender: Address, #(#params),*) -> crate::error::Result<#return_type> {
+            fn #method_name(&mut self, msg_sender: ::alloy::primitives::Address, #(#params),*) -> crate::error::Result<#return_type> {
                 #body
             }
         },
         false => quote! {
             #doc_comment
-            fn #method_name(&mut self, msg_sender: Address) -> crate::error::Result<#return_type> {
+            fn #method_name(&mut self, msg_sender: ::alloy::primitives::Address) -> crate::error::Result<#return_type> {
                 #body
             }
         },
@@ -460,10 +470,10 @@ fn gen_call_sig(result: &GetterFn<'_>) -> TokenStream {
     let return_type = &func.return_type;
     let has_params = !func.params.is_empty();
 
-    // Extract individual parameters
-    let params = func.params.iter().map(|(name, ty)| {
-        let param_name = format_ident!("{}", name);
-        quote! { #param_name: #ty }
+    // Extract individual parameters using Rust-style (snake_case) names
+    let params = func.params.iter().map(|(param_name, ty)| {
+        let ident = format_ident!("{}", param_name.rust);
+        quote! { #ident: #ty }
     });
 
     match func.is_view {
@@ -477,11 +487,11 @@ fn gen_call_sig(result: &GetterFn<'_>) -> TokenStream {
         },
         false if has_params => quote! {
             #doc_comment
-            fn #method_name(&mut self, msg_sender: Address, #(#params),*) -> crate::error::Result<#return_type>;
+            fn #method_name(&mut self, msg_sender: ::alloy::primitives::Address, #(#params),*) -> crate::error::Result<#return_type>;
         },
         false => quote! {
             #doc_comment
-            fn #method_name(&mut self, msg_sender: Address) -> crate::error::Result<#return_type>;
+            fn #method_name(&mut self, msg_sender: ::alloy::primitives::Address) -> crate::error::Result<#return_type>;
         },
     }
 }
@@ -509,9 +519,13 @@ mod tests_match {
     }
 
     fn create_function(name: &'static str, params: Vec<(&'static str, Type)>) -> InterfaceFunction {
+        use crate::interface::ParamName;
         InterfaceFunction {
             name,
-            params,
+            params: params
+                .into_iter()
+                .map(|(name, ty)| (ParamName::new(name), ty))
+                .collect(),
             return_type: parse_quote!(U256),
             is_view: true,
             call_type_path: quote::quote!(ITIP20::testCall),
@@ -649,9 +663,10 @@ mod tests_match {
         );
 
         // return mismatch
+        use crate::interface::ParamName;
         let func = InterfaceFunction {
             name: "balance_of",
-            params: vec![("account", parse_quote!(Address))],
+            params: vec![(ParamName::new("account"), parse_quote!(Address))],
             return_type: parse_quote!(bool), // Wrong return type
             is_view: true,
             call_type_path: quote::quote!(ITIP20::balanceOfCall),
@@ -671,12 +686,13 @@ mod tests_match {
 
     #[test]
     fn test_nested_mapping_type_mismatch() {
+        use crate::interface::ParamName;
         // key1 mismatch
         let func = InterfaceFunction {
             name: "allowance",
             params: vec![
-                ("owner", parse_quote!(U256)), // Wrong type
-                ("spender", parse_quote!(Address)),
+                (ParamName::new("owner"), parse_quote!(U256)), // Wrong type
+                (ParamName::new("spender"), parse_quote!(Address)),
             ],
             return_type: parse_quote!(U256),
             is_view: true,
@@ -698,8 +714,8 @@ mod tests_match {
         let func = InterfaceFunction {
             name: "allowance",
             params: vec![
-                ("owner", parse_quote!(Address)),
-                ("spender", parse_quote!(U256)), // Wrong type
+                (ParamName::new("owner"), parse_quote!(Address)),
+                (ParamName::new("spender"), parse_quote!(U256)), // Wrong type
             ],
             return_type: parse_quote!(U256),
             is_view: true,
@@ -721,8 +737,8 @@ mod tests_match {
         let func = InterfaceFunction {
             name: "allowance",
             params: vec![
-                ("owner", parse_quote!(Address)),
-                ("spender", parse_quote!(Address)),
+                (ParamName::new("owner"), parse_quote!(Address)),
+                (ParamName::new("spender"), parse_quote!(Address)),
             ],
             return_type: parse_quote!(bool), // Wrong return type
             is_view: true,
@@ -751,7 +767,7 @@ mod tests_trait {
     #[test]
     fn test_generate_trait_with_direct_match() {
         let struct_name: Ident = parse_quote!(TIP20Token);
-        let interface_type: Type = parse_quote!(ITIP20);
+        let interface_ident: Ident = parse_quote!(ITIP20);
 
         let func = InterfaceFunction {
             name: "name",
@@ -777,7 +793,7 @@ mod tests_trait {
             errors: vec![],
         };
 
-        let interface_data = vec![(interface_type, interface)];
+        let interface_data = vec![(interface_ident, interface)];
 
         let trait_code = gen_traits_and_impls(&struct_name, &interface_data, &[field]);
         let trait_str = trait_code.to_string();
@@ -793,7 +809,7 @@ mod tests_trait {
     #[test]
     fn test_generate_trait_with_no_match() {
         let struct_name: Ident = parse_quote!(TIP20Token);
-        let interface_type: Type = parse_quote!(ITIP20);
+        let interface_ident: Ident = parse_quote!(ITIP20);
 
         let func = InterfaceFunction {
             name: "transfer",
@@ -809,7 +825,7 @@ mod tests_trait {
             errors: vec![],
         };
 
-        let interface_data = vec![(interface_type, interface)];
+        let interface_data = vec![(interface_ident, interface)];
 
         let trait_code = gen_traits_and_impls(&struct_name, &interface_data, &[]);
         let trait_str = trait_code.to_string();

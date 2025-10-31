@@ -56,17 +56,17 @@ pub(crate) fn derive_impl(input: DeriveInput) -> syn::Result<TokenStream> {
 
     // Generate the trait implementation
     let expanded = quote! {
-        impl #impl_generics ::tempo_precompiles::storage::Storable for #struct_name #ty_generics #where_clause {
+        impl #impl_generics crate::storage::Storable for #struct_name #ty_generics #where_clause {
             const SLOT_COUNT: usize = #field_count;
 
             fn load<S>(
                 storage: &mut S,
                 base_slot: ::alloy::primitives::U256,
-            ) -> Result<Self, ::tempo_precompiles::error::TempoPrecompileError>
+            ) -> crate::error::Result<Self>
             where
-                S: ::tempo_precompiles::storage::StorageOps,
+                S: crate::storage::StorageOps,
             {
-                use ::tempo_precompiles::storage::Storable;
+                use crate::storage::Storable;
 
                 #(#load_fields)*
 
@@ -77,11 +77,11 @@ pub(crate) fn derive_impl(input: DeriveInput) -> syn::Result<TokenStream> {
                 &self,
                 storage: &mut S,
                 base_slot: ::alloy::primitives::U256,
-            ) -> Result<(), ::tempo_precompiles::error::TempoPrecompileError>
+            ) -> crate::error::Result<()>
             where
-                S: ::tempo_precompiles::storage::StorageOps,
+                S: crate::storage::StorageOps,
             {
-                use ::tempo_precompiles::storage::Storable;
+                use crate::storage::Storable;
 
                 #(#store_fields)*
 

@@ -287,7 +287,28 @@ impl StorageKey for u64 {
         BUFFER.with(|buf| {
             let mut buffer = buf.borrow_mut();
             *buffer = self.to_be_bytes();
+            // SAFETY: The buffer lives in TLS and we're returning a reference
+            // that cannot outlive this function call. The caller must use it
+            // immediately before any other code can access the TLS buffer.
             unsafe { std::slice::from_raw_parts(buffer.as_ptr(), 8) }
+        })
+    }
+}
+
+impl StorageKey for u128 {
+    #[inline]
+    fn as_storage_bytes(&self) -> &[u8] {
+        thread_local! {
+            static BUFFER: std::cell::RefCell<[u8; 16]> = const { std::cell::RefCell::new([0u8; 16]) };
+        }
+
+        BUFFER.with(|buf| {
+            let mut buffer = buf.borrow_mut();
+            *buffer = self.to_be_bytes();
+            // SAFETY: The buffer lives in TLS and we're returning a reference
+            // that cannot outlive this function call. The caller must use it
+            // immediately before any other code can access the TLS buffer.
+            unsafe { std::slice::from_raw_parts(buffer.as_ptr(), 16) }
         })
     }
 }

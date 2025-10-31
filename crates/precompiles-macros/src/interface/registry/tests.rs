@@ -1,130 +1,148 @@
-use crate::{
-    Type,
-    interface::{InterfaceError, InterfaceEvent, InterfaceFunction},
-};
+use crate::interface::{InterfaceError, InterfaceEvent, InterfaceFunction, ParamName};
 use quote::quote;
-use syn::parse_quote;
+use syn::{Ident, Type, parse_quote};
 
 // Test interface for E2E dispatcher tests
-pub(crate) fn get_itest_token_functions(interface_type: &Type) -> Vec<InterfaceFunction> {
+pub(crate) fn get_itest_token_functions(interface_ident: &Ident) -> Vec<InterfaceFunction> {
+    // Helper to convert parameter tuples to ParamName
+    let params = |p: Vec<(&'static str, Type)>| -> Vec<(ParamName, Type)> {
+        p.into_iter()
+            .map(|(name, ty)| (ParamName::new(name), ty))
+            .collect()
+    };
+
     vec![
         // Metadata functions (view, no parameters)
         InterfaceFunction {
             name: "name",
-            params: vec![],
+            params: params(vec![]),
             return_type: parse_quote!(String),
             is_view: true,
-            call_type_path: quote!(#interface_type::nameCall),
+            call_type_path: quote!(#interface_ident::nameCall),
         },
         InterfaceFunction {
             name: "symbol",
-            params: vec![],
+            params: params(vec![]),
             return_type: parse_quote!(String),
             is_view: true,
-            call_type_path: quote!(#interface_type::symbolCall),
+            call_type_path: quote!(#interface_ident::symbolCall),
         },
         InterfaceFunction {
             name: "decimals",
-            params: vec![],
+            params: params(vec![]),
             return_type: parse_quote!(u8),
             is_view: true,
-            call_type_path: quote!(#interface_type::decimalsCall),
+            call_type_path: quote!(#interface_ident::decimalsCall),
         },
         // View functions (with parameters)
         InterfaceFunction {
             name: "balance_of",
-            params: vec![("account", parse_quote!(Address))],
+            params: params(vec![("account", parse_quote!(Address))]),
             return_type: parse_quote!(U256),
             is_view: true,
-            call_type_path: quote!(#interface_type::balanceOfCall),
+            call_type_path: quote!(#interface_ident::balanceOfCall),
         },
         InterfaceFunction {
             name: "allowance",
-            params: vec![
+            params: params(vec![
                 ("owner", parse_quote!(Address)),
                 ("spender", parse_quote!(Address)),
-            ],
+            ]),
             return_type: parse_quote!(U256),
             is_view: true,
-            call_type_path: quote!(#interface_type::allowanceCall),
+            call_type_path: quote!(#interface_ident::allowanceCall),
         },
         // Mutating functions (non-void)
         InterfaceFunction {
             name: "transfer",
-            params: vec![
+            params: params(vec![
                 ("to", parse_quote!(Address)),
                 ("amount", parse_quote!(U256)),
-            ],
+            ]),
             return_type: parse_quote!(bool),
             is_view: false,
-            call_type_path: quote!(#interface_type::transferCall),
+            call_type_path: quote!(#interface_ident::transferCall),
         },
         InterfaceFunction {
             name: "approve",
-            params: vec![
+            params: params(vec![
                 ("spender", parse_quote!(Address)),
                 ("amount", parse_quote!(U256)),
-            ],
+            ]),
             return_type: parse_quote!(bool),
             is_view: false,
-            call_type_path: quote!(#interface_type::approveCall),
+            call_type_path: quote!(#interface_ident::approveCall),
         },
         // Mutating functions (void)
         InterfaceFunction {
             name: "mint",
-            params: vec![
+            params: params(vec![
                 ("to", parse_quote!(Address)),
                 ("amount", parse_quote!(U256)),
-            ],
+            ]),
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::mintCall),
+            call_type_path: quote!(#interface_ident::mintCall),
         },
         InterfaceFunction {
             name: "burn",
-            params: vec![("amount", parse_quote!(U256))],
+            params: params(vec![("amount", parse_quote!(U256))]),
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::burnCall),
+            call_type_path: quote!(#interface_ident::burnCall),
         },
     ]
 }
 
 // Test interface for multi-interface testing
-pub(crate) fn get_imetadata_functions(interface_type: &Type) -> Vec<InterfaceFunction> {
+pub(crate) fn get_imetadata_functions(interface_ident: &Ident) -> Vec<InterfaceFunction> {
+    // Helper to convert parameter tuples to ParamName
+    let params = |p: Vec<(&'static str, Type)>| -> Vec<(ParamName, Type)> {
+        p.into_iter()
+            .map(|(name, ty)| (ParamName::new(name), ty))
+            .collect()
+    };
+
     vec![
         InterfaceFunction {
             name: "version",
-            params: vec![],
+            params: params(vec![]),
             return_type: parse_quote!(U256),
             is_view: true,
-            call_type_path: quote!(#interface_type::versionCall),
+            call_type_path: quote!(#interface_ident::versionCall),
         },
         InterfaceFunction {
             name: "owner",
-            params: vec![],
+            params: params(vec![]),
             return_type: parse_quote!(Address),
             is_view: true,
-            call_type_path: quote!(#interface_type::ownerCall),
+            call_type_path: quote!(#interface_ident::ownerCall),
         },
     ]
 }
 
 // Mini token test interface for event emission testing
-pub(crate) fn get_imini_token_functions(interface_type: &Type) -> Vec<InterfaceFunction> {
+pub(crate) fn get_imini_token_functions(interface_ident: &Ident) -> Vec<InterfaceFunction> {
+    // Helper to convert parameter tuples to ParamName
+    let params = |p: Vec<(&'static str, Type)>| -> Vec<(ParamName, Type)> {
+        p.into_iter()
+            .map(|(name, ty)| (ParamName::new(name), ty))
+            .collect()
+    };
+
     vec![InterfaceFunction {
         name: "mint",
-        params: vec![
+        params: params(vec![
             ("to", parse_quote!(Address)),
             ("amount", parse_quote!(U256)),
-        ],
+        ]),
         return_type: parse_quote!(()),
         is_view: false,
-        call_type_path: quote!(#interface_type::mintCall),
+        call_type_path: quote!(#interface_ident::mintCall),
     }]
 }
 
-pub(crate) fn get_imini_token_events(interface_type: &Type) -> Vec<InterfaceEvent> {
+pub(crate) fn get_imini_token_events(interface_ident: &Ident) -> Vec<InterfaceEvent> {
     vec![
         InterfaceEvent {
             name: "transfer",
@@ -133,7 +151,7 @@ pub(crate) fn get_imini_token_events(interface_type: &Type) -> Vec<InterfaceEven
                 ("to", parse_quote!(Address), true),
                 ("amount", parse_quote!(U256), false),
             ],
-            event_type_path: quote!(#interface_type::Transfer),
+            event_type_path: quote!(#interface_ident::Transfer),
         },
         InterfaceEvent {
             name: "mint",
@@ -141,28 +159,35 @@ pub(crate) fn get_imini_token_events(interface_type: &Type) -> Vec<InterfaceEven
                 ("to", parse_quote!(Address), true),
                 ("amount", parse_quote!(U256), false),
             ],
-            event_type_path: quote!(#interface_type::Mint),
+            event_type_path: quote!(#interface_ident::Mint),
         },
     ]
 }
 
 // Test interface for error constructor generation
-pub(crate) fn get_ierror_test_functions(interface_type: &Type) -> Vec<InterfaceFunction> {
+pub(crate) fn get_ierror_test_functions(interface_ident: &Ident) -> Vec<InterfaceFunction> {
+    // Helper to convert parameter tuples to ParamName
+    let params = |p: Vec<(&'static str, Type)>| -> Vec<(ParamName, Type)> {
+        p.into_iter()
+            .map(|(name, ty)| (ParamName::new(name), ty))
+            .collect()
+    };
+
     vec![InterfaceFunction {
         name: "dummy",
-        params: vec![],
+        params: params(vec![]),
         return_type: parse_quote!(()),
         is_view: false,
-        call_type_path: quote!(#interface_type::dummyCall),
+        call_type_path: quote!(#interface_ident::dummyCall),
     }]
 }
 
-pub(crate) fn get_ierror_test_errors(interface_type: &Type) -> Vec<InterfaceError> {
+pub(crate) fn get_ierror_test_errors(interface_ident: &Ident) -> Vec<InterfaceError> {
     vec![
         InterfaceError {
             name: "simple_error",
             params: vec![],
-            error_type_path: quote!(#interface_type::SimpleError),
+            error_type_path: quote!(#interface_ident::SimpleError),
         },
         InterfaceError {
             name: "parameterized_error",
@@ -170,7 +195,7 @@ pub(crate) fn get_ierror_test_errors(interface_type: &Type) -> Vec<InterfaceErro
                 ("code", parse_quote!(U256)),
                 ("addr", parse_quote!(Address)),
             ],
-            error_type_path: quote!(#interface_type::ParameterizedError),
+            error_type_path: quote!(#interface_ident::ParameterizedError),
         },
     ]
 }
@@ -178,7 +203,10 @@ pub(crate) fn get_ierror_test_errors(interface_type: &Type) -> Vec<InterfaceErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{interface::*, utils::try_extract_type_ident};
+    use crate::interface::{InterfaceError, InterfaceEvent, InterfaceFunction, ParamName, FunctionKind, get_event_enum_path, parse_interface};
+    use crate::utils::try_extract_type_ident;
+    use quote::quote;
+    use syn::{Ident, Type, parse_quote};
 
     #[test]
     fn test_extract_interface_ident() {
@@ -195,33 +223,37 @@ mod tests {
     fn test_get_event_enum_path() {
         // Simple path
         let ty: Type = parse_quote!(ITIP20);
-        let path = get_event_enum_path(&ty).unwrap();
+        let ident = try_extract_type_ident(&ty).unwrap();
+        let path = get_event_enum_path(&ident).unwrap();
         assert_eq!(path.to_string(), "ITIP20Events");
 
         // Qualified path
         let ty: Type = parse_quote!(crate::ITIP20);
-        let path = get_event_enum_path(&ty).unwrap();
-        assert_eq!(path.to_string(), "crate :: ITIP20Events");
+        let ident = try_extract_type_ident(&ty).unwrap();
+        let path = get_event_enum_path(&ident).unwrap();
+        assert_eq!(path.to_string(), "ITIP20Events");
 
         // Test with ITestToken
         let ty: Type = parse_quote!(ITestToken);
-        let path = get_event_enum_path(&ty).unwrap();
+        let ident = try_extract_type_ident(&ty).unwrap();
+        let path = get_event_enum_path(&ident).unwrap();
         assert_eq!(path.to_string(), "ITestTokenEvents");
     }
 
     #[test]
     fn test_parse_interface_itip20() {
         let ty: Type = parse_quote!(ITIP20);
-        let parsed = parse_interface(&ty).unwrap();
+        let ident = try_extract_type_ident(&ty).unwrap();
+        let parsed = parse_interface(&ident).unwrap();
 
-        // Should have 34 functions
-        assert_eq!(parsed.functions.len(), 34);
+        // Should have 28 functions
+        assert_eq!(parsed.functions.len(), 28);
 
         // Should have 11 events (matching sol! interface)
-        assert_eq!(parsed.events.len(), 14);
+        assert_eq!(parsed.events.len(), 11);
 
         // Should have 13 errors
-        assert_eq!(parsed.errors.len(), 16);
+        assert_eq!(parsed.errors.len(), 13);
 
         // Check a few specific functions
         let name_fn = parsed.functions.iter().find(|f| f.name == "name");
@@ -250,7 +282,8 @@ mod tests {
     #[test]
     fn test_parse_unknown_interface() {
         let ty: Type = parse_quote!(UnknownInterface);
-        let parsed = parse_interface(&ty).unwrap();
+        let ident = try_extract_type_ident(&ty).unwrap();
+        let parsed = parse_interface(&ident).unwrap();
 
         // Should return empty vecs for unknown interfaces
         assert!(parsed.functions.is_empty());
@@ -267,7 +300,10 @@ mod tests {
          -> InterfaceFunction {
             InterfaceFunction {
                 name,
-                params,
+                params: params
+                    .into_iter()
+                    .map(|(name, ty)| (ParamName::new(name), ty))
+                    .collect(),
                 return_type,
                 is_view,
                 call_type_path: quote::quote!(ITIP20::testCall),

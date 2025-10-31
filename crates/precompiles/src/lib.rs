@@ -12,6 +12,7 @@ pub mod stablecoin_exchange;
 pub mod storage;
 pub mod tip20;
 pub mod tip20_factory;
+mod tip20_migrated;
 pub mod tip20_rewards_registry;
 pub mod tip403_registry;
 pub mod tip4217_registry;

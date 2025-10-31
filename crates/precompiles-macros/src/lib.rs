@@ -25,29 +25,29 @@ const RESERVED: &[&str] = &["address", "storage", "msg_sender"];
 
 /// Parsed macro attributes for the contract macro.
 struct ContractAttrs {
-    interface_types: Vec<Type>,
+    interface_idents: Vec<Ident>,
 }
 
 impl syn::parse::Parse for ContractAttrs {
     fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
         if input.is_empty() {
             return Ok(Self {
-                interface_types: Vec::new(),
+                interface_idents: Vec::new(),
             });
         }
 
-        let mut interface_types = Vec::new();
-        interface_types.push(input.parse::<Type>()?);
+        let mut interface_idents = Vec::new();
+        interface_idents.push(input.parse::<Ident>()?);
 
-        // Parse comma-separated interface types
+        // Parse comma-separated interface identifiers
         while input.peek(syn::Token![,]) {
             input.parse::<syn::Token![,]>()?;
             if !input.is_empty() {
-                interface_types.push(input.parse::<Type>()?);
+                interface_idents.push(input.parse::<Ident>()?);
             }
         }
 
-        Ok(Self { interface_types })
+        Ok(Self { interface_idents })
     }
 }
 
@@ -103,8 +103,8 @@ fn gen_contract_output(
     let fields = parse_fields(input)?;
 
     let storage_output = gen_contract_storage(&ident, &vis, &fields)?;
-    let impl_output = if !attrs.interface_types.is_empty() {
-        gen_contract_impl(&ident, &attrs.interface_types, &fields)?
+    let impl_output = if !attrs.interface_idents.is_empty() {
+        gen_contract_impl(&ident, &attrs.interface_idents, &fields)?
     } else {
         quote! {}
     };
@@ -119,29 +119,33 @@ fn gen_contract_output(
 /// Generates the contract call trait and its dispatcher based on the contract struct and interfaces.
 fn gen_contract_impl(
     ident: &Ident,
-    interfaces: &[Type],
+    interfaces: &[Ident],
     fields: &[FieldInfo],
 ) -> syn::Result<proc_macro2::TokenStream> {
     // Parse each interface and collect per-interface data
     let interface_data: Vec<_> = interfaces
         .iter()
-        .map(|interface| {
-            let parsed = interface::parse_interface(interface)?;
-            Ok::<_, syn::Error>((interface.clone(), parsed))
+        .map(|interface_ident| {
+            let parsed = interface::parse_interface(interface_ident)?;
+            Ok::<_, syn::Error>((interface_ident.clone(), parsed))
         })
         .collect::<syn::Result<_>>()?;
 
     // Aggregate functions, errors, and events for dispatcher and error generation
     let (all_funcs, all_errors, events) = interface_data.iter().fold(
         (Vec::new(), Vec::new(), Vec::new()),
-        |(mut funcs, mut errs, mut events), (interface, parsed)| {
+        |(mut funcs, mut errs, mut events), (interface_ident, parsed)| {
             funcs.extend(parsed.functions.clone());
 
             if !parsed.errors.is_empty() {
-                errs.push((interface.clone(), parsed.errors.clone()));
+                errs.push((interface_ident.clone(), parsed.errors.clone()));
             }
 
-            events.push(events::gen_event_helpers(ident, interface, &parsed.events));
+            events.push(events::gen_event_helpers(
+                ident,
+                interface_ident,
+                &parsed.events,
+            ));
             (funcs, errs, events)
         },
     );
@@ -150,13 +154,15 @@ fn gen_contract_impl(
 
     let trait_output = traits::gen_traits_and_impls(ident, &interface_data, fields);
     let dispatcher_output = dispatcher::gen_dispatcher(ident, interfaces, &all_funcs, fields);
-    let errors = errors::gen_error_helpers(&all_errors);
+    // NOTE: Error helpers are commented out to avoid orphan rule violations when using
+    // external interfaces. Error constructors should be defined where the interfaces are defined.
+    // let errors = errors::gen_error_helpers(&all_errors);
 
     Ok(quote! {
         #trait_output
         #dispatcher_output
         #(#events)*
-        #errors
+        // #errors
     })
 }
 

@@ -1,11 +1,13 @@
-use crate::{
-    Type,
-    interface::{InterfaceError, InterfaceEvent, InterfaceFunction},
-};
+use crate::interface::{InterfaceError, InterfaceEvent, InterfaceFunction, ParamName};
 use quote::quote;
-use syn::parse_quote;
+use syn::{Ident, Type, parse_quote};
 
-pub(crate) fn get_functions(interface_type: &Type) -> Vec<InterfaceFunction> {
+pub(crate) fn get_functions(interface_ident: &Ident) -> Vec<InterfaceFunction> {
+    // Helper to convert parameter tuples to ParamName
+    let params = |p: Vec<(&'static str, Type)>| -> Vec<(ParamName, Type)> {
+        p.into_iter().map(|(name, ty)| (ParamName::new(name), ty)).collect()
+    };
+
     vec![
         // Metadata functions (view, no parameters)
         InterfaceFunction {
@@ -13,283 +15,237 @@ pub(crate) fn get_functions(interface_type: &Type) -> Vec<InterfaceFunction> {
             params: vec![],
             return_type: parse_quote!(String),
             is_view: true,
-            call_type_path: quote!(#interface_type::nameCall),
+            call_type_path: quote!(#interface_ident::nameCall),
         },
         InterfaceFunction {
             name: "symbol",
             params: vec![],
             return_type: parse_quote!(String),
             is_view: true,
-            call_type_path: quote!(#interface_type::symbolCall),
+            call_type_path: quote!(#interface_ident::symbolCall),
         },
         InterfaceFunction {
             name: "decimals",
             params: vec![],
             return_type: parse_quote!(u8),
             is_view: true,
-            call_type_path: quote!(#interface_type::decimalsCall),
+            call_type_path: quote!(#interface_ident::decimalsCall),
         },
         InterfaceFunction {
             name: "currency",
             params: vec![],
             return_type: parse_quote!(String),
             is_view: true,
-            call_type_path: quote!(#interface_type::currencyCall),
+            call_type_path: quote!(#interface_ident::currencyCall),
         },
         InterfaceFunction {
             name: "total_supply",
             params: vec![],
             return_type: parse_quote!(U256),
             is_view: true,
-            call_type_path: quote!(#interface_type::totalSupplyCall),
+            call_type_path: quote!(#interface_ident::totalSupplyCall),
         },
         InterfaceFunction {
             name: "supply_cap",
             params: vec![],
             return_type: parse_quote!(U256),
             is_view: true,
-            call_type_path: quote!(#interface_type::supplyCapCall),
+            call_type_path: quote!(#interface_ident::supplyCapCall),
         },
         InterfaceFunction {
             name: "transfer_policy_id",
             params: vec![],
             return_type: parse_quote!(u64),
             is_view: true,
-            call_type_path: quote!(#interface_type::transferPolicyIdCall),
+            call_type_path: quote!(#interface_ident::transferPolicyIdCall),
         },
         InterfaceFunction {
             name: "paused",
             params: vec![],
             return_type: parse_quote!(bool),
             is_view: true,
-            call_type_path: quote!(#interface_type::pausedCall),
+            call_type_path: quote!(#interface_ident::pausedCall),
         },
         InterfaceFunction {
             name: "quote_token",
             params: vec![],
             return_type: parse_quote!(Address),
             is_view: true,
-            call_type_path: quote!(#interface_type::quoteTokenCall),
+            call_type_path: quote!(#interface_ident::quoteTokenCall),
         },
         InterfaceFunction {
             name: "next_quote_token",
             params: vec![],
             return_type: parse_quote!(Address),
             is_view: true,
-            call_type_path: quote!(#interface_type::nextQuoteTokenCall),
+            call_type_path: quote!(#interface_ident::nextQuoteTokenCall),
         },
         // View functions with parameters
         InterfaceFunction {
             name: "balance_of",
-            params: vec![("account", parse_quote!(Address))],
+            params: params(vec![("account", parse_quote!(Address))]),
             return_type: parse_quote!(U256),
             is_view: true,
-            call_type_path: quote!(#interface_type::balanceOfCall),
+            call_type_path: quote!(#interface_ident::balanceOfCall),
         },
         InterfaceFunction {
             name: "allowance",
-            params: vec![
+            params: params(vec![
                 ("owner", parse_quote!(Address)),
                 ("spender", parse_quote!(Address)),
-            ],
+            ]),
             return_type: parse_quote!(U256),
             is_view: true,
-            call_type_path: quote!(#interface_type::allowanceCall),
+            call_type_path: quote!(#interface_ident::allowanceCall),
         },
         // Mutating functions (non-void)
         InterfaceFunction {
             name: "transfer",
-            params: vec![
+            params: params(vec![
                 ("to", parse_quote!(Address)),
                 ("amount", parse_quote!(U256)),
-            ],
+            ]),
             return_type: parse_quote!(bool),
             is_view: false,
-            call_type_path: quote!(#interface_type::transferCall),
+            call_type_path: quote!(#interface_ident::transferCall),
         },
         InterfaceFunction {
             name: "transfer_from",
-            params: vec![
+            params: params(vec![
                 ("from", parse_quote!(Address)),
                 ("to", parse_quote!(Address)),
                 ("amount", parse_quote!(U256)),
-            ],
+            ]),
             return_type: parse_quote!(bool),
             is_view: false,
-            call_type_path: quote!(#interface_type::transferFromCall),
+            call_type_path: quote!(#interface_ident::transferFromCall),
         },
         InterfaceFunction {
             name: "approve",
-            params: vec![
+            params: params(vec![
                 ("spender", parse_quote!(Address)),
                 ("amount", parse_quote!(U256)),
-            ],
+            ]),
             return_type: parse_quote!(bool),
             is_view: false,
-            call_type_path: quote!(#interface_type::approveCall),
+            call_type_path: quote!(#interface_ident::approveCall),
         },
         InterfaceFunction {
             name: "transfer_from_with_memo",
-            params: vec![
+            params: params(vec![
                 ("from", parse_quote!(Address)),
                 ("to", parse_quote!(Address)),
                 ("amount", parse_quote!(U256)),
                 ("memo", parse_quote!(B256)),
-            ],
+            ]),
             return_type: parse_quote!(bool),
             is_view: false,
-            call_type_path: quote!(#interface_type::transferFromWithMemoCall),
+            call_type_path: quote!(#interface_ident::transferFromWithMemoCall),
         },
         // Mutating functions (void)
         InterfaceFunction {
             name: "mint",
-            params: vec![
+            params: params(vec![
                 ("to", parse_quote!(Address)),
                 ("amount", parse_quote!(U256)),
-            ],
+            ]),
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::mintCall),
+            call_type_path: quote!(#interface_ident::mintCall),
         },
         InterfaceFunction {
             name: "burn",
-            params: vec![("amount", parse_quote!(U256))],
+            params: params(vec![("amount", parse_quote!(U256))]),
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::burnCall),
+            call_type_path: quote!(#interface_ident::burnCall),
         },
         InterfaceFunction {
             name: "mint_with_memo",
-            params: vec![
+            params: params(vec![
                 ("to", parse_quote!(Address)),
                 ("amount", parse_quote!(U256)),
                 ("memo", parse_quote!(B256)),
-            ],
+            ]),
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::mintWithMemoCall),
+            call_type_path: quote!(#interface_ident::mintWithMemoCall),
         },
         InterfaceFunction {
             name: "burn_with_memo",
-            params: vec![("amount", parse_quote!(U256)), ("memo", parse_quote!(B256))],
+            params: params(vec![("amount", parse_quote!(U256)), ("memo", parse_quote!(B256))]),
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::burnWithMemoCall),
+            call_type_path: quote!(#interface_ident::burnWithMemoCall),
         },
         InterfaceFunction {
             name: "burn_blocked",
-            params: vec![
+            params: params(vec![
                 ("from", parse_quote!(Address)),
                 ("amount", parse_quote!(U256)),
-            ],
+            ]),
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::burnBlockedCall),
+            call_type_path: quote!(#interface_ident::burnBlockedCall),
         },
         InterfaceFunction {
             name: "transfer_with_memo",
-            params: vec![
+            params: params(vec![
                 ("to", parse_quote!(Address)),
                 ("amount", parse_quote!(U256)),
                 ("memo", parse_quote!(B256)),
-            ],
+            ]),
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::transferWithMemoCall),
+            call_type_path: quote!(#interface_ident::transferWithMemoCall),
         },
         // Admin functions (void)
         InterfaceFunction {
             name: "change_transfer_policy_id",
-            params: vec![("new_policy_id", parse_quote!(u64))],
+            params: params(vec![("newPolicyId", parse_quote!(u64))]),
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::changeTransferPolicyIdCall),
+            call_type_path: quote!(#interface_ident::changeTransferPolicyIdCall),
         },
         InterfaceFunction {
             name: "set_supply_cap",
-            params: vec![("new_supply_cap", parse_quote!(U256))],
+            params: params(vec![("newSupplyCap", parse_quote!(U256))]),
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::setSupplyCapCall),
+            call_type_path: quote!(#interface_ident::setSupplyCapCall),
         },
         InterfaceFunction {
             name: "pause",
             params: vec![],
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::pauseCall),
+            call_type_path: quote!(#interface_ident::pauseCall),
         },
         InterfaceFunction {
             name: "unpause",
             params: vec![],
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::unpauseCall),
+            call_type_path: quote!(#interface_ident::unpauseCall),
         },
         InterfaceFunction {
             name: "update_quote_token",
-            params: vec![("new_quote_token", parse_quote!(Address))],
+            params: params(vec![("newQuoteToken", parse_quote!(Address))]),
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::updateQuoteTokenCall),
+            call_type_path: quote!(#interface_ident::updateQuoteTokenCall),
         },
         InterfaceFunction {
             name: "finalize_quote_token_update",
             params: vec![],
             return_type: parse_quote!(()),
             is_view: false,
-            call_type_path: quote!(#interface_type::finalizeQuoteTokenUpdateCall),
-        },
-        // Reward functions
-        InterfaceFunction {
-            name: "start_reward",
-            params: vec![
-                ("amount", parse_quote!(U256)),
-                ("seconds", parse_quote!(u128)),
-            ],
-            return_type: parse_quote!(u64),
-            is_view: false,
-            call_type_path: quote!(#interface_type::startRewardCall),
-        },
-        InterfaceFunction {
-            name: "set_reward_recipient",
-            params: vec![("recipient", parse_quote!(Address))],
-            return_type: parse_quote!(()),
-            is_view: false,
-            call_type_path: quote!(#interface_type::setRewardRecipientCall),
-        },
-        InterfaceFunction {
-            name: "cancel_reward",
-            params: vec![("id", parse_quote!(u64))],
-            return_type: parse_quote!(U256),
-            is_view: false,
-            call_type_path: quote!(#interface_type::cancelRewardCall),
-        },
-        InterfaceFunction {
-            name: "finalize_streams",
-            params: vec![],
-            return_type: parse_quote!(()),
-            is_view: false,
-            call_type_path: quote!(#interface_type::finalizeStreamsCall),
-        },
-        InterfaceFunction {
-            name: "get_stream",
-            params: vec![("id", parse_quote!(u64))],
-            return_type: parse_quote!(RewardStream),
-            is_view: true,
-            call_type_path: quote!(#interface_type::getStreamCall),
-        },
-        InterfaceFunction {
-            name: "total_reward_per_second",
-            params: vec![],
-            return_type: parse_quote!(U256),
-            is_view: true,
-            call_type_path: quote!(#interface_type::totalRewardPerSecondCall),
+            call_type_path: quote!(#interface_ident::finalizeQuoteTokenUpdateCall),
         },
     ]
 }
 
-pub(crate) fn get_events(interface_type: &Type) -> Vec<InterfaceEvent> {
+pub(crate) fn get_events(interface_ident: &Ident) -> Vec<InterfaceEvent> {
     vec![
         // Core token events
         InterfaceEvent {
@@ -299,7 +255,7 @@ pub(crate) fn get_events(interface_type: &Type) -> Vec<InterfaceEvent> {
                 ("to", parse_quote!(Address), true),
                 ("amount", parse_quote!(U256), false),
             ],
-            event_type_path: quote!(#interface_type::Transfer),
+            event_type_path: quote!(#interface_ident::Transfer),
         },
         InterfaceEvent {
             name: "approval",
@@ -308,7 +264,7 @@ pub(crate) fn get_events(interface_type: &Type) -> Vec<InterfaceEvent> {
                 ("spender", parse_quote!(Address), true),
                 ("amount", parse_quote!(U256), false),
             ],
-            event_type_path: quote!(#interface_type::Approval),
+            event_type_path: quote!(#interface_ident::Approval),
         },
         InterfaceEvent {
             name: "mint",
@@ -316,7 +272,7 @@ pub(crate) fn get_events(interface_type: &Type) -> Vec<InterfaceEvent> {
                 ("to", parse_quote!(Address), true),
                 ("amount", parse_quote!(U256), false),
             ],
-            event_type_path: quote!(#interface_type::Mint),
+            event_type_path: quote!(#interface_ident::Mint),
         },
         InterfaceEvent {
             name: "burn",
@@ -324,7 +280,7 @@ pub(crate) fn get_events(interface_type: &Type) -> Vec<InterfaceEvent> {
                 ("from", parse_quote!(Address), true),
                 ("amount", parse_quote!(U256), false),
             ],
-            event_type_path: quote!(#interface_type::Burn),
+            event_type_path: quote!(#interface_ident::Burn),
         },
         InterfaceEvent {
             name: "burn_blocked",
@@ -332,7 +288,7 @@ pub(crate) fn get_events(interface_type: &Type) -> Vec<InterfaceEvent> {
                 ("from", parse_quote!(Address), true),
                 ("amount", parse_quote!(U256), false),
             ],
-            event_type_path: quote!(#interface_type::BurnBlocked),
+            event_type_path: quote!(#interface_ident::BurnBlocked),
         },
         InterfaceEvent {
             name: "transfer_with_memo",
@@ -342,173 +298,129 @@ pub(crate) fn get_events(interface_type: &Type) -> Vec<InterfaceEvent> {
                 ("amount", parse_quote!(U256), false),
                 ("memo", parse_quote!(B256), false),
             ],
-            event_type_path: quote!(#interface_type::TransferWithMemo),
+            event_type_path: quote!(#interface_ident::TransferWithMemo),
         },
         // Admin events
         InterfaceEvent {
             name: "transfer_policy_update",
             params: vec![
                 ("updater", parse_quote!(Address), true),
-                ("new_policy_id", parse_quote!(u64), true),
+                ("newPolicyId", parse_quote!(u64), true),
             ],
-            event_type_path: quote!(#interface_type::TransferPolicyUpdate),
+            event_type_path: quote!(#interface_ident::TransferPolicyUpdate),
         },
         InterfaceEvent {
             name: "supply_cap_update",
             params: vec![
                 ("updater", parse_quote!(Address), true),
-                ("new_supply_cap", parse_quote!(U256), true),
+                ("newSupplyCap", parse_quote!(U256), true),
             ],
-            event_type_path: quote!(#interface_type::SupplyCapUpdate),
+            event_type_path: quote!(#interface_ident::SupplyCapUpdate),
         },
         InterfaceEvent {
             name: "pause_state_update",
             params: vec![
                 ("updater", parse_quote!(Address), true),
-                ("is_paused", parse_quote!(bool), false),
+                ("isPaused", parse_quote!(bool), false),
             ],
-            event_type_path: quote!(#interface_type::PauseStateUpdate),
+            event_type_path: quote!(#interface_ident::PauseStateUpdate),
         },
         InterfaceEvent {
             name: "update_quote_token",
             params: vec![
                 ("updater", parse_quote!(Address), true),
-                ("new_quote_token", parse_quote!(Address), true),
+                ("newQuoteToken", parse_quote!(Address), true),
             ],
-            event_type_path: quote!(#interface_type::UpdateQuoteToken),
+            event_type_path: quote!(#interface_ident::UpdateQuoteToken),
         },
         InterfaceEvent {
             name: "quote_token_update_finalized",
             params: vec![
                 ("updater", parse_quote!(Address), true),
-                ("new_quote_token", parse_quote!(Address), true),
+                ("newQuoteToken", parse_quote!(Address), true),
             ],
-            event_type_path: quote!(#interface_type::QuoteTokenUpdateFinalized),
-        },
-        // Reward events
-        InterfaceEvent {
-            name: "reward_scheduled",
-            params: vec![
-                ("funder", parse_quote!(Address), true),
-                ("id", parse_quote!(u64), true),
-                ("amount", parse_quote!(U256), false),
-                ("duration_seconds", parse_quote!(u32), false),
-            ],
-            event_type_path: quote!(#interface_type::RewardScheduled),
-        },
-        InterfaceEvent {
-            name: "reward_canceled",
-            params: vec![
-                ("funder", parse_quote!(Address), true),
-                ("id", parse_quote!(u64), true),
-                ("refund", parse_quote!(U256), false),
-            ],
-            event_type_path: quote!(#interface_type::RewardCanceled),
-        },
-        InterfaceEvent {
-            name: "reward_recipient_set",
-            params: vec![
-                ("holder", parse_quote!(Address), true),
-                ("recipient", parse_quote!(Address), true),
-            ],
-            event_type_path: quote!(#interface_type::RewardRecipientSet),
+            event_type_path: quote!(#interface_ident::QuoteTokenUpdateFinalized),
         },
     ]
 }
 
-pub(crate) fn get_errors(interface_type: &Type) -> Vec<InterfaceError> {
+pub(crate) fn get_errors(interface_ident: &Ident) -> Vec<InterfaceError> {
     vec![
         // Balance and allowance errors
         InterfaceError {
             name: "insufficient_balance",
             params: vec![],
-            error_type_path: quote!(#interface_type::InsufficientBalance),
+            error_type_path: quote!(#interface_ident::InsufficientBalance),
         },
         InterfaceError {
             name: "insufficient_allowance",
             params: vec![],
-            error_type_path: quote!(#interface_type::InsufficientAllowance),
+            error_type_path: quote!(#interface_ident::InsufficientAllowance),
         },
         // Supply errors
         InterfaceError {
             name: "supply_cap_exceeded",
             params: vec![],
-            error_type_path: quote!(#interface_type::SupplyCapExceeded),
+            error_type_path: quote!(#interface_ident::SupplyCapExceeded),
         },
         // Payload errors
         InterfaceError {
             name: "invalid_payload",
             params: vec![],
-            error_type_path: quote!(#interface_type::InvalidPayload),
+            error_type_path: quote!(#interface_ident::InvalidPayload),
         },
         InterfaceError {
             name: "string_too_long",
             params: vec![],
-            error_type_path: quote!(#interface_type::StringTooLong),
+            error_type_path: quote!(#interface_ident::StringTooLong),
         },
         // Transfer policy errors
         InterfaceError {
             name: "policy_forbids",
             params: vec![],
-            error_type_path: quote!(#interface_type::PolicyForbids),
+            error_type_path: quote!(#interface_ident::PolicyForbids),
         },
         // Address errors
         InterfaceError {
             name: "invalid_recipient",
             params: vec![],
-            error_type_path: quote!(#interface_type::InvalidRecipient),
+            error_type_path: quote!(#interface_ident::InvalidRecipient),
         },
         // State errors
         InterfaceError {
             name: "contract_paused",
             params: vec![],
-            error_type_path: quote!(#interface_type::ContractPaused),
+            error_type_path: quote!(#interface_ident::ContractPaused),
         },
         // Currency errors
         InterfaceError {
             name: "invalid_currency",
             params: vec![],
-            error_type_path: quote!(#interface_type::InvalidCurrency),
+            error_type_path: quote!(#interface_ident::InvalidCurrency),
         },
         // Quote token errors
         InterfaceError {
             name: "invalid_quote_token",
             params: vec![],
-            error_type_path: quote!(#interface_type::InvalidQuoteToken),
+            error_type_path: quote!(#interface_ident::InvalidQuoteToken),
         },
         // Transfer errors
         InterfaceError {
             name: "transfers_disabled",
             params: vec![],
-            error_type_path: quote!(#interface_type::TransfersDisabled),
+            error_type_path: quote!(#interface_ident::TransfersDisabled),
         },
         // Amount errors
         InterfaceError {
             name: "invalid_amount",
             params: vec![],
-            error_type_path: quote!(#interface_type::InvalidAmount),
-        },
-        // Reward stream errors
-        InterfaceError {
-            name: "not_stream_funder",
-            params: vec![],
-            error_type_path: quote!(#interface_type::NotStreamFunder),
-        },
-        InterfaceError {
-            name: "stream_inactive",
-            params: vec![],
-            error_type_path: quote!(#interface_type::StreamInactive),
-        },
-        InterfaceError {
-            name: "no_opted_in_supply",
-            params: vec![],
-            error_type_path: quote!(#interface_type::NoOptedInSupply),
+            error_type_path: quote!(#interface_ident::InvalidAmount),
         },
         // Access control errors
         InterfaceError {
             name: "unauthorized",
             params: vec![],
-            error_type_path: quote!(#interface_type::Unauthorized),
+            error_type_path: quote!(#interface_ident::Unauthorized),
         },
     ]
 }

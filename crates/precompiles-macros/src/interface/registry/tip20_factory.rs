@@ -1,36 +1,40 @@
-use crate::{
-    Type,
-    interface::{InterfaceError, InterfaceEvent, InterfaceFunction},
-};
+use crate::interface::{InterfaceError, InterfaceEvent, InterfaceFunction, ParamName};
 use quote::quote;
-use syn::parse_quote;
+use syn::{Ident, Type, parse_quote};
 
-pub(crate) fn get_functions(interface_type: &Type) -> Vec<InterfaceFunction> {
+pub(crate) fn get_functions(interface_ident: &Ident) -> Vec<InterfaceFunction> {
+    // Helper to convert parameter tuples to ParamName
+    let params = |p: Vec<(&'static str, Type)>| -> Vec<(ParamName, Type)> {
+        p.into_iter()
+            .map(|(name, ty)| (ParamName::new(name), ty))
+            .collect()
+    };
+
     vec![
         InterfaceFunction {
             name: "create_token",
-            params: vec![
+            params: params(vec![
                 ("name", parse_quote!(String)),
                 ("symbol", parse_quote!(String)),
                 ("currency", parse_quote!(String)),
                 ("quote_token", parse_quote!(Address)),
                 ("admin", parse_quote!(Address)),
-            ],
+            ]),
             return_type: parse_quote!(U256),
             is_view: false,
-            call_type_path: quote!(#interface_type::createTokenCall),
+            call_type_path: quote!(#interface_ident::createTokenCall),
         },
         InterfaceFunction {
             name: "token_id_counter",
-            params: vec![],
+            params: params(vec![]),
             return_type: parse_quote!(U256),
             is_view: true,
-            call_type_path: quote!(#interface_type::tokenIdCounterCall),
+            call_type_path: quote!(#interface_ident::tokenIdCounterCall),
         },
     ]
 }
 
-pub(crate) fn get_events(interface_type: &Type) -> Vec<InterfaceEvent> {
+pub(crate) fn get_events(interface_ident: &Ident) -> Vec<InterfaceEvent> {
     vec![InterfaceEvent {
         name: "token_created",
         params: vec![
@@ -41,10 +45,10 @@ pub(crate) fn get_events(interface_type: &Type) -> Vec<InterfaceEvent> {
             ("currency", parse_quote!(String), false),
             ("admin", parse_quote!(Address), false),
         ],
-        event_type_path: quote!(#interface_type::TokenCreated),
+        event_type_path: quote!(#interface_ident::TokenCreated),
     }]
 }
 
-pub(crate) fn get_errors(_interface_type: &Type) -> Vec<InterfaceError> {
+pub(crate) fn get_errors(_interface_ident: &Ident) -> Vec<InterfaceError> {
     vec![]
 }

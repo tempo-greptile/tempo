@@ -10,6 +10,7 @@ use alloy::primitives::{Address, U256};
 use storage::{
     ContractStorage, PrecompileStorageProvider, Storable, hashmap::HashMapStorageProvider,
 };
+use tempo_precompiles::error;
 use tempo_precompiles_macros::Storable;
 
 // Test wrapper that combines address + storage provider to implement ContractStorage
