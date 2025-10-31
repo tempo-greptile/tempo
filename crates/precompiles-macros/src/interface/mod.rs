@@ -122,6 +122,11 @@ fn get_interface_metadata(
             events: tip20::get_events(interface_type),
             errors: tip20::get_errors(interface_type),
         }),
+        "ITIP20Rewards" => Ok(Interface {
+            functions: tip20_rewards::get_functions(interface_type),
+            events: tip20_rewards::get_events(interface_type),
+            errors: tip20_rewards::get_errors(interface_type),
+        }),
         "IRolesAuth" => Ok(Interface {
             functions: roles_auth::get_functions(interface_type),
             events: roles_auth::get_events(interface_type),

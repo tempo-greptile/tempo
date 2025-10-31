@@ -5,6 +5,7 @@ pub(crate) mod stablecoin_exchange;
 pub(crate) mod tests;
 pub(crate) mod tip20;
 pub(crate) mod tip20_factory;
+pub(crate) mod tip20_rewards;
 pub(crate) mod tip20_rewards_registry;
 pub(crate) mod tip403_registry;
 pub(crate) mod tip4217_registry;
