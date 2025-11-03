@@ -97,7 +97,7 @@ impl<S: storage::PrecompileStorageProvider> TestTokenCall for TestToken<'_, S> {
         to: Address,
         amount: U256,
     ) -> tempo_precompiles::error::Result<bool> {
-        let balance = self.get_balances(s)?;
+        let balance = self.sload_balances(s)?;
         if amount > balance {
             return Err(tempo_precompiles::error::TempoPrecompileError::Fatal(
                 format!(
@@ -106,9 +106,9 @@ impl<S: storage::PrecompileStorageProvider> TestTokenCall for TestToken<'_, S> {
                 ),
             ));
         }
-        self.set_balances(s, balance - amount)?;
-        let to_balance = self.get_balances(to)?;
-        self.set_balances(to, to_balance + amount)?;
+        self.sstore_balances(s, balance - amount)?;
+        let to_balance = self.sload_balances(to)?;
+        self.sstore_balances(to, to_balance + amount)?;
         Ok(true)
     }
 
@@ -118,7 +118,7 @@ impl<S: storage::PrecompileStorageProvider> TestTokenCall for TestToken<'_, S> {
         spender: Address,
         amount: U256,
     ) -> tempo_precompiles::error::Result<bool> {
-        self.set_allowances(s, spender, amount)?;
+        self.sstore_allowances(s, spender, amount)?;
         Ok(true)
     }
 
@@ -128,13 +128,13 @@ impl<S: storage::PrecompileStorageProvider> TestTokenCall for TestToken<'_, S> {
         to: Address,
         amount: U256,
     ) -> tempo_precompiles::error::Result<()> {
-        let balance = self.get_balances(to)?;
-        self.set_balances(to, balance + amount)?;
+        let balance = self.sload_balances(to)?;
+        self.sstore_balances(to, balance + amount)?;
         Ok(())
     }
 
     fn burn(&mut self, s: Address, amount: U256) -> tempo_precompiles::error::Result<()> {
-        let balance = self.get_balances(s)?;
+        let balance = self.sload_balances(s)?;
         if amount > balance {
             return Err(tempo_precompiles::error::TempoPrecompileError::Fatal(
                 format!(
@@ -143,7 +143,7 @@ impl<S: storage::PrecompileStorageProvider> TestTokenCall for TestToken<'_, S> {
                 ),
             ));
         }
-        self.set_balances(s, balance - amount)?;
+        self.sstore_balances(s, balance - amount)?;
         Ok(())
     }
 }
@@ -164,13 +164,13 @@ fn test_contract_without_interface() {
     let mut simple = SimpleStorage::_new(addr, &mut storage);
 
     // Storage accessors should work
-    simple.set_value(U256::from(42)).unwrap();
-    simple.set_name("Test".to_string()).unwrap();
-    simple.set_counter(100).unwrap();
+    simple.sstore_value(U256::from(42)).unwrap();
+    simple.sstore_name("Test".to_string()).unwrap();
+    simple.sstore_counter(100).unwrap();
 
-    assert_eq!(simple.get_value().unwrap(), U256::from(42));
-    assert_eq!(simple.get_name().unwrap(), "Test");
-    assert_eq!(simple.get_counter().unwrap(), 100);
+    assert_eq!(simple.sload_value().unwrap(), U256::from(42));
+    assert_eq!(simple.sload_name().unwrap(), "Test");
+    assert_eq!(simple.sload_counter().unwrap(), 100);
 
     // Verify ContractStorage trait is implemented
     assert_eq!(simple.address(), addr);
@@ -199,21 +199,21 @@ fn test_contract_with_map_attribute() {
     let account1 = test_address(2);
     let account2 = test_address(3);
 
-    token.set_balances(account1, U256::from(1000)).unwrap();
-    token.set_balances(account2, U256::from(500)).unwrap();
+    token.sstore_balances(account1, U256::from(1000)).unwrap();
+    token.sstore_balances(account2, U256::from(500)).unwrap();
 
-    assert_eq!(token.get_balances(account1).unwrap(), U256::from(1000));
-    assert_eq!(token.get_balances(account2).unwrap(), U256::from(500));
+    assert_eq!(token.sload_balances(account1).unwrap(), U256::from(1000));
+    assert_eq!(token.sload_balances(account2).unwrap(), U256::from(500));
 
     // Test nested mapping
     let owner = test_address(4);
     let spender = test_address(5);
 
     token
-        .set_allowances(owner, spender, U256::from(200))
+        .sstore_allowances(owner, spender, U256::from(200))
         .unwrap();
     assert_eq!(
-        token.get_allowances(owner, spender).unwrap(),
+        token.sload_allowances(owner, spender).unwrap(),
         U256::from(200)
     );
 }
@@ -237,22 +237,22 @@ fn test_multiple_storage_types() {
     let mut multi = MultiType::_new(addr, &mut storage);
 
     // Set all types
-    multi.set_string_val("Hello".to_string()).unwrap();
-    multi.set_u256_val(U256::from(12345)).unwrap();
-    multi.set_u64_val(999).unwrap();
-    multi.set_bool_val(true).unwrap();
-    multi.set_address_val(test_address(99)).unwrap();
+    multi.sstore_string_val("Hello".to_string()).unwrap();
+    multi.sstore_u256_val(U256::from(12345)).unwrap();
+    multi.sstore_u64_val(999).unwrap();
+    multi.sstore_bool_val(true).unwrap();
+    multi.sstore_address_val(test_address(99)).unwrap();
 
     let key = test_address(10);
-    multi.set_mapping_val(key, U256::from(777)).unwrap();
+    multi.sstore_mapping_val(key, U256::from(777)).unwrap();
 
     // Verify all types
-    assert_eq!(multi.get_string_val().unwrap(), "Hello");
-    assert_eq!(multi.get_u256_val().unwrap(), U256::from(12345));
-    assert_eq!(multi.get_u64_val().unwrap(), 999);
-    assert!(multi.get_bool_val().unwrap());
-    assert_eq!(multi.get_address_val().unwrap(), test_address(99));
-    assert_eq!(multi.get_mapping_val(key).unwrap(), U256::from(777));
+    assert_eq!(multi.sload_string_val().unwrap(), "Hello");
+    assert_eq!(multi.sload_u256_val().unwrap(), U256::from(12345));
+    assert_eq!(multi.sload_u64_val().unwrap(), 999);
+    assert!(multi.sload_bool_val().unwrap());
+    assert_eq!(multi.sload_address_val().unwrap(), test_address(99));
+    assert_eq!(multi.sload_mapping_val(key).unwrap(), U256::from(777));
 }
 
 #[test]
@@ -289,16 +289,16 @@ fn test_nested_mapping_storage() {
     let key2 = test_address(3);
 
     // Test nested mapping operations
-    nested.set_nested(key1, key2, U256::from(888)).unwrap();
-    assert_eq!(nested.get_nested(key1, key2).unwrap(), U256::from(888));
+    nested.sstore_nested(key1, key2, U256::from(888)).unwrap();
+    assert_eq!(nested.sload_nested(key1, key2).unwrap(), U256::from(888));
 
     // Test multiple nested entries
     let key3 = test_address(4);
-    nested.set_nested(key1, key3, U256::from(999)).unwrap();
-    assert_eq!(nested.get_nested(key1, key3).unwrap(), U256::from(999));
+    nested.sstore_nested(key1, key3, U256::from(999)).unwrap();
+    assert_eq!(nested.sload_nested(key1, key3).unwrap(), U256::from(999));
 
     // Original value should be unchanged
-    assert_eq!(nested.get_nested(key1, key2).unwrap(), U256::from(888));
+    assert_eq!(nested.sload_nested(key1, key2).unwrap(), U256::from(888));
 }
 
 #[test]
@@ -313,8 +313,8 @@ fn test_contract_with_generic_storage_provider() {
     let addr = test_address(1);
     let mut contract1 = GenericContract::_new(addr, &mut hash_storage);
 
-    contract1.set_value(U256::from(42)).unwrap();
-    assert_eq!(contract1.get_value().unwrap(), U256::from(42));
+    contract1.sstore_value(U256::from(42)).unwrap();
+    assert_eq!(contract1.sload_value().unwrap(), U256::from(42));
 
     // The contract should work with any PrecompileStorageProvider implementation
     // This demonstrates the generic nature of the generated code
@@ -348,8 +348,8 @@ fn test_dispatcher_metadata_functions() {
     let sender = test_address(2);
 
     // Setup
-    token.set_name("Test Token".to_string()).unwrap();
-    token.set_symbol("TEST".to_string()).unwrap();
+    token.sstore_name("Test Token".to_string()).unwrap();
+    token.sstore_symbol("TEST".to_string()).unwrap();
 
     // Test name() - metadata function
     let calldata = ITestToken::nameCall {}.abi_encode();
@@ -384,9 +384,9 @@ fn test_dispatcher_view_functions() {
     let sender = test_address(4);
 
     // Setup balances and allowances
-    token.set_balances(account, U256::from(1000)).unwrap();
+    token.sstore_balances(account, U256::from(1000)).unwrap();
     token
-        .set_allowances(account, spender, U256::from(500))
+        .sstore_allowances(account, spender, U256::from(500))
         .unwrap();
 
     // Test balanceOf() - view function
@@ -418,7 +418,7 @@ fn test_dispatcher_mutate_functions() {
     let spender = test_address(4);
 
     // Setup initial balance
-    token.set_balances(sender, U256::from(1000)).unwrap();
+    token.sstore_balances(sender, U256::from(1000)).unwrap();
 
     // Test transfer() - mutate function returning bool
     let calldata = ITestToken::transferCall {
@@ -433,8 +433,8 @@ fn test_dispatcher_mutate_functions() {
     assert!(success);
 
     // Verify state changes
-    assert_eq!(token.get_balances(sender).unwrap(), U256::from(900));
-    assert_eq!(token.get_balances(recipient).unwrap(), U256::from(100));
+    assert_eq!(token.sload_balances(sender).unwrap(), U256::from(900));
+    assert_eq!(token.sload_balances(recipient).unwrap(), U256::from(100));
 
     // Test approve() - mutate function returning bool
     let calldata = ITestToken::approveCall {
@@ -448,7 +448,7 @@ fn test_dispatcher_mutate_functions() {
     let success = bool::abi_decode(&result.bytes).unwrap();
     assert!(success);
     assert_eq!(
-        token.get_allowances(sender, spender).unwrap(),
+        token.sload_allowances(sender, spender).unwrap(),
         U256::from(200)
     );
 }
@@ -471,10 +471,10 @@ fn test_dispatcher_mutate_void_functions() {
     assert_eq!(result.gas_used, MUTATE_FUNC_GAS);
     assert!(!result.reverted);
     assert!(result.bytes.is_empty()); // void return
-    assert_eq!(token.get_balances(recipient).unwrap(), U256::from(500));
+    assert_eq!(token.sload_balances(recipient).unwrap(), U256::from(500));
 
     // Setup for burn
-    token.set_balances(sender, U256::from(300)).unwrap();
+    token.sstore_balances(sender, U256::from(300)).unwrap();
 
     // Test burn() - mutate_void function
     let calldata = ITestToken::burnCall {
@@ -485,7 +485,7 @@ fn test_dispatcher_mutate_void_functions() {
     assert_eq!(result.gas_used, MUTATE_FUNC_GAS);
     assert!(!result.reverted);
     assert!(result.bytes.is_empty());
-    assert_eq!(token.get_balances(sender).unwrap(), U256::from(200));
+    assert_eq!(token.sload_balances(sender).unwrap(), U256::from(200));
 }
 
 #[test]
@@ -497,7 +497,7 @@ fn test_dispatcher_error_handling() {
     let recipient = test_address(3);
 
     // Test insufficient balance error
-    token.set_balances(sender, U256::from(50)).unwrap();
+    token.sstore_balances(sender, U256::from(50)).unwrap();
     let calldata = ITestToken::transferCall {
         to: recipient,
         amount: U256::from(100),
@@ -527,7 +527,7 @@ fn test_dispatcher_selector_routing() {
     let mut token = TestToken::_new(addr, &mut storage);
     let sender = test_address(2);
 
-    token.set_name("Test".to_string()).unwrap();
+    token.sstore_name("Test".to_string()).unwrap();
 
     // Verify selector routing works
     let name_selector = ITestToken::nameCall::SELECTOR;
@@ -537,7 +537,7 @@ fn test_dispatcher_selector_routing() {
     assert_eq!(name, "Test");
 
     // Test multiple selectors to ensure routing is correct
-    token.set_symbol("TST".to_string()).unwrap();
+    token.sstore_symbol("TST".to_string()).unwrap();
     let symbol_selector = ITestToken::symbolCall::SELECTOR;
     calldata = symbol_selector.to_vec();
     let result = token.call(&calldata, sender).unwrap();
@@ -546,7 +546,7 @@ fn test_dispatcher_selector_routing() {
 
     // Test view function selector
     let account = test_address(5);
-    token.set_balances(account, U256::from(999)).unwrap();
+    token.sstore_balances(account, U256::from(999)).unwrap();
     let balance_calldata = ITestToken::balanceOfCall { account }.abi_encode();
     let result = token.call(&balance_calldata, sender).unwrap();
     let balance = U256::abi_decode(&result.bytes).unwrap();
@@ -563,8 +563,8 @@ fn test_dispatcher_all_function_types_together() {
     let bob = test_address(3);
 
     // Setup metadata
-    token.set_name("Full Test".to_string()).unwrap();
-    token.set_symbol("FULL".to_string()).unwrap();
+    token.sstore_name("Full Test".to_string()).unwrap();
+    token.sstore_symbol("FULL".to_string()).unwrap();
 
     // 1. Check metadata
     let calldata = ITestToken::nameCall {}.abi_encode();
@@ -664,15 +664,15 @@ fn test_multi_interface_contract() {
             to: Address,
             amount: U256,
         ) -> tempo_precompiles::error::Result<bool> {
-            let balance = self.get_balances(s)?;
+            let balance = self.sload_balances(s)?;
             if amount > balance {
                 return Err(tempo_precompiles::error::TempoPrecompileError::Fatal(
                     "InsufficientBalance".to_string(),
                 ));
             }
-            self.set_balances(s, balance - amount)?;
-            let to_balance = self.get_balances(to)?;
-            self.set_balances(to, to_balance + amount)?;
+            self.sstore_balances(s, balance - amount)?;
+            let to_balance = self.sload_balances(to)?;
+            self.sstore_balances(to, to_balance + amount)?;
             Ok(true)
         }
 
@@ -682,7 +682,7 @@ fn test_multi_interface_contract() {
             spender: Address,
             amount: U256,
         ) -> tempo_precompiles::error::Result<bool> {
-            self.set_allowances(s, spender, amount)?;
+            self.sstore_allowances(s, spender, amount)?;
             Ok(true)
         }
 
@@ -692,19 +692,19 @@ fn test_multi_interface_contract() {
             to: Address,
             amount: U256,
         ) -> tempo_precompiles::error::Result<()> {
-            let balance = self.get_balances(to)?;
-            self.set_balances(to, balance + amount)?;
+            let balance = self.sload_balances(to)?;
+            self.sstore_balances(to, balance + amount)?;
             Ok(())
         }
 
         fn burn(&mut self, s: Address, amount: U256) -> tempo_precompiles::error::Result<()> {
-            let balance = self.get_balances(s)?;
+            let balance = self.sload_balances(s)?;
             if amount > balance {
                 return Err(tempo_precompiles::error::TempoPrecompileError::Fatal(
                     "InsufficientBalance".to_string(),
                 ));
             }
-            self.set_balances(s, balance - amount)?;
+            self.sstore_balances(s, balance - amount)?;
             Ok(())
         }
     }
@@ -721,8 +721,8 @@ fn test_multi_interface_contract() {
     let sender = test_address(2);
 
     // Test ITestToken interface methods
-    token.set_name("Multi Token".to_string()).unwrap();
-    token.set_symbol("MULTI".to_string()).unwrap();
+    token.sstore_name("Multi Token".to_string()).unwrap();
+    token.sstore_symbol("MULTI".to_string()).unwrap();
 
     let calldata = ITestToken::nameCall {}.abi_encode();
     let result = token.call(&calldata, sender).unwrap();
@@ -733,8 +733,8 @@ fn test_multi_interface_contract() {
     assert_eq!(String::abi_decode(&result.bytes).unwrap(), "MULTI");
 
     // Test IMetadata interface methods
-    token.set_version(U256::from(1)).unwrap();
-    token.set_owner(test_address(99)).unwrap();
+    token.sstore_version(U256::from(1)).unwrap();
+    token.sstore_owner(test_address(99)).unwrap();
 
     let calldata = IMetadata::versionCall {}.abi_encode();
     let result = token.call(&calldata, sender).unwrap();

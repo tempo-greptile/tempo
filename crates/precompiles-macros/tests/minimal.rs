@@ -31,6 +31,6 @@ fn test_minimal() {
     let addr = alloy::primitives::Address::ZERO;
     let mut contract = SimpleContract::_new(addr, &mut storage);
 
-    contract.set_value(U256::from(42)).unwrap();
-    assert_eq!(contract.get_value().unwrap(), U256::from(42));
+    contract.sstore_value(U256::from(42)).unwrap();
+    assert_eq!(contract.sload_value().unwrap(), U256::from(42));
 }

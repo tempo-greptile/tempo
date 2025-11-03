@@ -300,7 +300,7 @@ fn gen_storage_method_sig_or_impl(gen_sig: bool, result: &GetterFn<'_>) -> Token
 
     match &result.field_match {
         GetterInfo::Direct { field } => {
-            let getter_name = format_ident!("get_{}", field.name);
+            let getter_name = format_ident!("sload_{}", field.name);
             if gen_sig {
                 quote! { fn #getter_name(&mut self) -> crate::error::Result<#return_type>; }
             } else {
@@ -312,7 +312,7 @@ fn gen_storage_method_sig_or_impl(gen_sig: bool, result: &GetterFn<'_>) -> Token
             }
         }
         GetterInfo::Mapping { field, key_param } => {
-            let getter_name = format_ident!("get_{}", field.name);
+            let getter_name = format_ident!("sload_{}", field.name);
             let (key, ty) = (format_ident!("{}", key_param), &func.params[0].1);
             if gen_sig {
                 quote! { fn #getter_name(&mut self, #key: #ty) -> crate::error::Result<#return_type>; }
@@ -329,7 +329,7 @@ fn gen_storage_method_sig_or_impl(gen_sig: bool, result: &GetterFn<'_>) -> Token
             key1_param,
             key2_param,
         } => {
-            let getter_name = format_ident!("get_{}", field.name);
+            let getter_name = format_ident!("sload_{}", field.name);
             let (key1, ty1) = (format_ident!("{}", key1_param), &func.params[0].1);
             let (key2, ty2) = (format_ident!("{}", key2_param), &func.params[1].1);
             if gen_sig {
@@ -440,11 +440,11 @@ fn gen_call_trait_method(result: &GetterFn<'_>) -> TokenStream {
 fn gen_default_getter(result: &GetterFn<'_>) -> TokenStream {
     match &result.field_match {
         GetterInfo::Direct { field } => {
-            let getter_name = format_ident!("get_{}", field.name);
+            let getter_name = format_ident!("sload_{}", field.name);
             quote! { self.#getter_name() }
         }
         GetterInfo::Mapping { field, key_param } => {
-            let getter_name = format_ident!("get_{}", field.name);
+            let getter_name = format_ident!("sload_{}", field.name);
             let key_field = format_ident!("{}", key_param);
             quote! { self.#getter_name(#key_field) }
         }
@@ -453,7 +453,7 @@ fn gen_default_getter(result: &GetterFn<'_>) -> TokenStream {
             key1_param,
             key2_param,
         } => {
-            let getter_name = format_ident!("get_{}", field.name);
+            let getter_name = format_ident!("sload_{}", field.name);
             let key1_field = format_ident!("{}", key1_param);
             let key2_field = format_ident!("{}", key2_param);
             quote! { self.#getter_name(#key1_field, #key2_field) }
@@ -528,6 +528,7 @@ mod tests_match {
                 .collect(),
             return_type: parse_quote!(U256),
             is_view: true,
+            gas: None,
             call_type_path: quote::quote!(ITIP20::testCall),
         }
     }
@@ -539,6 +540,7 @@ mod tests_match {
             params: vec![],
             return_type: parse_quote!(String),
             is_view: true,
+            gas: None,
             call_type_path: quote::quote!(ITIP20::nameCall),
         };
         let fields = vec![create_field("name", parse_quote!(String), vec![])];
@@ -635,6 +637,7 @@ mod tests_match {
             params: vec![],
             return_type: parse_quote!(U256), // Wrong return type
             is_view: true,
+            gas: None,
             call_type_path: quote::quote!(ITIP20::nameCall),
         };
         let fields = vec![create_field("name", parse_quote!(String), vec![])];
@@ -669,6 +672,7 @@ mod tests_match {
             params: vec![(ParamName::new("account"), parse_quote!(Address))],
             return_type: parse_quote!(bool), // Wrong return type
             is_view: true,
+            gas: None,
             call_type_path: quote::quote!(ITIP20::balanceOfCall),
         };
         let fields = vec![create_field(
@@ -696,6 +700,7 @@ mod tests_match {
             ],
             return_type: parse_quote!(U256),
             is_view: true,
+            gas: None,
             call_type_path: quote::quote!(ITIP20::allowanceCall),
         };
         let fields = vec![create_field(
@@ -719,6 +724,7 @@ mod tests_match {
             ],
             return_type: parse_quote!(U256),
             is_view: true,
+            gas: None,
             call_type_path: quote::quote!(ITIP20::allowanceCall),
         };
         let fields = vec![create_field(
@@ -742,6 +748,7 @@ mod tests_match {
             ],
             return_type: parse_quote!(bool), // Wrong return type
             is_view: true,
+            gas: None,
             call_type_path: quote::quote!(ITIP20::allowanceCall),
         };
         let fields = vec![create_field(
@@ -774,6 +781,7 @@ mod tests_trait {
             params: vec![],
             return_type: parse_quote!(String),
             is_view: true,
+            gas: None,
             call_type_path: quote!(ITIP20::nameCall),
         };
 
@@ -803,7 +811,7 @@ mod tests_trait {
         assert!(trait_str.contains("trait TIP20TokenCall"));
         assert!(trait_str.contains("fn name"));
         assert!(trait_str.contains("impl"));
-        assert!(trait_str.contains("get_name"));
+        assert!(trait_str.contains("sload_name"));
     }
 
     #[test]
@@ -816,6 +824,7 @@ mod tests_trait {
             params: vec![],
             return_type: parse_quote!(bool),
             is_view: false,
+            gas: None,
             call_type_path: quote!(ITIP20::transferCall),
         };
 

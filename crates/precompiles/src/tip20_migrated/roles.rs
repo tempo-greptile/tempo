@@ -54,24 +54,24 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
     }
 
     pub fn grant_role_internal(&mut self, account: Address, role: B256) -> Result<()> {
-        self.set_roles(account, role, true)
+        self.sstore_roles(account, role, true)
     }
 
     fn revoke_role_internal(&mut self, account: Address, role: B256) -> Result<()> {
-        self.set_roles(account, role, false)
+        self.sstore_roles(account, role, false)
     }
 
     fn get_role_admin_internal(&mut self, role: B256) -> Result<B256> {
-        let admin = self.get_role_admins(role)?;
+        let admin = self.sload_role_admins(role)?;
         Ok(B256::from(admin)) // If sloads 0, will be equal to DEFAULT_ADMIN_ROLE
     }
 
     fn set_role_admin_internal(&mut self, role: B256, admin_role: B256) -> Result<()> {
-        self.set_role_admins(role, admin_role)
+        self.sstore_role_admins(role, admin_role)
     }
 
     fn check_role_internal(&mut self, account: Address, role: B256) -> Result<()> {
-        if !self.get_roles(account, role)? {
+        if !self.sload_roles(account, role)? {
             return Err(RolesAuthError::unauthorized().into());
         }
         Ok(())
@@ -80,7 +80,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
 
 #[cfg(test)]
 mod tests {
-    use alloy::primitives::{Address, B256, address, keccak256};
+    use alloy::primitives::{Address, keccak256};
 
     use super::{DEFAULT_ADMIN_ROLE, TIP20Token_IRolesAuth};
     use crate::{
@@ -104,14 +104,14 @@ mod tests {
             token.initialize("Test", "TST", "USD", LINKING_USD_ADDRESS, admin)?;
 
             // Test admin has DEFAULT_ADMIN_ROLE
-            let has_admin = token.get_roles(admin, DEFAULT_ADMIN_ROLE)?;
+            let has_admin = token.sload_roles(admin, DEFAULT_ADMIN_ROLE)?;
             assert!(has_admin);
 
             // Grant custom role to user
             token.grant_role(admin, custom_role, user)?;
 
             // Check custom role was granted
-            let has_custom = token.get_roles(user, custom_role)?;
+            let has_custom = token.sload_roles(user, custom_role)?;
             assert!(has_custom);
         }
 
@@ -162,13 +162,13 @@ mod tests {
             token.grant_role_internal(user, custom_role)?;
 
             // Verify role was granted
-            assert!(token.get_roles(user, custom_role)?);
+            assert!(token.sload_roles(user, custom_role)?);
 
             // Renounce role
             token.renounce_role(user, custom_role)?;
 
             // Check role is removed
-            assert!(!token.get_roles(user, custom_role)?);
+            assert!(!token.sload_roles(user, custom_role)?);
         }
 
         Ok(())

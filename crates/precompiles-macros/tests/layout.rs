@@ -37,16 +37,16 @@ fn test_mixed_slot_allocation() {
     let mut mixed = Layout::_new(addr, &mut storage);
 
     // Set all fields
-    mixed.set_field_a(U256::from(100)).unwrap();
-    mixed.set_field_b(U256::from(200)).unwrap();
-    mixed.set_field_c(U256::from(300)).unwrap();
-    mixed.set_field_d(U256::from(400)).unwrap();
+    mixed.sstore_field_a(U256::from(100)).unwrap();
+    mixed.sstore_field_b(U256::from(200)).unwrap();
+    mixed.sstore_field_c(U256::from(300)).unwrap();
+    mixed.sstore_field_d(U256::from(400)).unwrap();
 
     // Verify values
-    assert_eq!(mixed.get_field_a().unwrap(), U256::from(100));
-    assert_eq!(mixed.get_field_b().unwrap(), U256::from(200));
-    assert_eq!(mixed.get_field_c().unwrap(), U256::from(300));
-    assert_eq!(mixed.get_field_d().unwrap(), U256::from(400));
+    assert_eq!(mixed.sload_field_a().unwrap(), U256::from(100));
+    assert_eq!(mixed.sload_field_b().unwrap(), U256::from(200));
+    assert_eq!(mixed.sload_field_c().unwrap(), U256::from(300));
+    assert_eq!(mixed.sload_field_d().unwrap(), U256::from(400));
 
     // Verify actual slot assignments
     assert_eq!(storage.sload(addr, U256::from(0)), Ok(U256::from(100))); // field_a
@@ -70,17 +70,17 @@ fn test_string_storage() {
 
     // Test short string
     let test_str = "Hello, Tempo!".to_string();
-    str_storage.set_short_string(test_str.clone()).unwrap();
-    assert_eq!(str_storage.get_short_string().unwrap(), test_str);
+    str_storage.sstore_short_string(test_str.clone()).unwrap();
+    assert_eq!(str_storage.sload_short_string().unwrap(), test_str);
 
     // Test empty string
-    str_storage.set_another_string(String::new()).unwrap();
-    assert_eq!(str_storage.get_another_string().unwrap(), "");
+    str_storage.sstore_another_string(String::new()).unwrap();
+    assert_eq!(str_storage.sload_another_string().unwrap(), "");
 
     // Test max length (31 bytes)
     let max_str = "a".repeat(31);
-    str_storage.set_short_string(max_str.clone()).unwrap();
-    assert_eq!(str_storage.get_short_string().unwrap(), max_str);
+    str_storage.sstore_short_string(max_str.clone()).unwrap();
+    assert_eq!(str_storage.sload_short_string().unwrap(), max_str);
 }
 
 #[test]
@@ -98,9 +98,9 @@ fn test_default_values() {
     let mut defaults = Layout::_new(addr, &mut storage);
 
     // Reading uninitialized storage returns zero/default
-    assert_eq!(defaults.get_counter().unwrap(), 0);
-    assert!(!defaults.get_flag().unwrap());
-    assert_eq!(defaults.get_amount().unwrap(), U256::ZERO);
+    assert_eq!(defaults.sload_counter().unwrap(), 0);
+    assert!(!defaults.sload_flag().unwrap());
+    assert_eq!(defaults.sload_amount().unwrap(), U256::ZERO);
 }
 
 #[test]
@@ -144,13 +144,13 @@ fn test_base_slots() {
     let mut layout = Layout::_new(addr, &mut storage);
 
     // Set values to verify slot assignments
-    layout.set_field_a(U256::from(1)).unwrap();
-    layout.set_field_b(U256::from(2)).unwrap();
-    layout.set_field_c(U256::from(3)).unwrap();
-    layout.set_field_d(U256::from(4)).unwrap();
-    layout.set_field_e(U256::from(5)).unwrap();
-    layout.set_field_f(U256::from(6)).unwrap();
-    layout.set_field_g(U256::from(7)).unwrap();
+    layout.sstore_field_a(U256::from(1)).unwrap();
+    layout.sstore_field_b(U256::from(2)).unwrap();
+    layout.sstore_field_c(U256::from(3)).unwrap();
+    layout.sstore_field_d(U256::from(4)).unwrap();
+    layout.sstore_field_e(U256::from(5)).unwrap();
+    layout.sstore_field_f(U256::from(6)).unwrap();
+    layout.sstore_field_g(U256::from(7)).unwrap();
 
     // Verify actual slot assignments
     assert_eq!(storage.sload(addr, U256::from(0)), Ok(U256::from(1))); // field_a
@@ -189,11 +189,11 @@ fn test_base_slot_with_regular_slot() {
 
     let mut layout = Layout::_new(addr, &mut storage);
 
-    layout.set_field_a(U256::from(1)).unwrap();
-    layout.set_field_b(U256::from(2)).unwrap();
-    layout.set_field_c(U256::from(3)).unwrap();
-    layout.set_field_d(U256::from(4)).unwrap();
-    layout.set_field_e(U256::from(5)).unwrap();
+    layout.sstore_field_a(U256::from(1)).unwrap();
+    layout.sstore_field_b(U256::from(2)).unwrap();
+    layout.sstore_field_c(U256::from(3)).unwrap();
+    layout.sstore_field_d(U256::from(4)).unwrap();
+    layout.sstore_field_e(U256::from(5)).unwrap();
 
     // Verify slot assignments
     assert_eq!(storage.sload(addr, U256::from(0)), Ok(U256::from(1))); // field_a
@@ -224,7 +224,7 @@ fn test_string_literal_slots() {
     let mut layout = Layout::_new(addr, &mut storage);
 
     // Set value
-    layout.set_field(U256::from(1)).unwrap();
+    layout.sstore_field(U256::from(1)).unwrap();
 
     // Verify
     let slot: U256 = keccak256("id").into();
@@ -265,14 +265,14 @@ fn test_struct_storage() {
     // Scope the layout to ensure it's dropped before we access storage directly
     {
         let mut layout = Layout::_new(addr, &mut storage);
-        layout.set_field_a(U256::from(100)).unwrap();
-        layout.set_field_b(U256::from(200)).unwrap();
-        layout.set_block(block.clone()).unwrap();
+        layout.sstore_field_a(U256::from(100)).unwrap();
+        layout.sstore_field_b(U256::from(200)).unwrap();
+        layout.sstore_block(block.clone()).unwrap();
 
         // Verify fields
-        assert_eq!(layout.get_field_a().unwrap(), U256::from(100));
-        assert_eq!(layout.get_field_b().unwrap(), U256::from(200));
-        assert_eq!(layout.get_block().unwrap(), block);
+        assert_eq!(layout.sload_field_a().unwrap(), U256::from(100));
+        assert_eq!(layout.sload_field_b().unwrap(), U256::from(200));
+        assert_eq!(layout.sload_block().unwrap(), block);
     }
 
     // Verify actual slot assignments
@@ -298,13 +298,28 @@ fn test_struct_storage() {
         let addr2 = test_address(20);
         let addr3 = test_address(30);
 
-        layout.set_address_mapping(addr1, U256::from(1000)).unwrap();
-        layout.set_address_mapping(addr2, U256::from(2000)).unwrap();
-        layout.set_address_mapping(addr3, U256::from(3000)).unwrap();
+        layout
+            .sstore_address_mapping(addr1, U256::from(1000))
+            .unwrap();
+        layout
+            .sstore_address_mapping(addr2, U256::from(2000))
+            .unwrap();
+        layout
+            .sstore_address_mapping(addr3, U256::from(3000))
+            .unwrap();
 
-        assert_eq!(layout.get_address_mapping(addr1).unwrap(), U256::from(1000));
-        assert_eq!(layout.get_address_mapping(addr2).unwrap(), U256::from(2000));
-        assert_eq!(layout.get_address_mapping(addr3).unwrap(), U256::from(3000));
+        assert_eq!(
+            layout.sload_address_mapping(addr1).unwrap(),
+            U256::from(1000)
+        );
+        assert_eq!(
+            layout.sload_address_mapping(addr2).unwrap(),
+            U256::from(2000)
+        );
+        assert_eq!(
+            layout.sload_address_mapping(addr3).unwrap(),
+            U256::from(3000)
+        );
 
         // Test block_mapping with TestBlock values
         let block1 = TestBlock {
@@ -318,19 +333,19 @@ fn test_struct_storage() {
             field3: 666,
         };
 
-        layout.set_block_mapping(1u64, block1.clone()).unwrap();
-        layout.set_block_mapping(2u64, block2.clone()).unwrap();
+        layout.sstore_block_mapping(1u64, block1.clone()).unwrap();
+        layout.sstore_block_mapping(2u64, block2.clone()).unwrap();
 
-        assert_eq!(layout.get_block_mapping(1u64).unwrap(), block1);
-        assert_eq!(layout.get_block_mapping(2u64).unwrap(), block2);
+        assert_eq!(layout.sload_block_mapping(1u64).unwrap(), block1);
+        assert_eq!(layout.sload_block_mapping(2u64).unwrap(), block2);
 
         // Verify non-existent keys return default values
         assert_eq!(
-            layout.get_address_mapping(test_address(99)).unwrap(),
+            layout.sload_address_mapping(test_address(99)).unwrap(),
             U256::ZERO
         );
         assert_eq!(
-            layout.get_block_mapping(999u64).unwrap(),
+            layout.sload_block_mapping(999u64).unwrap(),
             TestBlock {
                 field1: U256::ZERO,
                 field2: U256::ZERO,
@@ -406,14 +421,14 @@ fn test_delete_struct_field_in_contract() {
     // Scope the layout to store data
     {
         let mut layout = Layout::_new(addr, &mut storage);
-        layout.set_field_a(U256::from(100)).unwrap();
-        layout.set_field_b(U256::from(200)).unwrap();
-        layout.set_block(block.clone()).unwrap();
+        layout.sstore_field_a(U256::from(100)).unwrap();
+        layout.sstore_field_b(U256::from(200)).unwrap();
+        layout.sstore_block(block.clone()).unwrap();
 
         // Verify data is stored
-        assert_eq!(layout.get_field_a().unwrap(), U256::from(100));
-        assert_eq!(layout.get_field_b().unwrap(), U256::from(200));
-        assert_eq!(layout.get_block().unwrap(), block);
+        assert_eq!(layout.sload_field_a().unwrap(), U256::from(100));
+        assert_eq!(layout.sload_field_b().unwrap(), U256::from(200));
+        assert_eq!(layout.sload_block().unwrap(), block);
     }
 
     // Verify storage slots before delete
@@ -442,7 +457,7 @@ fn test_delete_struct_field_in_contract() {
     {
         let mut layout = Layout::_new(addr, &mut storage);
         assert_eq!(
-            layout.get_block().unwrap(),
+            layout.sload_block().unwrap(),
             TestBlock {
                 field1: U256::ZERO,
                 field2: U256::ZERO,
@@ -475,14 +490,14 @@ fn test_user_profile_struct_in_contract() {
     // Store data
     {
         let mut layout = Layout::_new(addr, &mut storage);
-        layout.set_counter(U256::from(5)).unwrap();
-        layout.set_profile(profile.clone()).unwrap();
-        layout.set_flag(true).unwrap();
+        layout.sstore_counter(U256::from(5)).unwrap();
+        layout.sstore_profile(profile.clone()).unwrap();
+        layout.sstore_flag(true).unwrap();
 
         // Verify getters
-        assert_eq!(layout.get_counter().unwrap(), U256::from(5));
-        assert_eq!(layout.get_profile().unwrap(), profile);
-        assert!(layout.get_flag().unwrap());
+        assert_eq!(layout.sload_counter().unwrap(), U256::from(5));
+        assert_eq!(layout.sload_profile().unwrap(), profile);
+        assert!(layout.sload_flag().unwrap());
     }
 
     // Verify actual slot assignments
@@ -525,7 +540,7 @@ fn test_user_profile_struct_in_contract() {
     {
         let mut layout = Layout::_new(addr, &mut storage);
         assert_eq!(
-            layout.get_profile().unwrap(),
+            layout.sload_profile().unwrap(),
             UserProfile {
                 owner: Address::ZERO,
                 active: false,
@@ -571,24 +586,24 @@ fn test_delete_struct_in_mapping() {
     // Store multiple entries
     {
         let mut layout = Layout::_new(addr, &mut storage);
-        layout.set_block_mapping(1u64, block1.clone()).unwrap();
-        layout.set_block_mapping(2u64, block2.clone()).unwrap();
+        layout.sstore_block_mapping(1u64, block1.clone()).unwrap();
+        layout.sstore_block_mapping(2u64, block2.clone()).unwrap();
         layout
-            .set_profile_mapping(test_address(10), profile1.clone())
+            .sstore_profile_mapping(test_address(10), profile1.clone())
             .unwrap();
         layout
-            .set_profile_mapping(test_address(20), profile2.clone())
+            .sstore_profile_mapping(test_address(20), profile2.clone())
             .unwrap();
 
         // Verify all entries
-        assert_eq!(layout.get_block_mapping(1u64).unwrap(), block1);
-        assert_eq!(layout.get_block_mapping(2u64).unwrap(), block2);
+        assert_eq!(layout.sload_block_mapping(1u64).unwrap(), block1);
+        assert_eq!(layout.sload_block_mapping(2u64).unwrap(), block2);
         assert_eq!(
-            layout.get_profile_mapping(test_address(10)).unwrap(),
+            layout.sload_profile_mapping(test_address(10)).unwrap(),
             profile1
         );
         assert_eq!(
-            layout.get_profile_mapping(test_address(20)).unwrap(),
+            layout.sload_profile_mapping(test_address(20)).unwrap(),
             profile2
         );
     }
@@ -604,7 +619,7 @@ fn test_delete_struct_in_mapping() {
     {
         let mut layout = Layout::_new(addr, &mut storage);
         assert_eq!(
-            layout.get_block_mapping(1u64).unwrap(),
+            layout.sload_block_mapping(1u64).unwrap(),
             TestBlock {
                 field1: U256::ZERO,
                 field2: U256::ZERO,
@@ -612,7 +627,7 @@ fn test_delete_struct_in_mapping() {
             }
         );
         assert_eq!(
-            layout.get_profile_mapping(test_address(10)).unwrap(),
+            layout.sload_profile_mapping(test_address(10)).unwrap(),
             UserProfile {
                 owner: Address::ZERO,
                 active: false,
@@ -621,9 +636,9 @@ fn test_delete_struct_in_mapping() {
         );
 
         // Verify non-deleted entries are intact
-        assert_eq!(layout.get_block_mapping(2u64).unwrap(), block2);
+        assert_eq!(layout.sload_block_mapping(2u64).unwrap(), block2);
         assert_eq!(
-            layout.get_profile_mapping(test_address(20)).unwrap(),
+            layout.sload_profile_mapping(test_address(20)).unwrap(),
             profile2
         );
     }
@@ -658,14 +673,14 @@ fn test_round_trip_operations_in_contract() {
     // Round 1: Store and load
     {
         let mut layout = Layout::_new(addr, &mut storage);
-        layout.set_block(original_block.clone()).unwrap();
-        layout.set_profile(original_profile.clone()).unwrap();
+        layout.sstore_block(original_block.clone()).unwrap();
+        layout.sstore_profile(original_profile.clone()).unwrap();
     }
 
     {
         let mut layout = Layout::_new(addr, &mut storage);
-        assert_eq!(layout.get_block().unwrap(), original_block);
-        assert_eq!(layout.get_profile().unwrap(), original_profile);
+        assert_eq!(layout.sload_block().unwrap(), original_block);
+        assert_eq!(layout.sload_profile().unwrap(), original_profile);
     }
 
     // Round 2: Delete and verify defaults
@@ -678,7 +693,7 @@ fn test_round_trip_operations_in_contract() {
     {
         let mut layout = Layout::_new(addr, &mut storage);
         assert_eq!(
-            layout.get_block().unwrap(),
+            layout.sload_block().unwrap(),
             TestBlock {
                 field1: U256::ZERO,
                 field2: U256::ZERO,
@@ -686,7 +701,7 @@ fn test_round_trip_operations_in_contract() {
             }
         );
         assert_eq!(
-            layout.get_profile().unwrap(),
+            layout.sload_profile().unwrap(),
             UserProfile {
                 owner: Address::ZERO,
                 active: false,
@@ -709,13 +724,13 @@ fn test_round_trip_operations_in_contract() {
 
     {
         let mut layout = Layout::_new(addr, &mut storage);
-        layout.set_block(new_block.clone()).unwrap();
-        layout.set_profile(new_profile.clone()).unwrap();
+        layout.sstore_block(new_block.clone()).unwrap();
+        layout.sstore_profile(new_profile.clone()).unwrap();
     }
 
     {
         let mut layout = Layout::_new(addr, &mut storage);
-        assert_eq!(layout.get_block().unwrap(), new_block);
-        assert_eq!(layout.get_profile().unwrap(), new_profile);
+        assert_eq!(layout.sload_block().unwrap(), new_block);
+        assert_eq!(layout.sload_profile().unwrap(), new_profile);
     }
 }

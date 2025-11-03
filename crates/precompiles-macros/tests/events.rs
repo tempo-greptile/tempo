@@ -55,8 +55,8 @@ impl<S: storage::PrecompileStorageProvider> MiniTokenCall for MiniToken<'_, S> {
         to: Address,
         amount: U256,
     ) -> tempo_precompiles::error::Result<()> {
-        let balance = self.get_balances(to)?;
-        self.set_balances(to, balance + amount)?;
+        let balance = self.sload_balances(to)?;
+        self.sstore_balances(to, balance + amount)?;
 
         // Emit Transfer event from zero address
         let zero = Address::ZERO;
@@ -102,5 +102,5 @@ fn test_event_emission_through_dispatcher() {
     assert!(result.is_ok());
 
     // Verify balance was updated
-    assert_eq!(token.get_balances(recipient).unwrap(), U256::from(1000));
+    assert_eq!(token.sload_balances(recipient).unwrap(), U256::from(1000));
 }

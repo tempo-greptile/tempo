@@ -76,15 +76,14 @@ pub struct TIP20Token {
     allowances: Mapping<Address, Mapping<Address, U256>>, // slot 11
     nonces: Mapping<Address, U256>, // slot 12
     paused: bool,       // slot 13
-    #[map = "supply_cap"]
-    max_supply_cap: U256, // slot 14
+    supply_cap: U256,   // slot 14
     salts: Mapping<B256, bool>, // slot 15
 
     // TIP20 Rewards
     last_update_time: u64, // slot 16
     opted_in_supply: U256, // slot 17
     #[map = "get_stream_id"]
-    next_stream: u64, // slot 18
+    next_stream_id: u64, // slot 18
     #[map = "get_stream"]
     streams: Mapping<u64, RewardStream>, // slot 19
     scheduled_rate_decrease: Mapping<u128, U256>, // slot 20
@@ -114,7 +113,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token_ITIP20 for TIP20Token<'a, S> {
     // Admin functions
     fn change_transfer_policy_id(&mut self, msg_sender: Address, new_policy_id: u64) -> Result<()> {
         self.check_role(msg_sender, DEFAULT_ADMIN_ROLE)?;
-        self.set_transfer_policy_id(new_policy_id)?;
+        self.sstore_transfer_policy_id(new_policy_id)?;
         self.emit_transfer_policy_update(msg_sender, new_policy_id)
     }
 
@@ -124,18 +123,18 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token_ITIP20 for TIP20Token<'a, S> {
             return Err(TIP20Error::supply_cap_exceeded().into());
         }
 
-        self.set_max_supply_cap(new_supply_cap)?;
+        self.sstore_supply_cap(new_supply_cap)?;
         self.emit_supply_cap_update(msg_sender, new_supply_cap)
     }
 
     fn pause(&mut self, msg_sender: Address) -> Result<()> {
         self.check_role(msg_sender, *PAUSE_ROLE)?;
-        self.set_paused(true)?;
+        self.sstore_paused(true)?;
         self.emit_pause_state_update(msg_sender, true)
     }
     fn unpause(&mut self, msg_sender: Address) -> Result<()> {
         self.check_role(msg_sender, *PAUSE_ROLE)?;
-        self.set_paused(false)?;
+        self.sstore_paused(false)?;
         self.emit_pause_state_update(msg_sender, false)
     }
     fn update_quote_token(&mut self, msg_sender: Address, new_quote_token: Address) -> Result<()> {
@@ -156,7 +155,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token_ITIP20 for TIP20Token<'a, S> {
             return Err(TIP20Error::invalid_quote_token().into());
         }
 
-        self.set_next_quote_token(new_quote_token)?;
+        self.sstore_next_quote_token(new_quote_token)?;
         self.emit_update_quote_token(msg_sender, new_quote_token)
     }
 
@@ -177,7 +176,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token_ITIP20 for TIP20Token<'a, S> {
         }
 
         // Update the quote token
-        self.set_quote_token(next_quote_token)?;
+        self.sstore_quote_token(next_quote_token)?;
         self.emit_quote_token_update_finalized(msg_sender, next_quote_token)
     }
 
@@ -201,12 +200,12 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token_ITIP20 for TIP20Token<'a, S> {
 
         self.handle_rewards_on_mint(to, amount)?;
 
-        self.set_total_supply(new_supply)?;
-        let to_balance = self.get_balances(to)?;
+        self.sstore_total_supply(new_supply)?;
+        let to_balance = self.sload_balances(to)?;
         let new_to_balance: U256 = to_balance
             .checked_add(amount)
             .ok_or(TempoPrecompileError::under_overflow())?;
-        self.set_balances(to, new_to_balance)?;
+        self.sstore_balances(to, new_to_balance)?;
 
         self.emit_transfer(Address::ZERO, to, amount)?;
         self.emit_mint(to, amount)
@@ -234,7 +233,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token_ITIP20 for TIP20Token<'a, S> {
         let new_supply = total_supply
             .checked_sub(amount)
             .ok_or(TIP20Error::insufficient_balance())?;
-        self.set_total_supply(new_supply)?;
+        self.sstore_total_supply(new_supply)?;
 
         self.emit_burn(msg_sender, amount)
     }
@@ -267,14 +266,14 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token_ITIP20 for TIP20Token<'a, S> {
         let new_supply = total_supply
             .checked_sub(amount)
             .ok_or(TIP20Error::insufficient_balance())?;
-        self.set_total_supply(new_supply)?;
+        self.sstore_total_supply(new_supply)?;
 
         self.emit_burn_blocked(from, amount)
     }
 
     // Standard token functions
     fn approve(&mut self, msg_sender: Address, spender: Address, amount: U256) -> Result<bool> {
-        self.set_allowances(msg_sender, spender, amount)?;
+        self.sstore_allowances(msg_sender, spender, amount)?;
         self.emit_approval(msg_sender, spender, amount)?;
         Ok(true)
     }
@@ -358,7 +357,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
         self.check_not_token_address(to)?;
         self.ensure_transfer_authorized(from, to)?;
 
-        let allowed = self.get_allowances(from, msg_sender)?;
+        let allowed = self.sload_allowances(from, msg_sender)?;
         if amount > allowed {
             return Err(TIP20Error::insufficient_allowance().into());
         }
@@ -367,7 +366,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
             let new_allowance = allowed
                 .checked_sub(amount)
                 .ok_or(TIP20Error::insufficient_allowance())?;
-            self.set_allowances(from, msg_sender, new_allowance)?;
+            self.sstore_allowances(from, msg_sender, new_allowance)?;
         }
 
         self._transfer(from, to, amount)?;
@@ -406,12 +405,12 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
             Bytecode::new_legacy(Bytes::from_static(&[0xef])),
         )?;
 
-        self.set_name(name.to_string())?;
-        self.set_symbol(symbol.to_string())?;
-        self.set_currency(currency.to_string())?;
-        self.set_quote_token(quote_token)?;
+        self.sstore_name(name.to_string())?;
+        self.sstore_symbol(symbol.to_string())?;
+        self.sstore_currency(currency.to_string())?;
+        self.sstore_quote_token(quote_token)?;
         // Initialize nextQuoteToken to the same value as quoteToken
-        self.set_next_quote_token(quote_token)?;
+        self.sstore_next_quote_token(quote_token)?;
 
         // Validate currency via TIP4217 registry
         if self.decimals()? == 0 {
@@ -419,8 +418,8 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
         }
 
         // Set default values
-        self.set_max_supply_cap(U256::MAX)?;
-        self.set_transfer_policy_id(1)?;
+        self.sstore_supply_cap(U256::MAX)?;
+        self.sstore_transfer_policy_id(1)?;
 
         // Initialize roles system and grant admin role
         self.roles_initialize()?;
@@ -477,26 +476,26 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
         self.accrue(timestamp)?;
         self.handle_rewards_on_transfer(from, to, amount)?;
 
-        let from_balance = self.get_balances(from)?;
+        let from_balance = self.sload_balances(from)?;
         if amount > from_balance {
             return Err(TIP20Error::insufficient_balance().into());
         }
 
         // Adjust balances
-        let from_balance = self.get_balances(from)?;
+        let from_balance = self.sload_balances(from)?;
         let new_from_balance = from_balance
             .checked_sub(amount)
             .ok_or(TempoPrecompileError::under_overflow())?;
 
-        self.set_balances(from, new_from_balance)?;
+        self.sstore_balances(from, new_from_balance)?;
 
         if to != Address::ZERO {
-            let to_balance = self.get_balances(to)?;
+            let to_balance = self.sload_balances(to)?;
             let new_to_balance = to_balance
                 .checked_add(amount)
                 .ok_or(TempoPrecompileError::under_overflow())?;
 
-            self.set_balances(to, new_to_balance)?;
+            self.sstore_balances(to, new_to_balance)?;
         }
 
         self.emit_transfer(from, to, amount)
@@ -504,7 +503,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
 
     /// Transfers fee tokens from user to fee manager before transaction execution
     pub fn transfer_fee_pre_tx(&mut self, from: Address, amount: U256) -> Result<()> {
-        let from_balance = self.get_balances(from)?;
+        let from_balance = self.sload_balances(from)?;
         if amount > from_balance {
             return Err(TIP20Error::insufficient_balance().into());
         }
@@ -513,13 +512,13 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
             .checked_sub(amount)
             .ok_or(TIP20Error::insufficient_balance())?;
 
-        self.set_balances(from, new_from_balance)?;
+        self.sstore_balances(from, new_from_balance)?;
 
-        let to_balance = self.get_balances(TIP_FEE_MANAGER_ADDRESS)?;
+        let to_balance = self.sload_balances(TIP_FEE_MANAGER_ADDRESS)?;
         let new_to_balance = to_balance
             .checked_add(amount)
             .ok_or(TIP20Error::supply_cap_exceeded())?;
-        self.set_balances(TIP_FEE_MANAGER_ADDRESS, new_to_balance)?;
+        self.sstore_balances(TIP_FEE_MANAGER_ADDRESS, new_to_balance)?;
 
         Ok(())
     }
@@ -531,7 +530,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
         refund: U256,
         actual_used: U256,
     ) -> Result<()> {
-        let from_balance = self.get_balances(TIP_FEE_MANAGER_ADDRESS)?;
+        let from_balance = self.sload_balances(TIP_FEE_MANAGER_ADDRESS)?;
         if refund > from_balance {
             return Err(TIP20Error::insufficient_balance().into());
         }
@@ -540,13 +539,13 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
             .checked_sub(refund)
             .ok_or(TIP20Error::insufficient_balance())?;
 
-        self.set_balances(TIP_FEE_MANAGER_ADDRESS, new_from_balance)?;
+        self.sstore_balances(TIP_FEE_MANAGER_ADDRESS, new_from_balance)?;
 
-        let to_balance = self.get_balances(to)?;
+        let to_balance = self.sload_balances(to)?;
         let new_to_balance = to_balance
             .checked_add(refund)
             .ok_or(TIP20Error::supply_cap_exceeded())?;
-        self.set_balances(to, new_to_balance)?;
+        self.sstore_balances(to, new_to_balance)?;
 
         self.emit_transfer(to, TIP_FEE_MANAGER_ADDRESS, actual_used)
     }
@@ -649,7 +648,7 @@ mod tests {
 
             token.mint(admin, addr, amount).unwrap();
 
-            assert_eq!(token.get_balances(addr)?, amount);
+            assert_eq!(token.sload_balances(addr)?, amount);
             assert_eq!(token.total_supply()?, amount);
         }
         assert_eq!(storage.events[&token_id_to_address(token_id)].len(), 2);
@@ -688,8 +687,8 @@ mod tests {
             token.mint(admin, from, amount).unwrap();
             token.transfer(from, to, amount).unwrap();
 
-            assert_eq!(token.get_balances(from)?, U256::ZERO);
-            assert_eq!(token.get_balances(to)?, amount);
+            assert_eq!(token.sload_balances(from)?, U256::ZERO);
+            assert_eq!(token.sload_balances(to)?, amount);
             assert_eq!(token.total_supply()?, amount); // Supply unchanged
         }
         assert_eq!(storage.events[&token_id_to_address(token_id)].len(), 3);
@@ -912,8 +911,8 @@ mod tests {
             .transfer_fee_pre_tx(user, fee_amount)
             .expect("transfer failed");
 
-        assert_eq!(token.get_balances(user)?, U256::from(50));
-        assert_eq!(token.get_balances(TIP_FEE_MANAGER_ADDRESS)?, fee_amount);
+        assert_eq!(token.sload_balances(user)?, U256::from(50));
+        assert_eq!(token.sload_balances(TIP_FEE_MANAGER_ADDRESS)?, fee_amount);
 
         Ok(())
     }
@@ -951,7 +950,7 @@ mod tests {
             .unwrap();
 
         let initial_fee = U256::from(100);
-        token.set_balances(TIP_FEE_MANAGER_ADDRESS, initial_fee)?;
+        token.sstore_balances(TIP_FEE_MANAGER_ADDRESS, initial_fee)?;
 
         let refund_amount = U256::from(30);
         let gas_used = U256::from(10);
@@ -959,8 +958,11 @@ mod tests {
             .transfer_fee_post_tx(user, refund_amount, gas_used)
             .expect("transfer failed");
 
-        assert_eq!(token.get_balances(user)?, refund_amount);
-        assert_eq!(token.get_balances(TIP_FEE_MANAGER_ADDRESS)?, U256::from(70));
+        assert_eq!(token.sload_balances(user)?, refund_amount);
+        assert_eq!(
+            token.sload_balances(TIP_FEE_MANAGER_ADDRESS)?,
+            U256::from(70)
+        );
 
         let events = &storage.events[&token_id_to_address(token_id)];
         assert_eq!(
