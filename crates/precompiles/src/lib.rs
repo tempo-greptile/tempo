@@ -4,6 +4,7 @@
 #![feature(adt_const_params)]
 
 pub mod error;
+pub mod utils;
 pub use error::Result;
 pub mod linking_usd;
 pub mod nonce;
