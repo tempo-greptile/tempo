@@ -17,7 +17,9 @@ use tempo_primitives::{
     TempoTxEnvelope,
     transaction::{
         TxAA,
-        aa_signature::{AASignature, P256SignatureWithPreHash, WebAuthnSignature},
+        aa_signature::{
+            AASignature, P256SignatureWithPreHash, PrimitiveSignature, WebAuthnSignature,
+        },
         aa_signed::AASigned,
         account_abstraction::Call,
     },
@@ -586,7 +588,7 @@ fn sign_aa_tx_with_p256_access_key(
         access_key_signing_key.sign_prehash(&pre_hashed)?;
     let sig_bytes = p256_signature.to_bytes();
 
-    let inner_signature = AASignature::P256(P256SignatureWithPreHash {
+    let inner_signature = PrimitiveSignature::P256(P256SignatureWithPreHash {
         r: alloy::primitives::B256::from_slice(&sig_bytes[0..32]),
         s: alloy::primitives::B256::from_slice(&sig_bytes[32..64]),
         pub_key_x: *access_pub_key_x,
@@ -597,7 +599,7 @@ fn sign_aa_tx_with_p256_access_key(
     Ok(AASignature::Keychain(
         tempo_primitives::transaction::KeychainSignature {
             user_address: root_key_addr,
-            signature: Box::new(inner_signature),
+            signature: inner_signature,
         },
     ))
 }
@@ -2435,8 +2437,8 @@ async fn test_aa_access_key() -> eyre::Result<()> {
         access_key_signing_key.sign_prehash(&pre_hashed)?;
     let sig_bytes = p256_signature.to_bytes();
 
-    // Create P256 AA signature for the inner signature
-    let inner_signature = AASignature::P256(P256SignatureWithPreHash {
+    // Create P256 primitive signature for the inner signature
+    let inner_signature = PrimitiveSignature::P256(P256SignatureWithPreHash {
         r: alloy::primitives::B256::from_slice(&sig_bytes[0..32]),
         s: alloy::primitives::B256::from_slice(&sig_bytes[32..64]),
         pub_key_x: access_pub_key_x,
@@ -2447,7 +2449,7 @@ async fn test_aa_access_key() -> eyre::Result<()> {
     // Wrap it in a Keychain signature with the root key address
     let aa_signature = AASignature::Keychain(tempo_primitives::transaction::KeychainSignature {
         user_address: root_key_addr, // The root account this transaction is for
-        signature: Box::new(inner_signature),
+        signature: inner_signature,
     });
 
     println!("✓ Transaction signed with access key P256 signature (wrapped in Keychain)");
@@ -2504,6 +2506,121 @@ async fn test_aa_access_key() -> eyre::Result<()> {
         !payload.block().body().transactions.is_empty(),
         "Block should contain the transaction"
     );
+
+    println!(
+        "\nBlock contains {} transactions",
+        payload.block().body().transactions.len()
+    );
+    for (i, tx) in payload.block().body().transactions.iter().enumerate() {
+        let mut tx_encoded = Vec::new();
+        tx.encode_2718(&mut tx_encoded);
+        println!(
+            "  Transaction {}: type={:?}, size={} bytes, first 20 bytes={}",
+            i,
+            std::mem::discriminant(tx),
+            tx_encoded.len(),
+            alloy_primitives::hex::encode(&tx_encoded[..20.min(tx_encoded.len())])
+        );
+    }
+
+    // Get transaction hash and receipt
+    let tx_from_block = &payload.block().body().transactions[0];
+    let tx_hash_trie = tx_from_block.trie_hash();
+    println!("Transaction hash from block (trie_hash): {}", tx_hash_trie);
+
+    // Encode the transaction from the block and compare with what was injected
+    let mut block_tx_encoded = Vec::new();
+    tx_from_block.encode_2718(&mut block_tx_encoded);
+    let block_tx_hash_from_encoded = keccak256(&block_tx_encoded);
+    println!(
+        "Block transaction hash (from re-encoding): {}",
+        B256::from(block_tx_hash_from_encoded)
+    );
+    println!("Block transaction size: {} bytes", block_tx_encoded.len());
+    println!("Injected transaction size: {} bytes", encoded.len());
+
+    if block_tx_encoded != encoded {
+        println!("WARNING: Block transaction encoding DIFFERS from injected transaction!");
+        if block_tx_encoded.len() != encoded.len() {
+            println!(
+                "  Size mismatch: {} vs {}",
+                block_tx_encoded.len(),
+                encoded.len()
+            );
+        }
+        // Print first 100 bytes of both for comparison
+        let block_preview = &block_tx_encoded[..std::cmp::min(100, block_tx_encoded.len())];
+        let injected_preview = &encoded[..std::cmp::min(100, encoded.len())];
+        println!(
+            "  Block tx first bytes: {}",
+            alloy_primitives::hex::encode(block_preview)
+        );
+        println!(
+            "  Injected tx first bytes: {}",
+            alloy_primitives::hex::encode(injected_preview)
+        );
+    } else {
+        println!("Block transaction encoding matches injected transaction");
+    }
+
+    // Try to get the actual transaction hash
+    let tx_hash_actual = if let TempoTxEnvelope::AA(aa_signed) = tx_from_block {
+        let sig_hash = aa_signed.signature_hash();
+        println!("\nTransaction in block IS an AA transaction:");
+        println!("  Signature hash from block: {}", sig_hash);
+        println!("  Nonce from block: {}", aa_signed.tx().nonce);
+        println!("  Calls from block: {}", aa_signed.tx().calls.len());
+        println!(
+            "  Has key_authorization: {}",
+            aa_signed.tx().key_authorization.is_some()
+        );
+        if let Some(key_auth) = &aa_signed.tx().key_authorization {
+            println!("  key_authorization.key_id: {}", key_auth.key_id);
+            println!("  key_authorization.expiry: {}", key_auth.expiry);
+            println!(
+                "  key_authorization.limits: {} limits",
+                key_auth.limits.len()
+            );
+            println!(
+                "  key_authorization.signature type: {:?}",
+                key_auth.signature.signature_type()
+            );
+        }
+        println!(
+            "  Transaction signature type: {:?}",
+            aa_signed.signature().signature_type()
+        );
+        if let AASignature::Keychain(ks) = aa_signed.signature() {
+            println!("  Keychain user_address: {}", ks.user_address);
+            println!(
+                "  Keychain inner signature type: {:?}",
+                ks.signature.signature_type()
+            );
+        }
+        *aa_signed.hash()
+    } else {
+        println!("\nWARNING: Transaction in block is NOT an AA transaction!");
+        println!(
+            "  Envelope variant: {:?}",
+            std::mem::discriminant(tx_from_block)
+        );
+        tx_hash_trie
+    };
+    println!("Transaction hash (actual): {}", tx_hash_actual);
+
+    let receipt = provider
+        .get_transaction_receipt(tx_hash_actual)
+        .await?
+        .expect("Receipt should exist");
+
+    println!("\n=== Transaction Receipt ===");
+    println!("Status: {}", receipt.status());
+    println!("Gas used: {}", receipt.gas_used);
+    println!("Effective gas price: {}", receipt.effective_gas_price);
+    println!("Logs count: {}", receipt.inner.logs().len());
+    println!("Transaction index: {:?}", receipt.transaction_index);
+
+    assert!(receipt.status(), "Transaction should succeed");
 
     // Verify recipient received the tokens
     let recipient_balance_after = ITIP20::new(DEFAULT_FEE_TOKEN, provider.clone())
