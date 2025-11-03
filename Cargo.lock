@@ -11737,6 +11737,7 @@ dependencies = [
  "criterion 0.7.0",
  "derive_more",
  "eyre",
+ "proptest",
  "rand 0.8.5",
  "reth-storage-api",
  "revm",
@@ -11752,6 +11753,7 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "proc-macro2",
+ "proptest",
  "quote",
  "revm",
  "syn 2.0.106",

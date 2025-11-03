@@ -418,7 +418,8 @@ fn gen_rust_int_test(
         quote! {
             #[test]
             fn #test_name() {
-                use rand::distributions::{Distribution, Standard};
+                use proptest::test_runner::{Config, TestRunner};
+                use proptest::strategy::{Strategy, ValueTree};
 
                 // Test edge cases
                 let edge_cases = [#type_name::MIN, #type_name::MAX, 0];
@@ -428,10 +429,12 @@ fn gen_rust_int_test(
                     assert_eq!(value, recovered, "EVM words round-trip failed for edge case {}", value);
                 }
 
-                // Test random values
-                let mut rng = rand::thread_rng();
+                // Test random values using proptest
+                let mut runner = TestRunner::new(Config::default());
+                let strategy = proptest::arbitrary::any::<#type_name>();
+
                 for _ in 0..100 {
-                    let value: #type_name = Standard.sample(&mut rng);
+                    let value = strategy.new_tree(&mut runner).unwrap().current();
                     let words = value.to_evm_words().expect("to_evm_words failed");
                     let recovered = #type_name::from_evm_words(words).expect("from_evm_words failed");
                     assert_eq!(value, recovered, "EVM words round-trip failed for random value {}", value);
@@ -442,7 +445,8 @@ fn gen_rust_int_test(
         quote! {
             #[test]
             fn #test_name() {
-                use rand::distributions::{Distribution, Standard};
+                use proptest::test_runner::{Config, TestRunner};
+                use proptest::strategy::{Strategy, ValueTree};
 
                 // Test byte length
                 let value = #type_name::MAX;
@@ -457,10 +461,12 @@ fn gen_rust_int_test(
                     assert_eq!(bytes.as_ref(), &value.to_be_bytes(), "StorageKey bytes mismatch for edge case {}", value);
                 }
 
-                // Test random values
-                let mut rng = rand::thread_rng();
+                // Test random values using proptest
+                let mut runner = TestRunner::new(Config::default());
+                let strategy = proptest::arbitrary::any::<#type_name>();
+
                 for _ in 0..100 {
-                    let value: #type_name = Standard.sample(&mut rng);
+                    let value = strategy.new_tree(&mut runner).unwrap().current();
                     let bytes = value.as_storage_bytes();
                     assert_eq!(bytes.as_ref().len(), #byte_count);
                     assert_eq!(bytes.as_ref(), &value.to_be_bytes(), "StorageKey bytes mismatch for random value");

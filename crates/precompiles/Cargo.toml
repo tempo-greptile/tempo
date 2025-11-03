@@ -30,6 +30,7 @@ alloy-signer-local.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 eyre.workspace = true
 rand.workspace = true
+proptest.workspace = true
 
 [features]
 reth = ["dep:reth-storage-api"]
