@@ -1459,10 +1459,8 @@ async fn test_aa_p256_call_batching() -> eyre::Result<()> {
 
     // Create AA transaction with batched calls and P256 signature
     let batch_tx = create_basic_aa_tx(
-        chain_id,
-        0, // First transaction from P256 signer
-        calls,
-        500_000, // Higher gas limit for multiple calls
+        chain_id, 0, // First transaction from P256 signer
+        calls, 500_000, // Higher gas limit for multiple calls
     );
 
     // Sign with P256
