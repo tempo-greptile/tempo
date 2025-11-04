@@ -20,6 +20,7 @@ pub const SIGNATURE_TYPE_KEYCHAIN: u8 = 0x03;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[cfg_attr(feature = "reth-codec", derive(reth_codecs::Compact))]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 pub struct P256SignatureWithPreHash {
     pub r: B256,
     pub s: B256,
@@ -33,6 +34,7 @@ pub struct P256SignatureWithPreHash {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[cfg_attr(feature = "reth-codec", derive(reth_codecs::Compact))]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 pub struct WebAuthnSignature {
     pub r: B256,
     pub s: B256,
@@ -74,6 +76,7 @@ pub enum PrimitiveSignature {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[cfg_attr(feature = "reth-codec", derive(reth_codecs::Compact))]
+#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 pub struct KeychainSignature {
     /// Root account address that this transaction is being executed for
     pub user_address: Address,
@@ -310,14 +313,18 @@ impl PrimitiveSignature {
             return Err("Signature data is empty");
         }
 
-        // Backward compatibility: 65 bytes means secp256k1 without type identifier
+        // Backward compatibility: exactly 65 bytes means secp256k1 without type identifier
         if data.len() == SECP256K1_SIGNATURE_LENGTH {
-            let sig =
-                Signature::try_from(data).map_err(|_| "Failed to parse secp256k1 signature")?;
+            let sig = Signature::try_from(data)
+                .map_err(|_| "Failed to parse secp256k1 signature: invalid signature values")?;
             return Ok(Self::Secp256k1(sig));
         }
 
         // For all other lengths, first byte is the type identifier
+        if data.len() < 2 {
+            return Err("Signature data too short: expected type identifier + signature data");
+        }
+
         let type_id = data[0];
         let sig_data = &data[1..];
 
@@ -361,7 +368,14 @@ impl PrimitiveSignature {
         match self {
             Self::Secp256k1(sig) => {
                 // Backward compatibility: no type identifier for secp256k1
-                Bytes::copy_from_slice(&sig.as_bytes())
+                // Ensure exactly 65 bytes by using a fixed-size buffer
+                let sig_bytes = sig.as_bytes();
+                assert_eq!(
+                    sig_bytes.len(),
+                    SECP256K1_SIGNATURE_LENGTH,
+                    "Secp256k1 signature must be exactly 65 bytes"
+                );
+                Bytes::copy_from_slice(&sig_bytes)
             }
             Self::P256(p256_sig) => {
                 let mut bytes = Vec::with_capacity(1 + 129);
@@ -769,92 +783,31 @@ fn verify_webauthn_data_internal(
 // ============================================================================
 
 #[cfg(any(test, feature = "arbitrary"))]
-impl<'a> arbitrary::Arbitrary<'a> for P256SignatureWithPreHash {
-    fn arbitrary(_u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        // Always use fixed test values to ensure valid signatures that round-trip correctly
-        // Random B256 values are not guaranteed to be valid P256 curve points
-        Ok(Self {
-            r: B256::from([1u8; 32]),
-            s: B256::from([2u8; 32]),
-            pub_key_x: B256::from([3u8; 32]),
-            pub_key_y: B256::from([4u8; 32]),
-            pre_hash: false,
-        })
-    }
-}
-
-#[cfg(any(test, feature = "arbitrary"))]
-impl<'a> arbitrary::Arbitrary<'a> for WebAuthnSignature {
-    fn arbitrary(_u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        // Use fixed test values to ensure valid signatures that round-trip correctly
-        // Random B256 values are not guaranteed to be valid P256 curve points
-
-        // Create a simple fixed authenticator data (37 bytes minimum)
-        let mut auth_data = vec![0u8; 37];
-        auth_data[32] = 0x01; // Set UP flag
-
-        // Create a simple fixed clientDataJSON
-        let challenge = B256::ZERO;
-        let challenge_b64 =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(challenge.as_slice());
-        let client_data_json = format!(
-            "{{\"type\":\"webauthn.get\",\"challenge\":\"{}\"}}",
-            challenge_b64
-        );
-
-        let mut webauthn_data = auth_data;
-        webauthn_data.extend_from_slice(client_data_json.as_bytes());
-
-        Ok(Self {
-            r: B256::from([1u8; 32]),
-            s: B256::from([2u8; 32]),
-            pub_key_x: B256::from([3u8; 32]),
-            pub_key_y: B256::from([4u8; 32]),
-            webauthn_data: Bytes::from(webauthn_data),
-        })
-    }
-}
-
-#[cfg(any(test, feature = "arbitrary"))]
 impl<'a> arbitrary::Arbitrary<'a> for PrimitiveSignature {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        // Choose between the three primitive signature types
+        // Generate diverse signature types for comprehensive testing
         let choice = u.int_in_range(0..=2)?;
         match choice {
-            0 => {
-                // Generate a valid Secp256k1 signature (avoid r=0, s=0)
-                let mut sig = Signature::arbitrary(u)?;
-                // If we get an invalid signature (r=0 and s=0), use test signature
-                if sig.r().is_zero() && sig.s().is_zero() {
-                    sig = Signature::test_signature();
-                }
-                Ok(Self::Secp256k1(sig))
-            }
-            1 => Ok(Self::P256(P256SignatureWithPreHash::arbitrary(u)?)),
-            2 => Ok(Self::WebAuthn(WebAuthnSignature::arbitrary(u)?)),
+            0 => Ok(Self::Secp256k1(Signature::test_signature())),
+            1 => Ok(Self::P256(u.arbitrary()?)),
+            2 => Ok(Self::WebAuthn(u.arbitrary()?)),
             _ => unreachable!(),
         }
     }
 }
 
 #[cfg(any(test, feature = "arbitrary"))]
-impl<'a> arbitrary::Arbitrary<'a> for KeychainSignature {
-    fn arbitrary(_u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        // Use fixed values to ensure round-trip correctness
-        Ok(Self {
-            user_address: Address::ZERO,
-            signature: PrimitiveSignature::Secp256k1(Signature::test_signature()),
-        })
-    }
-}
-
-#[cfg(any(test, feature = "arbitrary"))]
 impl<'a> arbitrary::Arbitrary<'a> for AASignature {
-    fn arbitrary(_u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        // Always use Secp256k1 signature with test values for reliable round-trip
-        // Other signature types (P256, WebAuthn, Keychain) have complex encoding
-        // that may not round-trip perfectly with arbitrary data
-        Ok(Self::Secp256k1(Signature::test_signature()))
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        // Generate diverse data across all 4 signature types for property-based testing
+        let choice = u.int_in_range(0..=3)?;
+        match choice {
+            0 => Ok(Self::Secp256k1(Signature::test_signature())),
+            1 => Ok(Self::P256(u.arbitrary()?)),
+            2 => Ok(Self::WebAuthn(u.arbitrary()?)),
+            3 => Ok(Self::Keychain(u.arbitrary()?)),
+            _ => unreachable!(),
+        }
     }
 }
 

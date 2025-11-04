@@ -612,14 +612,39 @@ where
         // If the transaction includes a KeyAuthorization, validate and authorize the key
         if let Some(aa_tx_env) = tx.aa_tx_env.as_ref() {
             if let Some(key_auth) = &aa_tx_env.key_authorization {
+                // Check if this TX is using a Keychain signature (access key)
+                // Access keys cannot authorize new keys UNLESS it's the same key being authorized (same-tx auth+use)
+                if let tempo_primitives::AASignature::Keychain(keychain_sig) = &aa_tx_env.signature
+                {
+                    // Recover the access key address from the inner signature
+                    let access_key_addr = keychain_sig
+                        .signature
+                        .recover_signer(&aa_tx_env.tx_hash)
+                        .map_err(|_| {
+                            EVMError::Transaction(TempoInvalidTransaction::AccessKeyAuthorizationFailed {
+                                reason: "Failed to recover access key address from Keychain signature"
+                                    .to_string(),
+                            })
+                        })?;
+
+                    // Only allow if authorizing the same key that's being used (same-tx auth+use)
+                    if access_key_addr != key_auth.key_id {
+                        return Err(EVMError::Transaction(
+                            TempoInvalidTransaction::AccessKeyAuthorizationFailed {
+                                reason: "Access keys cannot authorize other keys. Only the root key can authorize new keys.".to_string(),
+                            },
+                        ));
+                    }
+                }
+
                 // Validate that the KeyAuthorization is signed by the root account
                 let root_account = &tx.caller;
 
                 // Compute the message hash for the KeyAuthorization
                 // Message format: keccak256(key_type || key_id || expiry || limits)
                 let mut auth_message = Vec::new();
-                // Infer key_type from signature
-                let key_type_byte: u8 = match key_auth.signature.signature_type() {
+                // Use the signature_type field which specifies the type of key being authorized
+                let key_type_byte: u8 = match key_auth.signature_type {
                     tempo_primitives::transaction::SignatureType::Secp256k1 => 0,
                     tempo_primitives::transaction::SignatureType::P256 => 1,
                     tempo_primitives::transaction::SignatureType::WebAuthn => 2,
@@ -670,8 +695,8 @@ where
                 let access_key_addr = key_auth.key_id;
 
                 // Convert signature type to precompile SignatureType enum
-                // Infer key_type from signature
-                let signature_type = match key_auth.signature.signature_type() {
+                // Use the signature_type field which specifies the type of key being authorized
+                let signature_type = match key_auth.signature_type {
                     SignatureType::Secp256k1 => PrecompileSignatureType::Secp256k1,
                     SignatureType::P256 => PrecompileSignatureType::P256,
                     SignatureType::WebAuthn => PrecompileSignatureType::WebAuthn,

@@ -8,6 +8,7 @@ use alloy::{
 use alloy_eips::{Decodable2718, Encodable2718};
 use alloy_primitives::TxKind;
 use p256::ecdsa::signature::hazmat::PrehashSigner;
+use reth_primitives_traits::transaction::TxHashRef;
 use tempo_chainspec::spec::TEMPO_BASE_FEE;
 use tempo_precompiles::{
     DEFAULT_FEE_TOKEN,
@@ -21,7 +22,7 @@ use tempo_primitives::{
             AASignature, P256SignatureWithPreHash, PrimitiveSignature, WebAuthnSignature,
         },
         aa_signed::AASigned,
-        account_abstraction::Call,
+        account_abstraction::{Call, KeyAuthorization},
     },
 };
 
@@ -526,9 +527,7 @@ fn create_key_authorization(
     access_key_signature: AASignature,
     expiry: u64,
     spending_limits: Vec<tempo_primitives::transaction::account_abstraction::TokenLimit>,
-) -> eyre::Result<tempo_primitives::transaction::account_abstraction::KeyAuthorization> {
-    use tempo_primitives::transaction::account_abstraction::KeyAuthorization;
-
+) -> eyre::Result<KeyAuthorization> {
     // Infer key_type from the access key signature
     let key_type = access_key_signature.signature_type();
 
@@ -547,6 +546,7 @@ fn create_key_authorization(
     let root_auth_signature = root_signer.sign_hash_sync(&auth_message_hash)?;
 
     Ok(KeyAuthorization {
+        signature_type: key_type, // Type of key being authorized
         expiry,
         limits: spending_limits,
         key_id: access_key_addr,
@@ -602,43 +602,6 @@ fn sign_aa_tx_with_p256_access_key(
             signature: inner_signature,
         },
     ))
-}
-
-/// Helper to authorize an access key (submits transaction with key_authorization)
-async fn authorize_access_key(
-    setup: &mut crate::utils::SingleNodeSetup,
-    provider: &impl Provider,
-    root_signer: &impl SignerSync,
-    root_addr: Address,
-    key_authorization: tempo_primitives::transaction::account_abstraction::KeyAuthorization,
-    chain_id: u64,
-) -> eyre::Result<()> {
-    let tx = TxAA {
-        chain_id,
-        max_priority_fee_per_gas: TEMPO_BASE_FEE as u128,
-        max_fee_per_gas: TEMPO_BASE_FEE as u128,
-        gas_limit: 300_000,
-        calls: vec![Call {
-            to: DEFAULT_FEE_TOKEN.into(),
-            value: U256::ZERO,
-            input: Bytes::new(), // Dummy call
-        }],
-        nonce_key: U256::ZERO,
-        nonce: provider.get_transaction_count(root_addr).await?,
-        fee_token: None,
-        fee_payer_signature: None,
-        valid_before: Some(u64::MAX),
-        valid_after: None,
-        access_list: Default::default(),
-        key_authorization: Some(key_authorization),
-        aa_authorization_list: vec![],
-    };
-
-    let sig_hash = tx.signature_hash();
-    let signature = root_signer.sign_hash_sync(&sig_hash)?;
-    let aa_signature = AASignature::Secp256k1(signature);
-
-    submit_and_mine_aa_tx(setup, tx, aa_signature).await
 }
 
 // ===== Transaction Creation Helper Functions =====
@@ -2378,6 +2341,7 @@ async fn test_aa_access_key() -> eyre::Result<()> {
 
     // Create the key authorization with root key signature
     let key_authorization = KeyAuthorization {
+        signature_type: tempo_primitives::transaction::SignatureType::P256, // Type of key being authorized
         expiry: key_expiry,
         limits: spending_limits,
         key_id: access_key_addr, // Address derived from P256 public key
@@ -2611,19 +2575,38 @@ async fn test_aa_access_key() -> eyre::Result<()> {
     };
     println!("Transaction hash (actual): {}", tx_hash_actual);
 
-    let receipt = provider
-        .get_transaction_receipt(tx_hash_actual)
-        .await?
-        .expect("Receipt should exist");
+    // Use raw RPC call to get receipt since Alloy doesn't support custom tx type 0x76
+    let receipt_opt: Option<serde_json::Value> = provider
+        .raw_request("eth_getTransactionReceipt".into(), [tx_hash_actual])
+        .await?;
+    let receipt_json = receipt_opt.expect("Receipt should exist");
 
     println!("\n=== Transaction Receipt ===");
-    println!("Status: {}", receipt.status());
-    println!("Gas used: {}", receipt.gas_used);
-    println!("Effective gas price: {}", receipt.effective_gas_price);
-    println!("Logs count: {}", receipt.inner.logs().len());
-    println!("Transaction index: {:?}", receipt.transaction_index);
+    let status = receipt_json
+        .get("status")
+        .and_then(|v| v.as_str())
+        .map(|s| s != "0x0")
+        .unwrap_or(false);
+    let gas_used = receipt_json
+        .get("gasUsed")
+        .and_then(|v| v.as_str())
+        .unwrap_or("0");
+    let effective_gas_price = receipt_json
+        .get("effectiveGasPrice")
+        .and_then(|v| v.as_str())
+        .unwrap_or("0");
+    let logs_count = receipt_json
+        .get("logs")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
 
-    assert!(receipt.status(), "Transaction should succeed");
+    println!("Status: {}", status);
+    println!("Gas used: {}", gas_used);
+    println!("Effective gas price: {}", effective_gas_price);
+    println!("Logs count: {}", logs_count);
+
+    assert!(status, "Transaction should succeed");
 
     // Verify recipient received the tokens
     let recipient_balance_after = ITIP20::new(DEFAULT_FEE_TOKEN, provider.clone())
@@ -2667,7 +2650,7 @@ async fn test_aa_access_key() -> eyre::Result<()> {
     use alloy_primitives::address;
     use tempo_precompiles::account_keychain::{getKeyCall, getRemainingLimitCall};
     const ACCOUNT_KEYCHAIN_ADDRESS: Address =
-        address!("0xAA00000000000000000000000000000000000001");
+        address!("0xAAAAAAAA00000000000000000000000000000000");
 
     // Convert access key address to B256 (pad to 32 bytes)
     let mut access_key_hash_bytes = [0u8; 32];
@@ -2725,9 +2708,12 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
     let chain_id = provider.get_chain_id().await?;
 
     const ACCOUNT_KEYCHAIN_ADDRESS: Address =
-        alloy_primitives::address!("0xAA00000000000000000000000000000000000001");
+        alloy_primitives::address!("0xAAAAAAAA00000000000000000000000000000000");
 
     println!("\n=== Testing Keychain Negative Cases ===\n");
+
+    // Manually track nonce to avoid provider cache issues
+    let mut nonce = provider.get_transaction_count(root_addr).await?;
 
     // Test 1: Try to authorize with zero public key (should fail)
     println!("Test 1: Zero public key");
@@ -2748,7 +2734,7 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
             input: authorize_call.abi_encode().into(),
         }],
         nonce_key: U256::ZERO,
-        nonce: provider.get_transaction_count(root_addr).await?,
+        nonce,
         fee_token: None,
         fee_payer_signature: None,
         valid_before: Some(u64::MAX),
@@ -2760,6 +2746,7 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
     let sig_hash = tx.signature_hash();
     let signature = root_signer.sign_hash_sync(&sig_hash)?;
     submit_and_mine_aa_tx(&mut setup, tx, AASignature::Secp256k1(signature)).await?;
+    nonce += 1; // Increment after successful submission
     println!("✓ Zero public key rejected\n");
 
     // Test 2: Authorize same key twice (should fail on second attempt)
@@ -2787,33 +2774,91 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
     )?;
 
     // First authorization should succeed
-    authorize_access_key(
-        &mut setup,
-        &provider,
-        &root_signer,
-        root_addr,
-        key_auth.clone(),
+    let tx1 = TxAA {
         chain_id,
-    )
-    .await?;
+        max_priority_fee_per_gas: TEMPO_BASE_FEE as u128,
+        max_fee_per_gas: TEMPO_BASE_FEE as u128,
+        gas_limit: 300_000,
+        calls: vec![Call {
+            to: DEFAULT_FEE_TOKEN.into(),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        }],
+        nonce_key: U256::ZERO,
+        nonce,
+        fee_token: None,
+        fee_payer_signature: None,
+        valid_before: Some(u64::MAX),
+        valid_after: None,
+        access_list: Default::default(),
+        key_authorization: Some(key_auth.clone()),
+        aa_authorization_list: vec![],
+    };
+    let sig_hash = tx1.signature_hash();
+    let signature = root_signer.sign_hash_sync(&sig_hash)?;
+    submit_and_mine_aa_tx(&mut setup, tx1, AASignature::Secp256k1(signature)).await?;
+    nonce += 1;
     println!("  ✓ First authorization succeeded");
 
-    // Second authorization should fail
-    authorize_access_key(
-        &mut setup,
-        &provider,
-        &root_signer,
-        root_addr,
-        key_auth,
+    // Second authorization with same key should fail
+    // The transaction will be mined but should revert during execution
+    let tx2 = TxAA {
         chain_id,
-    )
-    .await?;
+        max_priority_fee_per_gas: TEMPO_BASE_FEE as u128,
+        max_fee_per_gas: TEMPO_BASE_FEE as u128,
+        gas_limit: 300_000,
+        calls: vec![Call {
+            to: DEFAULT_FEE_TOKEN.into(),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        }],
+        nonce_key: U256::ZERO,
+        nonce,
+        fee_token: None,
+        fee_payer_signature: None,
+        valid_before: Some(u64::MAX),
+        valid_after: None,
+        access_list: Default::default(),
+        key_authorization: Some(key_auth),
+        aa_authorization_list: vec![],
+    };
+    let sig_hash2 = tx2.signature_hash();
+    let signature2 = root_signer.sign_hash_sync(&sig_hash2)?;
+    let signed_tx2 = AASigned::new_unhashed(tx2, AASignature::Secp256k1(signature2));
+    let envelope2: TempoTxEnvelope = signed_tx2.into();
+    let mut encoded2 = Vec::new();
+    envelope2.encode_2718(&mut encoded2);
+    let tx_hash2 = envelope2.tx_hash();
+
+    setup.node.rpc.inject_tx(encoded2.into()).await?;
+    setup.node.advance_block().await?;
+    nonce += 1; // Increment even if reverted, since transaction was included in block
+
+    // Check receipt status - should be false (reverted)
+    // Use raw RPC call to get receipt since Alloy doesn't support custom tx type 0x76
+    let receipt_opt2: Option<serde_json::Value> = provider
+        .raw_request("eth_getTransactionReceipt".into(), [*tx_hash2])
+        .await?;
+    let receipt_json2 = receipt_opt2.expect("Receipt should exist");
+
+    let status2 = receipt_json2
+        .get("status")
+        .and_then(|v| v.as_str())
+        .map(|s| s != "0x0")
+        .unwrap_or(false);
+
+    if status2 {
+        return Err(eyre::eyre!(
+            "Duplicate key authorization should have reverted but succeeded"
+        ));
+    }
+    println!("  ✓ Duplicate key rejected (transaction reverted)");
+
     println!("✓ Duplicate key rejected\n");
 
     // Test 3: Access key trying to authorize another key (should fail)
     println!("Test 3: Unauthorized authorize attempt");
     let (access_key_1, pub_x_1, pub_y_1, access_addr_1) = generate_p256_access_key();
-    // Create a mock P256 signature to indicate this is a P256 key
     let mock_p256_sig_1 = AASignature::P256(
         tempo_primitives::transaction::aa_signature::P256SignatureWithPreHash {
             r: B256::ZERO,
@@ -2833,19 +2878,35 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
             limit: U256::from(10_000_000_000_000_000_000u64),
         }],
     )?;
-    authorize_access_key(
-        &mut setup,
-        &provider,
-        &root_signer,
-        root_addr,
-        key_auth_1,
-        chain_id,
-    )
-    .await?;
 
-    // Try to authorize second key using first access key
+    // Authorize access_key_1 with root key (should succeed)
+    let tx3 = TxAA {
+        chain_id,
+        max_priority_fee_per_gas: TEMPO_BASE_FEE as u128,
+        max_fee_per_gas: TEMPO_BASE_FEE as u128,
+        gas_limit: 300_000,
+        calls: vec![Call {
+            to: DEFAULT_FEE_TOKEN.into(),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        }],
+        nonce_key: U256::ZERO,
+        nonce,
+        fee_token: None,
+        fee_payer_signature: None,
+        valid_before: Some(u64::MAX),
+        valid_after: None,
+        access_list: Default::default(),
+        key_authorization: Some(key_auth_1),
+        aa_authorization_list: vec![],
+    };
+    let sig_hash = tx3.signature_hash();
+    let signature = root_signer.sign_hash_sync(&sig_hash)?;
+    submit_and_mine_aa_tx(&mut setup, tx3, AASignature::Secp256k1(signature)).await?;
+    nonce += 1;
+
+    // Try to authorize second key using first access key (should fail)
     let (_, pub_x_2, pub_y_2, access_addr_2) = generate_p256_access_key();
-    // Create a mock P256 signature to indicate this is a P256 key
     let mock_p256_sig_2 = AASignature::P256(
         tempo_primitives::transaction::aa_signature::P256SignatureWithPreHash {
             r: B256::ZERO,
@@ -2862,7 +2923,7 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
         u64::MAX,
         vec![],
     )?;
-    let tx = TxAA {
+    let tx4 = TxAA {
         chain_id,
         max_priority_fee_per_gas: TEMPO_BASE_FEE as u128,
         max_fee_per_gas: TEMPO_BASE_FEE as u128,
@@ -2873,7 +2934,7 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
             input: Bytes::new(),
         }],
         nonce_key: U256::ZERO,
-        nonce: provider.get_transaction_count(root_addr).await?,
+        nonce,
         fee_token: None,
         fee_payer_signature: None,
         valid_before: Some(u64::MAX),
@@ -2882,9 +2943,35 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
         key_authorization: Some(key_auth_2),
         aa_authorization_list: vec![],
     };
+    // Sign with access_key_1 (not root_key) - this should fail validation
     let signature =
-        sign_aa_tx_with_p256_access_key(&tx, &access_key_1, &pub_x_1, &pub_y_1, root_addr)?;
-    submit_and_mine_aa_tx(&mut setup, tx, signature).await?;
+        sign_aa_tx_with_p256_access_key(&tx4, &access_key_1, &pub_x_1, &pub_y_1, root_addr)?;
+
+    // Submit and mine - transaction should be rejected during validation
+    let signed_tx4 = AASigned::new_unhashed(tx4, signature);
+    let envelope4: TempoTxEnvelope = signed_tx4.into();
+    let mut encoded4 = Vec::new();
+    envelope4.encode_2718(&mut encoded4);
+    let tx_hash4 = envelope4.tx_hash();
+
+    setup.node.rpc.inject_tx(encoded4.into()).await?;
+    let block_payload = setup.node.advance_block().await?;
+
+    // Check if transaction was included in the block - it should NOT be
+    let block = block_payload.block();
+    let tx_included = block.body().transactions.iter().any(|tx| {
+        let mut tx_encoded = Vec::new();
+        tx.encode_2718(&mut tx_encoded);
+        keccak256(&tx_encoded) == *tx_hash4
+    });
+
+    if tx_included {
+        return Err(eyre::eyre!(
+            "Access key should not be able to authorize another key, but transaction was included in block"
+        ));
+    }
+
+    println!("  ✓ Unauthorized authorize rejected (transaction not included in block)");
     println!("✓ Unauthorized authorize rejected\n");
 
     println!("=== All Keychain Negative Tests Passed ===");

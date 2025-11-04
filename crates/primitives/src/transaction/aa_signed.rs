@@ -442,10 +442,6 @@ mod serde_impl {
             // Serialize to JSON
             let json = serde_json::to_string_pretty(&aa_signed).unwrap();
 
-            println!("\n=== AASigned JSON Output ===");
-            println!("{json}");
-            println!("============================\n");
-
             // Also test deserialization round-trip
             let deserialized: super::super::AASigned = serde_json::from_str(&json).unwrap();
             assert_eq!(aa_signed.tx(), deserialized.tx());
