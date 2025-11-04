@@ -1,11 +1,9 @@
 //! Tempo precompile implementations.
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
-#![deny(clippy::arithmetic_side_effects)]
-#![allow(incomplete_features)]
 
 pub mod error;
-pub use error::{IntoPrecompileResult, Result};
+pub use error::Result;
 pub mod linking_usd;
 pub mod nonce;
 pub mod provider;
@@ -21,6 +19,7 @@ pub mod tip_fee_manager;
 pub mod validator_config;
 
 use crate::{
+    error::IntoPrecompileResult,
     linking_usd::LinkingUSD,
     nonce::NonceManager,
     stablecoin_exchange::StablecoinExchange,
@@ -55,9 +54,9 @@ pub use tempo_contracts::precompiles::{
     VALIDATOR_CONFIG_ADDRESS,
 };
 
-pub const METADATA_GAS: u64 = 50;
-pub const VIEW_FUNC_GAS: u64 = 100;
-pub const MUTATE_FUNC_GAS: u64 = 1000;
+const METADATA_GAS: u64 = 50;
+const VIEW_FUNC_GAS: u64 = 100;
+const MUTATE_FUNC_GAS: u64 = 1000;
 
 pub trait Precompile {
     fn call(&mut self, calldata: &[u8], msg_sender: Address) -> PrecompileResult;
@@ -217,15 +216,12 @@ impl ValidatorConfigPrecompile {
 }
 
 #[inline]
-pub fn metadata<T: SolCall>(f: impl FnOnce() -> Result<T::Return>) -> PrecompileResult {
+fn metadata<T: SolCall>(f: impl FnOnce() -> Result<T::Return>) -> PrecompileResult {
     f().into_precompile_result(METADATA_GAS, |ret| T::abi_encode_returns(&ret).into())
 }
 
 #[inline]
-pub fn view<T: SolCall>(
-    calldata: &[u8],
-    f: impl FnOnce(T) -> Result<T::Return>,
-) -> PrecompileResult {
+fn view<T: SolCall>(calldata: &[u8], f: impl FnOnce(T) -> Result<T::Return>) -> PrecompileResult {
     let Ok(call) = T::abi_decode(calldata) else {
         return Ok(PrecompileOutput::new_reverted(VIEW_FUNC_GAS, Bytes::new()));
     };
@@ -249,7 +245,7 @@ pub fn mutate<T: SolCall>(
 }
 
 #[inline]
-pub fn mutate_void<T: SolCall>(
+fn mutate_void<T: SolCall>(
     calldata: &[u8],
     sender: Address,
     f: impl FnOnce(Address, T) -> Result<()>,

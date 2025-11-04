@@ -5,7 +5,7 @@ use alloy::{
 };
 use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileResult};
 use tempo_contracts::precompiles::{
-    FeeManagerError, NonceError, RolesAuthError, StablecoinExchangeError, TIP20RewardsError,
+    FeeManagerError, NonceError, RolesAuthError, StablecoinExchangeError,
     TIP20RewardsRegistryError, TIP403RegistryError, TIPAccountRegistrarError, TIPFeeAMMError,
     ValidatorConfigError,
 };
@@ -21,10 +21,6 @@ pub enum TempoPrecompileError {
     /// Error from TIP20 token
     #[error("TIP20 token error: {0:?}")]
     TIP20(TIP20Error),
-
-    /// Error from TIP20 token
-    #[error("TIP20 token error: {0:?}")]
-    TIP20Rewards(TIP20RewardsError),
 
     /// Error from TIP20RewardsRegistry
     #[error("TIP20 rewards registry error: {0:?}")]
@@ -98,7 +94,6 @@ impl<T> IntoPrecompileResult<T> for Result<T> {
                 let bytes = match err {
                     TPErr::StablecoinExchange(e) => e.abi_encode().into(),
                     TPErr::TIP20(e) => e.abi_encode().into(),
-                    TPErr::TIP20Rewards(e) => e.abi_encode().into(),
                     TPErr::TIP20RewardsRegistry(e) => e.abi_encode().into(),
                     TPErr::RolesAuthError(e) => e.abi_encode().into(),
                     TPErr::TIP403RegistryError(e) => e.abi_encode().into(),
