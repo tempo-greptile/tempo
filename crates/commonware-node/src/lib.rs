@@ -133,6 +133,7 @@ async fn instantiate_network(
     let p2p_namespace = commonware_utils::union_unique(crate::config::NAMESPACE, b"_P2P");
     let p2p_cfg = lookup::Config {
         mailbox_size: config.mailbox_size,
+        attempt_unregistered_handshakes: true,
         ..lookup::Config::local(
             config.signer.clone(),
             &p2p_namespace,
