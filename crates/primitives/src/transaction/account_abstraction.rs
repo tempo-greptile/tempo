@@ -216,6 +216,47 @@ impl KeyAuthorization {
             payload_length,
         }
     }
+
+    /// Computes the authorization message hash to be signed by the root key.
+    ///
+    /// The message format is: `keccak256(rlp([key_type, key_id, expiry, limits]))`
+    ///
+    /// Note: The signature field is NOT included in this hash, as it signs this hash.
+    pub fn authorization_message_hash(
+        key_type: SignatureType,
+        key_id: Address,
+        expiry: u64,
+        limits: &[TokenLimit],
+    ) -> B256 {
+        let mut auth_message = Vec::new();
+        let key_type_byte: u8 = match key_type {
+            SignatureType::Secp256k1 => 0,
+            SignatureType::P256 => 1,
+            SignatureType::WebAuthn => 2,
+        };
+
+        // Convert limits slice to Vec for encoding
+        let limits_vec = limits.to_vec();
+
+        // Calculate payload length
+        let payload_length =
+            key_type_byte.length() + key_id.length() + expiry.length() + limits_vec.length();
+
+        // Encode outer list header
+        alloy_rlp::Header {
+            list: true,
+            payload_length,
+        }
+        .encode(&mut auth_message);
+
+        // Encode fields
+        key_type_byte.encode(&mut auth_message);
+        key_id.encode(&mut auth_message);
+        expiry.encode(&mut auth_message);
+        limits_vec.encode(&mut auth_message);
+
+        keccak256(&auth_message)
+    }
 }
 
 impl Encodable for KeyAuthorization {

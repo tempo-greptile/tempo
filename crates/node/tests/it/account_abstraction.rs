@@ -529,16 +529,14 @@ fn create_key_authorization(
     // Infer key_type from the access key signature
     let key_type = access_key_signature.signature_type();
 
-    // Create authorization message
-    let mut auth_message = Vec::new();
-    auth_message.push(key_type.clone() as u8);
-    auth_message.extend_from_slice(access_key_addr.as_slice());
-    auth_message.extend_from_slice(&expiry.to_be_bytes());
-    for limit in &spending_limits {
-        auth_message.extend_from_slice(limit.token.as_slice());
-        auth_message.extend_from_slice(&limit.limit.to_be_bytes::<32>());
-    }
-    let auth_message_hash = alloy::primitives::keccak256(&auth_message);
+    // Compute the authorization message hash using the helper function
+    // Message format: keccak256(rlp([key_type, key_id, expiry, limits]))
+    let auth_message_hash = KeyAuthorization::authorization_message_hash(
+        key_type.clone(),
+        access_key_addr,
+        expiry,
+        &spending_limits,
+    );
 
     // Root key signs the authorization
     let root_auth_signature = root_signer.sign_hash_sync(&auth_message_hash)?;
@@ -2315,18 +2313,16 @@ async fn test_aa_access_key() -> eyre::Result<()> {
     println!("  - Key ID (address): {access_key_addr}");
 
     // Root key signs the key authorization data to authorize the access key
-    // Message format: keccak256(key_type || key_id || expiry || limits)
     let key_expiry = u64::MAX; // Never expires for this test
 
-    let mut auth_message = Vec::new();
-    auth_message.push(tempo_primitives::transaction::SignatureType::P256 as u8);
-    auth_message.extend_from_slice(access_key_addr.as_slice());
-    auth_message.extend_from_slice(&key_expiry.to_be_bytes());
-    for limit in &spending_limits {
-        auth_message.extend_from_slice(limit.token.as_slice());
-        auth_message.extend_from_slice(&limit.limit.to_be_bytes::<32>());
-    }
-    let auth_message_hash = alloy::primitives::keccak256(&auth_message);
+    // Compute the authorization message hash using the helper function
+    // Message format: keccak256(rlp([key_type, key_id, expiry, limits]))
+    let auth_message_hash = KeyAuthorization::authorization_message_hash(
+        tempo_primitives::transaction::SignatureType::P256,
+        access_key_addr,
+        key_expiry,
+        &spending_limits,
+    );
 
     // Root key signs the authorization message
     let root_auth_signature = root_key_signer.sign_hash_sync(&auth_message_hash)?;

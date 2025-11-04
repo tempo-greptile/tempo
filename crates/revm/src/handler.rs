@@ -41,7 +41,10 @@ use tempo_precompiles::{
     tip_fee_manager::TipFeeManager,
     tip20::{self},
 };
-use tempo_primitives::transaction::{AASignature, PrimitiveSignature, SignatureType, calc_gas_balance_spending};
+use tempo_primitives::transaction::{
+    AASignature, PrimitiveSignature, SignatureType, account_abstraction::KeyAuthorization,
+    calc_gas_balance_spending,
+};
 
 use crate::{TempoEvm, TempoInvalidTransaction, common::TempoStateAccess, evm::TempoContext};
 
@@ -641,22 +644,13 @@ where
                 let root_account = &tx.caller;
 
                 // Compute the message hash for the KeyAuthorization
-                // Message format: keccak256(key_type || key_id || expiry || limits)
-                let mut auth_message = Vec::new();
-                // Use the key_type field which specifies the type of key being authorized
-                let key_type_byte: u8 = match key_auth.key_type {
-                    tempo_primitives::transaction::SignatureType::Secp256k1 => 0,
-                    tempo_primitives::transaction::SignatureType::P256 => 1,
-                    tempo_primitives::transaction::SignatureType::WebAuthn => 2,
-                };
-                auth_message.push(key_type_byte);
-                auth_message.extend_from_slice(key_auth.key_id.as_slice());
-                auth_message.extend_from_slice(&key_auth.expiry.to_be_bytes());
-                for limit in &key_auth.limits {
-                    auth_message.extend_from_slice(limit.token.as_slice());
-                    auth_message.extend_from_slice(&limit.limit.to_be_bytes::<32>());
-                }
-                let auth_message_hash = alloy_primitives::keccak256(&auth_message);
+                // Message format: keccak256(rlp([key_type, key_id, expiry, limits]))
+                let auth_message_hash = KeyAuthorization::authorization_message_hash(
+                    key_auth.key_type.clone(),
+                    key_auth.key_id,
+                    key_auth.expiry,
+                    &key_auth.limits,
+                );
 
                 // Recover the signer of the KeyAuthorization
                 let auth_signer = key_auth
@@ -1647,6 +1641,39 @@ mod tests {
             gas.initial_gas, expected,
             "Should match normal tx + per-call overhead"
         );
+    }
+
+    #[test]
+    fn test_key_authorization_rlp_encoding() {
+        use alloy_primitives::{Address, U256};
+        use tempo_primitives::transaction::{
+            SignatureType,
+            account_abstraction::{KeyAuthorization, TokenLimit},
+        };
+
+        // Create test data
+        let key_type = SignatureType::Secp256k1;
+        let key_id = Address::random();
+        let expiry = 1000u64;
+        let limits = vec![
+            TokenLimit {
+                token: Address::random(),
+                limit: U256::from(100),
+            },
+            TokenLimit {
+                token: Address::random(),
+                limit: U256::from(200),
+            },
+        ];
+
+        // Compute hash using the helper function
+        let hash1 =
+            KeyAuthorization::authorization_message_hash(key_type.clone(), key_id, expiry, &limits);
+
+        // Compute again to verify consistency
+        let hash2 = KeyAuthorization::authorization_message_hash(key_type, key_id, expiry, &limits);
+
+        assert_eq!(hash1, hash2, "Hash computation should be deterministic");
     }
 
     #[test]
