@@ -52,6 +52,7 @@ use commonware_consensus::{
     Reporters,
     simplex::{self, signing_scheme::bls12381_threshold::Scheme, types::Voter},
     types::Epoch,
+    utils,
 };
 use commonware_cryptography::{bls12381::primitives::variant::MinSig, ed25519::PublicKey};
 use commonware_macros::select;
@@ -60,7 +61,7 @@ use commonware_p2p::{
     utils::mux::{Builder as _, GlobalSender, MuxHandle, Muxer},
 };
 use commonware_runtime::{
-    Clock, ContextCell, Handle, Metrics as _, Network, Spawner, Storage, spawn_cell,
+    Clock, ContextCell, Handle, Metrics as _, Network, Pacer, Spawner, Storage, spawn_cell,
 };
 use eyre::{WrapErr as _, ensure, eyre};
 use futures::{StreamExt as _, channel::mpsc};
@@ -69,11 +70,9 @@ use rand::{CryptoRng, Rng};
 use tracing::{Level, Span, error, error_span, info, instrument, warn, warn_span};
 
 use crate::{
+    alias::marshal::Marshaled,
     consensus::Digest,
-    epoch::{
-        self,
-        manager::ingress::{Enter, Exit},
-    },
+    epoch::manager::ingress::{Enter, Exit},
 };
 
 use super::ingress::Message;
@@ -81,8 +80,12 @@ use super::ingress::Message;
 const REPLAY_BUFFER: NonZeroUsize = NonZeroUsize::new(8 * 1024 * 1024).expect("value is not zero"); // 8MB
 const WRITE_BUFFER: NonZeroUsize = NonZeroUsize::new(1024 * 1024).expect("value is not zero"); // 1MB
 
-pub(crate) struct Actor<TBlocker, TContext> {
+pub(crate) struct Actor<TBlocker, TContext>
+where
+    TContext: Spawner + commonware_runtime::Metrics + Rng + Clock + Pacer,
+{
     active_epochs: BTreeMap<Epoch, Handle<()>>,
+    application: Option<Marshaled<TContext>>,
     config: super::Config<TBlocker>,
     context: ContextCell<TContext>,
     mailbox: mpsc::UnboundedReceiver<Message>,
@@ -100,7 +103,8 @@ where
         + Clock
         + governor::clock::Clock
         + Storage
-        + Network,
+        + Network
+        + Pacer,
 {
     pub(super) fn new(
         config: super::Config<TBlocker>,
@@ -129,6 +133,7 @@ where
 
         Self {
             config,
+            application: None,
             context: ContextCell::new(context),
             mailbox,
             metrics: Metrics {
@@ -138,6 +143,10 @@ where
             },
             active_epochs: BTreeMap::new(),
         }
+    }
+
+    pub(crate) fn set_application(&mut self, app: Marshaled<TContext>) {
+        self.application = Some(app);
     }
 
     pub(crate) fn start(
@@ -325,13 +334,14 @@ where
         };
         assert!(self.config.scheme_provider.register(epoch, scheme.clone()));
 
+        let application = self.application.clone().expect("application must be set");
         let engine = simplex::Engine::new(
             self.context.with_label("consensus_engine"),
             simplex::Config {
                 scheme,
                 blocker: self.config.blocker.clone(),
-                automaton: self.config.application.clone(),
-                relay: self.config.application.clone(),
+                automaton: application.clone(),
+                relay: application,
                 reporter: Reporters::from((
                     self.config.subblocks.clone(),
                     self.config.marshal.clone(),
@@ -431,7 +441,7 @@ where
             "request epoch `{their_epoch}` is in our past, no action is necessary",
         );
 
-        let boundary_height = epoch::last_height(our_epoch, self.config.epoch_length);
+        let boundary_height = utils::last_block_in_epoch(self.config.epoch_length, our_epoch);
         ensure!(
             self.config
                 .marshal
@@ -471,7 +481,7 @@ where
             .wrap_err("failed decoding epoch channel payload as epoch")?
             .into();
         tracing::Span::current().record("msg.decoded_epoch", requested_epoch);
-        let boundary_height = epoch::last_height(requested_epoch, self.config.epoch_length);
+        let boundary_height = utils::last_block_in_epoch(self.config.epoch_length, requested_epoch);
         let cert = self
             .config
             .marshal

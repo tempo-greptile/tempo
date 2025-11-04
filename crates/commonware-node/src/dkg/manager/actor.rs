@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use commonware_consensus::{Block as _, Reporter};
+use commonware_consensus::{Block as _, Reporter, utils};
 use commonware_cryptography::ed25519::PublicKey;
 use commonware_p2p::{
     Receiver, Sender,
@@ -342,7 +342,7 @@ where
         // can only enter the a new epoch once the last height of outgoing was
         // reached, because that's what provides the genesis.
         if ceremony.epoch().saturating_sub(1) == block_epoch
-            && epoch::is_last_height(block.height(), self.config.epoch_length)
+            && utils::is_last_block_in_epoch(self.config.epoch_length, block.height()).is_some()
         {
             debug!(
                 "reached last height of outgoing epoch; reporting that a \
@@ -372,7 +372,7 @@ where
 
         // Notify the epoch manager that the first height of the new epoch
         // was entered and the previous epoch can be exited.
-        if epoch::is_first_height(block.height(), self.config.epoch_length) {
+        if block.height() > 0 && block.height().is_multiple_of(self.config.epoch_length) {
             // Special case epoch == 0
             if let Some(previous_epoch) = ceremony.epoch().checked_sub(1) {
                 self.config
@@ -406,7 +406,9 @@ where
         // stored on chain.
         //
         // This starts a new ceremony.
-        if epoch::is_last_height(block.height().saturating_add(1), self.config.epoch_length) {
+        if utils::is_last_block_in_epoch(self.config.epoch_length, block.height().saturating_add(1))
+            .is_some()
+        {
             info!("on pre-to-last height of epoch; finalizing ceremony");
 
             let next_epoch = ceremony.epoch().saturating_add(1);

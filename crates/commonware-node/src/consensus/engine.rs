@@ -4,11 +4,12 @@
 
 use std::{
     num::{NonZeroU64, NonZeroUsize},
+    sync::Arc,
     time::Duration,
 };
 
 use commonware_broadcast::buffered;
-use commonware_consensus::{Reporters, marshal};
+use commonware_consensus::{Reporters, application::marshaled::Marshaled, marshal};
 use commonware_cryptography::{
     Signer as _,
     bls12381::primitives::{
@@ -23,14 +24,19 @@ use commonware_runtime::{
     Clock, Handle, Metrics, Network, Pacer, Spawner, Storage, buffer::PoolRef,
 };
 use commonware_utils::set::Ordered;
-use eyre::WrapErr as _;
+use eyre::{OptionExt, WrapErr as _};
 use futures::future::try_join_all;
 use rand::{CryptoRng, Rng};
+use reth_primitives_traits::SealedBlock;
+use reth_provider::BlockReader;
 use tempo_node::TempoFullNode;
 
 use crate::{
     config::{BLOCKS_FREEZER_TABLE_INITIAL_SIZE_BYTES, MARSHAL_LIMIT},
-    consensus::application,
+    consensus::application::{
+        Application,
+        executor::{self, ExecutorMailbox},
+    },
     dkg,
     epoch::{self, SchemeProvider},
     subblocks,
@@ -185,24 +191,26 @@ where
             epoch_length: self.epoch_length,
         });
 
-        let (application, application_mailbox) = application::init(super::application::Config {
-            context: self.context.with_label("application"),
-            // TODO: pass in from the outside,
-            fee_recipient: self.fee_recipient,
-            mailbox_size: self.mailbox_size,
-            marshal: marshal_mailbox.clone(),
-            execution_node: self.execution_node,
-            new_payload_wait_time: self.new_payload_wait_time,
-            subblocks: subblocks.mailbox(),
-            epoch_length: self.epoch_length,
-            scheme_provider: scheme_provider.clone(),
-        })
-        .await
-        .wrap_err("failed initializing application actor")?;
+        let genesis_block = self
+            .execution_node
+            .provider
+            .block_by_number(0)
+            .map_err(Into::<eyre::Report>::into)
+            .and_then(|maybe| maybe.ok_or_eyre("block reader returned empty genesis block"))
+            .wrap_err("failed reading genesis block from execution node")
+            .map(|block| Arc::new(Block::from_execution_block(SealedBlock::seal_slow(block))))?;
 
-        let (epoch_manager, epoch_manager_mailbox) = epoch::manager::init(
+        let executor = executor::Builder {
+            execution_node: self.execution_node.clone(),
+            genesis_block: genesis_block.clone(),
+            marshal: marshal_mailbox.clone(),
+        }
+        .build(self.context.with_label("executor"));
+        let executor_mailbox = executor.mailbox().clone();
+        executor.start();
+
+        let (mut epoch_manager, epoch_manager_mailbox) = epoch::manager::init(
             epoch::manager::Config {
-                application: application_mailbox.clone(),
                 blocker: self.blocker.clone(),
                 buffer_pool: buffer_pool.clone(),
                 epoch_length: self.epoch_length,
@@ -210,7 +218,7 @@ where
                 time_to_propose: self.time_to_propose,
                 mailbox_size: self.mailbox_size,
                 subblocks: subblocks.mailbox(),
-                marshal: marshal_mailbox,
+                marshal: marshal_mailbox.clone(),
                 scheme_provider: scheme_provider.clone(),
                 time_to_collect_notarizations: self.time_to_collect_notarizations,
                 time_to_retry_nullify_broadcast: self.time_to_retry_nullify_broadcast,
@@ -237,6 +245,25 @@ where
         )
         .await;
 
+        let application = Application::new(super::application::Config {
+            dkg: dkg_manager_mailbox.clone(),
+            executor: executor_mailbox.clone(),
+            subblocks: subblocks.mailbox(),
+            // TODO: pass in from the outside,
+            epoch_length: self.epoch_length,
+            execution_node: self.execution_node,
+            new_payload_wait_time: self.new_payload_wait_time,
+            scheme_provider: scheme_provider.clone(),
+            fee_recipient: self.fee_recipient,
+            genesis_block,
+        });
+        epoch_manager.set_application(Marshaled::new(
+            self.context.with_label("application"),
+            application,
+            marshal_mailbox,
+            self.epoch_length,
+        ));
+
         Ok(Engine {
             context: self.context,
 
@@ -246,8 +273,7 @@ where
             dkg_manager,
             dkg_manager_mailbox,
 
-            application,
-            application_mailbox,
+            executor_mailbox,
 
             resolver_config,
             marshal,
@@ -286,9 +312,7 @@ where
     dkg_manager: dkg::manager::Actor<TContext>,
     dkg_manager_mailbox: dkg::manager::Mailbox,
 
-    /// The core of the application, the glue between commonware-xyz consensus and reth-execution.
-    application: application::Actor<TContext>,
-    application_mailbox: application::Mailbox,
+    executor_mailbox: ExecutorMailbox,
 
     /// Resolver config that will be passed to the marshal actor upon start.
     resolver_config: marshal::resolver::p2p::Config<PublicKey, TPeerManager>,
@@ -409,13 +433,12 @@ where
         ),
     ) -> eyre::Result<()> {
         let broadcast = self.broadcast.start(broadcast_channel);
-        let application = self.application.start(self.dkg_manager_mailbox.clone());
 
         let resolver =
             marshal::resolver::p2p::init(&self.context, self.resolver_config, marshal_channel);
 
         let marshal = self.marshal.start(
-            Reporters::from((self.application_mailbox, self.dkg_manager_mailbox)),
+            Reporters::from((self.executor_mailbox, self.dkg_manager_mailbox)),
             self.broadcast_mailbox,
             resolver,
         );
@@ -434,7 +457,6 @@ where
         let dkg_manager = self.dkg_manager.start(dkg_channel);
 
         try_join_all(vec![
-            application,
             broadcast,
             epoch_manager,
             marshal,

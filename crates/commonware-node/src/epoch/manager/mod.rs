@@ -9,13 +9,12 @@ pub(crate) use ingress::Mailbox;
 
 use commonware_consensus::{marshal, simplex::signing_scheme::bls12381_threshold::Scheme};
 use commonware_p2p::Blocker;
-use commonware_runtime::{Clock, Metrics, Network, Spawner, Storage, buffer::PoolRef};
+use commonware_runtime::{Clock, Metrics, Network, Pacer, Spawner, Storage, buffer::PoolRef};
 use rand::{CryptoRng, Rng};
 
 use crate::{consensus::block::Block, epoch::scheme_provider::SchemeProvider, subblocks};
 
 pub(crate) struct Config<TBlocker> {
-    pub(crate) application: crate::consensus::application::Mailbox,
     pub(crate) blocker: TBlocker,
     pub(crate) buffer_pool: PoolRef,
     pub(crate) epoch_length: u64,
@@ -38,8 +37,15 @@ pub(crate) fn init<TBlocker, TContext>(
 ) -> (Actor<TBlocker, TContext>, Mailbox)
 where
     TBlocker: Blocker<PublicKey = PublicKey>,
-    TContext:
-        Spawner + Metrics + Rng + CryptoRng + Clock + governor::clock::Clock + Storage + Network,
+    TContext: Spawner
+        + Metrics
+        + Rng
+        + CryptoRng
+        + Clock
+        + governor::clock::Clock
+        + Storage
+        + Network
+        + Pacer,
 {
     let (tx, rx) = futures::channel::mpsc::unbounded();
     let actor = Actor::new(config, context, rx);

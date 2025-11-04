@@ -1,64 +1,47 @@
 //! Drives the execution engine by forwarding consensus messages.
 
-use std::time::Duration;
-
-use commonware_runtime::{Metrics, Pacer, Spawner, Storage};
-
-use eyre::WrapErr as _;
-use rand::{CryptoRng, Rng};
+use std::{sync::Arc, time::Duration};
 use tempo_node::TempoFullNode;
 
-mod executor;
+mod core;
+pub(crate) use core::Application;
 
-mod actor;
-mod ingress;
+pub(super) mod executor;
 
-pub(super) use actor::Actor;
-pub(crate) use ingress::Mailbox;
+use crate::{
+    consensus::{application::executor::ExecutorMailbox, block::Block},
+    dkg,
+    epoch::SchemeProvider,
+    subblocks,
+};
 
-use crate::{epoch::SchemeProvider, subblocks};
+pub(crate) struct Config {
+    /// A handle to the dkg/reshare manager.
+    pub(crate) dkg: dkg::manager::Mailbox,
 
-pub(super) async fn init<TContext>(
-    config: Config<TContext>,
-) -> eyre::Result<(Actor<TContext>, Mailbox)>
-where
-    TContext: Pacer + governor::clock::Clock + Rng + CryptoRng + Spawner + Storage + Metrics,
-{
-    let actor = Actor::init(config)
-        .await
-        .wrap_err("failed initializing actor")?;
-    let mailbox = actor.mailbox().clone();
-    Ok((actor, mailbox))
-}
-
-pub(super) struct Config<TContext> {
-    /// The execution context of the commonwarexyz application (tokio runtime, etc).
-    pub(super) context: TContext,
-
-    /// Used as PayloadAttributes.suggested_fee_recipient
-    pub(super) fee_recipient: alloy_primitives::Address,
-
-    /// Number of messages from consensus to hold in our backlog
-    /// before blocking.
-    pub(super) mailbox_size: usize,
-
-    /// For subscribing to blocks distributed via the consensus p2p network.
-    pub(super) marshal: crate::alias::marshal::Mailbox,
-
-    /// A handle to the execution node to verify and create new payloads.
-    pub(super) execution_node: TempoFullNode,
+    /// A handle to the execution service.
+    pub(crate) executor: ExecutorMailbox,
 
     /// A handle to the subblocks service to get subblocks for proposals.
     pub(crate) subblocks: subblocks::Mailbox,
 
-    /// The minimum amount of time to wait before resolving a new payload from the builder
-    pub(super) new_payload_wait_time: Duration,
-
     /// The number of heights H in an epoch. For a given epoch E, all heights
     /// `E*H+1` to and including `(E+1)*H` make up the epoch. The block at
     /// `E*H` is said to be the genesis (or parent) of the epoch.
-    pub(super) epoch_length: u64,
+    pub(crate) epoch_length: u64,
+
+    /// A handle to the execution node to verify and create new payloads.
+    pub(crate) execution_node: TempoFullNode,
+
+    /// The minimum amount of time to wait before resolving a new payload from the builder
+    pub(crate) new_payload_wait_time: Duration,
 
     /// The scheme provider to use for the application.
     pub(crate) scheme_provider: SchemeProvider,
+
+    /// Used as PayloadAttributes.suggested_fee_recipient
+    pub(crate) fee_recipient: alloy_primitives::Address,
+
+    /// The genesis block of the chain.
+    pub(crate) genesis_block: Arc<Block>,
 }

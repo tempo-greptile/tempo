@@ -12,7 +12,7 @@ use std::{sync::Arc, time::Duration};
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
 use commonware_consensus::{
-    Block as _,
+    Block as _, Reporter,
     marshal::{Update, ingress::mailbox::Identifier},
 };
 
@@ -29,23 +29,23 @@ use tracing::{Level, Span, debug, info, instrument, warn};
 
 use crate::consensus::{Digest, block::Block};
 
-pub(super) struct Builder {
+pub(crate) struct Builder {
     /// A handle to the execution node layer. Used to forward finalized blocks
     /// and to update the canonical chain by sending forkchoice updates.
-    pub(super) execution_node: TempoFullNode,
+    pub(crate) execution_node: TempoFullNode,
 
     /// The genesis block of the network. This is critically important when
     /// backfilling: since marshal does not know about genesis, subscribing to
     /// it with a round and the genesis digest will cause it to never resolve.
-    pub(super) genesis_block: Arc<Block>,
+    pub(crate) genesis_block: Arc<Block>,
 
     /// The mailbox of the marshal actor. Used to backfill blocks.
-    pub(super) marshal: crate::alias::marshal::Mailbox,
+    pub(crate) marshal: crate::alias::marshal::Mailbox,
 }
 
 impl Builder {
     /// Constructs the [`Executor`].
-    pub(super) fn build<TContext>(self, context: TContext) -> Executor<TContext>
+    pub(crate) fn build<TContext>(self, context: TContext) -> Executor<TContext>
     where
         TContext: Spawner,
     {
@@ -127,7 +127,7 @@ impl LastCanonicalized {
     }
 }
 
-pub(super) struct Executor<TContext> {
+pub(crate) struct Executor<TContext> {
     context: ContextCell<TContext>,
 
     /// A handle to the execution node layer. Used to forward finalized blocks
@@ -157,11 +157,11 @@ impl<TContext> Executor<TContext>
 where
     TContext: Metrics + Pacer + Spawner,
 {
-    pub(super) fn mailbox(&self) -> &ExecutorMailbox {
+    pub(crate) fn mailbox(&self) -> &ExecutorMailbox {
         &self.my_mailbox
     }
 
-    pub(super) fn start(mut self) -> Handle<()> {
+    pub(crate) fn start(mut self) -> Handle<()> {
         spawn_cell!(self.context, self.run().await)
     }
 
@@ -506,13 +506,13 @@ impl std::fmt::Display for HeadOrFinalized {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct ExecutorMailbox {
+pub(crate) struct ExecutorMailbox {
     inner: mpsc::UnboundedSender<Message>,
 }
 
 impl ExecutorMailbox {
     /// Requests the agent to update the head of the canonical chain to `digest`.
-    pub(super) fn canonicalize_head(&self, height: u64, digest: Digest) -> eyre::Result<()> {
+    pub(crate) fn canonicalize_head(&self, height: u64, digest: Digest) -> eyre::Result<()> {
         self.inner
             .unbounded_send(Message {
                 cause: Span::current(),
@@ -520,21 +520,24 @@ impl ExecutorMailbox {
             })
             .wrap_err("failed sending canonicalize request to agent, this means it exited")
     }
+}
 
-    /// Requests the agent to forward a `finalized` block to the execution layer.
-    pub(super) fn forward_finalized(
-        &self,
-        finalized: super::ingress::Finalized,
-    ) -> eyre::Result<()> {
+impl Reporter for ExecutorMailbox {
+    type Activity = Update<Block>;
+
+    async fn report(&mut self, activity: Self::Activity) {
+        let (tx, rx) = oneshot::channel();
         self.inner
             .unbounded_send(Message {
                 cause: Span::current(),
                 command: Command::Finalize {
-                    update: Box::new(finalized.update),
-                    response: finalized.response,
+                    update: Box::new(activity),
+                    response: tx,
                 },
             })
             .wrap_err("failed sending finalization request to agent, this means it exited")
+            .unwrap();
+        rx.await.unwrap();
     }
 }
 
