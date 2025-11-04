@@ -24,6 +24,7 @@ pub const MAX_WEBAUTHN_SIGNATURE_LENGTH: usize = 2048; // 2KB max
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[cfg_attr(feature = "reth-codec", derive(reth_codecs::Compact))]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 pub enum SignatureType {
     Secp256k1,
@@ -45,6 +46,7 @@ fn rlp_header(payload_length: usize) -> alloy_rlp::Header {
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[cfg_attr(feature = "reth-codec", derive(reth_codecs::Compact))]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
+#[cfg_attr(test, reth_codecs::add_arbitrary_tests(compact, rlp))]
 pub struct Call {
     /// Call target.
     pub to: TxKind,
@@ -117,6 +119,7 @@ impl Decodable for Call {
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
 #[cfg_attr(feature = "reth-codec", derive(reth_codecs::Compact))]
+#[cfg_attr(test, reth_codecs::add_arbitrary_tests(compact, rlp))]
 pub struct TokenLimit {
     /// TIP20 token address
     pub token: Address,
@@ -181,9 +184,11 @@ impl Decodable for TokenLimit {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-#[cfg_attr(any(test, feature = "arbitrary"), derive(arbitrary::Arbitrary))]
-#[cfg_attr(feature = "reth-codec", derive(reth_codecs::Compact))]
+#[cfg_attr(test, reth_codecs::add_arbitrary_tests(rlp))]
 pub struct KeyAuthorization {
+    /// Type of key being authorized (Secp256k1, P256, or WebAuthn)
+    pub signature_type: crate::transaction::SignatureType,
+
     /// Unix timestamp when key expires (0 = never expires)
     pub expiry: u64,
 
@@ -201,7 +206,8 @@ impl KeyAuthorization {
     /// Returns the RLP header for this key authorization
     #[inline]
     fn rlp_header(&self) -> alloy_rlp::Header {
-        let payload_length = self.expiry.length()
+        let payload_length = 1 // signature_type as u8
+            + self.expiry.length()
             + self.limits.length()
             + self.key_id.length()
             + self.signature.length();
@@ -215,6 +221,13 @@ impl KeyAuthorization {
 impl Encodable for KeyAuthorization {
     fn encode(&self, out: &mut dyn BufMut) {
         self.rlp_header().encode(out);
+        // Encode signature_type as u8
+        let sig_type_byte: u8 = match self.signature_type {
+            SignatureType::Secp256k1 => 0,
+            SignatureType::P256 => 1,
+            SignatureType::WebAuthn => 2,
+        };
+        sig_type_byte.encode(out);
         self.expiry.encode(out);
         self.limits.encode(out);
         self.key_id.encode(out);
@@ -238,6 +251,15 @@ impl Decodable for KeyAuthorization {
             return Err(alloy_rlp::Error::InputTooShort);
         }
 
+        // Decode signature_type from u8
+        let sig_type_byte: u8 = Decodable::decode(buf)?;
+        let signature_type = match sig_type_byte {
+            0 => SignatureType::Secp256k1,
+            1 => SignatureType::P256,
+            2 => SignatureType::WebAuthn,
+            _ => return Err(alloy_rlp::Error::Custom("Invalid signature type")),
+        };
+
         let expiry: u64 = Decodable::decode(buf)?;
         let limits: Vec<TokenLimit> = Decodable::decode(buf)?;
         let key_id: Address = Decodable::decode(buf)?;
@@ -246,6 +268,7 @@ impl Decodable for KeyAuthorization {
             AASignature::from_bytes(&signature_bytes).map_err(|e| alloy_rlp::Error::Custom(e))?;
 
         let this = Self {
+            signature_type,
             expiry,
             limits,
             key_id,
@@ -257,6 +280,48 @@ impl Decodable for KeyAuthorization {
         }
 
         Ok(this)
+    }
+}
+
+#[cfg(feature = "reth-codec")]
+impl reth_codecs::Compact for KeyAuthorization {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: alloy_rlp::BufMut + AsMut<[u8]>,
+    {
+        // Use RLP encoding for compact representation
+        let mut rlp_buf = Vec::new();
+        alloy_rlp::Encodable::encode(self, &mut rlp_buf);
+        let len = rlp_buf.len();
+        buf.put_slice(&rlp_buf);
+        len
+    }
+
+    fn from_compact(mut buf: &[u8], _len: usize) -> (Self, &[u8]) {
+        let item = alloy_rlp::Decodable::decode(&mut buf)
+            .expect("Failed to decode KeyAuthorization from compact");
+        (item, buf)
+    }
+}
+
+#[cfg(any(test, feature = "arbitrary"))]
+impl<'a> arbitrary::Arbitrary<'a> for KeyAuthorization {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        // Generate signature_type independently - this is the type of KEY being authorized,
+        // not the type of the authorization signature
+        let signature_type = u.arbitrary()?;
+
+        // Generate a simple Secp256k1 signature for the authorization (from root key)
+        // Using Secp256k1 is most common for root keys
+        let signature = AASignature::Secp256k1(Signature::test_signature());
+
+        Ok(Self {
+            signature_type,
+            expiry: u.arbitrary()?,
+            limits: u.arbitrary()?,
+            key_id: u.arbitrary()?,
+            signature,
+        })
     }
 }
 
@@ -400,7 +465,7 @@ impl TxAA {
             }).sum::<usize>()
         } else {
             mem::size_of::<Option<KeyAuthorization>>()
-        } + 
+        } +
         self.aa_authorization_list.iter().map(|auth| auth.size()).sum::<usize>() // authorization_list
     }
 
@@ -483,7 +548,7 @@ impl TxAA {
                 key_auth.length()
             } else {
                 1 // EMPTY_STRING_CODE
-            } + 
+            } +
             // authorization_list
             self.aa_authorization_list.length()
     }
@@ -903,7 +968,8 @@ impl<'a> arbitrary::Arbitrary<'a> for TxAA {
             }
         };
 
-        let key_authorization = u.arbitrary()?;
+        // Generate key_authorization with diverse data for comprehensive testing
+        let key_authorization: Option<KeyAuthorization> = u.arbitrary()?;
 
         Ok(Self {
             chain_id,
