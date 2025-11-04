@@ -187,7 +187,7 @@ impl Decodable for TokenLimit {
 #[cfg_attr(test, reth_codecs::add_arbitrary_tests(rlp))]
 pub struct KeyAuthorization {
     /// Type of key being authorized (Secp256k1, P256, or WebAuthn)
-    pub signature_type: crate::transaction::SignatureType,
+    pub signature_type: SignatureType,
 
     /// Unix timestamp when key expires (0 = never expires)
     pub expiry: u64,

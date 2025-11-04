@@ -8,9 +8,13 @@ pub use tempo_contracts::precompiles::{
 };
 
 use crate::{
-    LINKING_USD_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+    ACCOUNT_KEYCHAIN_ADDRESS, LINKING_USD_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+    account_keychain::{AccountKeychain, getTransactionKeyCall},
     error::{Result, TempoPrecompileError},
-    storage::PrecompileStorageProvider,
+    storage::{
+        PrecompileStorageProvider,
+        slots::{double_mapping_slot, mapping_slot},
+    },
     tip20::{
         rewards::{RewardStream, UserRewardInfo},
         roles::DEFAULT_ADMIN_ROLE,
@@ -786,14 +790,11 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
         account: &Address,
         amount: U256,
     ) -> Result<(), TempoPrecompileError> {
-        use crate::account_keychain::AccountKeychain;
-
         // Create AccountKeychain instance to read transaction key
-        let mut keychain = AccountKeychain::new(self.storage, crate::ACCOUNT_KEYCHAIN_ADDRESS);
+        let mut keychain = AccountKeychain::new(self.storage, ACCOUNT_KEYCHAIN_ADDRESS);
 
         // Get the transaction key for this account
-        let transaction_key = keychain
-            .get_transaction_key(crate::account_keychain::getTransactionKeyCall {}, account)?;
+        let transaction_key = keychain.get_transaction_key(getTransactionKeyCall {}, account)?;
 
         // If using main key (Address::ZERO), no spending limits apply
         if transaction_key == Address::ZERO {
