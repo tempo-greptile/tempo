@@ -187,7 +187,7 @@ impl Decodable for TokenLimit {
 #[cfg_attr(test, reth_codecs::add_arbitrary_tests(rlp))]
 pub struct KeyAuthorization {
     /// Type of key being authorized (Secp256k1, P256, or WebAuthn)
-    pub signature_type: SignatureType,
+    pub key_type: SignatureType,
 
     /// Unix timestamp when key expires (0 = never expires)
     pub expiry: u64,
@@ -206,7 +206,7 @@ impl KeyAuthorization {
     /// Returns the RLP header for this key authorization
     #[inline]
     fn rlp_header(&self) -> alloy_rlp::Header {
-        let payload_length = 1 // signature_type as u8
+        let payload_length = 1 // key_type as u8
             + self.expiry.length()
             + self.limits.length()
             + self.key_id.length()
@@ -221,8 +221,8 @@ impl KeyAuthorization {
 impl Encodable for KeyAuthorization {
     fn encode(&self, out: &mut dyn BufMut) {
         self.rlp_header().encode(out);
-        // Encode signature_type as u8
-        let sig_type_byte: u8 = match self.signature_type {
+        // Encode key_type as u8
+        let sig_type_byte: u8 = match self.key_type {
             SignatureType::Secp256k1 => 0,
             SignatureType::P256 => 1,
             SignatureType::WebAuthn => 2,
@@ -251,9 +251,9 @@ impl Decodable for KeyAuthorization {
             return Err(alloy_rlp::Error::InputTooShort);
         }
 
-        // Decode signature_type from u8
+        // Decode key_type from u8
         let sig_type_byte: u8 = Decodable::decode(buf)?;
-        let signature_type = match sig_type_byte {
+        let key_type = match sig_type_byte {
             0 => SignatureType::Secp256k1,
             1 => SignatureType::P256,
             2 => SignatureType::WebAuthn,
@@ -268,7 +268,7 @@ impl Decodable for KeyAuthorization {
             AASignature::from_bytes(&signature_bytes).map_err(|e| alloy_rlp::Error::Custom(e))?;
 
         let this = Self {
-            signature_type,
+            key_type,
             expiry,
             limits,
             key_id,
@@ -307,16 +307,16 @@ impl reth_codecs::Compact for KeyAuthorization {
 #[cfg(any(test, feature = "arbitrary"))]
 impl<'a> arbitrary::Arbitrary<'a> for KeyAuthorization {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        // Generate signature_type independently - this is the type of KEY being authorized,
+        // Generate key_type independently - this is the type of KEY being authorized,
         // not the type of the authorization signature
-        let signature_type = u.arbitrary()?;
+        let key_type = u.arbitrary()?;
 
         // Generate a simple Secp256k1 signature for the authorization (from root key)
         // Using Secp256k1 is most common for root keys
         let signature = AASignature::Secp256k1(Signature::test_signature());
 
         Ok(Self {
-            signature_type,
+            key_type,
             expiry: u.arbitrary()?,
             limits: u.arbitrary()?,
             key_id: u.arbitrary()?,

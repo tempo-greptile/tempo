@@ -1,9 +1,9 @@
 use super::{AccountKeychain, IAccountKeychain};
-use crate::{Precompile, mutate_void, view};
+use crate::{Precompile, mutate_void, storage::PrecompileStorageProvider, view};
 use alloy::{primitives::Address, sol_types::SolCall};
 use revm::precompile::{PrecompileError, PrecompileResult};
 
-impl<S: crate::storage::PrecompileStorageProvider> Precompile for AccountKeychain<'_, S> {
+impl<S: PrecompileStorageProvider> Precompile for AccountKeychain<'_, S> {
     fn call(&mut self, calldata: &[u8], msg_sender: Address) -> PrecompileResult {
         let selector: [u8; 4] = calldata
             .get(..4)

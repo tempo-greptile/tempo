@@ -26,9 +26,11 @@ use tempo_primitives::{
     },
 };
 
+use crate::utils::{SingleNodeSetup, TEST_MNEMONIC, TestNodeBuilder};
+
 /// Helper function to fund an address with fee tokens
 async fn fund_address_with_fee_tokens(
-    setup: &mut crate::utils::SingleNodeSetup,
+    setup: &mut SingleNodeSetup,
     provider: &impl Provider,
     funder_signer: &impl SignerSync,
     funder_addr: Address,
@@ -205,20 +207,18 @@ async fn verify_tx_not_in_block_via_rpc(
 /// Helper function to set up common test infrastructure
 /// Returns: (setup, provider, signer, signer_addr)
 async fn setup_test_with_funded_account() -> eyre::Result<(
-    crate::utils::SingleNodeSetup,
+    SingleNodeSetup,
     impl Provider + Clone,
     impl SignerSync,
     Address,
 )> {
     // Setup test node with direct access
-    let setup = crate::utils::TestNodeBuilder::new()
-        .build_with_node_access()
-        .await?;
+    let setup = TestNodeBuilder::new().build_with_node_access().await?;
 
     let http_url = setup.node.rpc_url();
 
     // Use TEST_MNEMONIC account (has balance in DEFAULT_FEE_TOKEN from genesis)
-    let signer = MnemonicBuilder::from_phrase(crate::utils::TEST_MNEMONIC).build()?;
+    let signer = MnemonicBuilder::from_phrase(TEST_MNEMONIC).build()?;
     let signer_addr = signer.address();
 
     // Create provider with wallet
@@ -429,7 +429,7 @@ fn verify_delegation_code(code: &Bytes, expected_delegate: Address, authority_na
 async fn setup_test_with_p256_funded_account(
     funding_amount: U256,
 ) -> eyre::Result<(
-    crate::utils::SingleNodeSetup,
+    SingleNodeSetup,
     impl Provider + Clone,
     p256::ecdsa::SigningKey,
     alloy::primitives::B256,
@@ -442,9 +442,7 @@ async fn setup_test_with_p256_funded_account(
     use p256::{ecdsa::SigningKey, elliptic_curve::rand_core::OsRng};
 
     // Setup test node with direct access
-    let mut setup = crate::utils::TestNodeBuilder::new()
-        .build_with_node_access()
-        .await?;
+    let mut setup = TestNodeBuilder::new().build_with_node_access().await?;
 
     let http_url = setup.node.rpc_url();
 
@@ -462,7 +460,7 @@ async fn setup_test_with_p256_funded_account(
         tempo_primitives::transaction::aa_signature::derive_p256_address(&pub_key_x, &pub_key_y);
 
     // Use TEST_MNEMONIC account to fund the P256 signer
-    let funder_signer = MnemonicBuilder::from_phrase(crate::utils::TEST_MNEMONIC).build()?;
+    let funder_signer = MnemonicBuilder::from_phrase(TEST_MNEMONIC).build()?;
     let funder_addr = funder_signer.address();
 
     // Create provider with funder's wallet
@@ -546,7 +544,7 @@ fn create_key_authorization(
     let root_auth_signature = root_signer.sign_hash_sync(&auth_message_hash)?;
 
     Ok(KeyAuthorization {
-        signature_type: key_type, // Type of key being authorized
+        key_type, // Type of key being authorized
         expiry,
         limits: spending_limits,
         key_id: access_key_addr,
@@ -556,7 +554,7 @@ fn create_key_authorization(
 
 /// Helper to submit and mine an AA transaction
 async fn submit_and_mine_aa_tx(
-    setup: &mut crate::utils::SingleNodeSetup,
+    setup: &mut SingleNodeSetup,
     tx: TxAA,
     signature: AASignature,
 ) -> eyre::Result<()> {
@@ -1058,9 +1056,7 @@ async fn test_aa_webauthn_signature_negative_cases() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
     // Setup test node with direct access
-    let mut setup = crate::utils::TestNodeBuilder::new()
-        .build_with_node_access()
-        .await?;
+    let mut setup = TestNodeBuilder::new().build_with_node_access().await?;
 
     let http_url = setup.node.rpc_url();
 
@@ -1087,7 +1083,7 @@ async fn test_aa_webauthn_signature_negative_cases() -> eyre::Result<()> {
         alloy::primitives::B256::from_slice(wrong_encoded_point.y().unwrap().as_slice());
 
     // Use TEST_MNEMONIC account to fund the WebAuthn signers
-    let funder_signer = MnemonicBuilder::from_phrase(crate::utils::TEST_MNEMONIC).build()?;
+    let funder_signer = MnemonicBuilder::from_phrase(TEST_MNEMONIC).build()?;
     let funder_addr = funder_signer.address();
 
     // Create provider with funder's wallet
@@ -1626,14 +1622,12 @@ async fn test_aa_fee_payer_tx() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
     // Setup test node
-    let mut setup = crate::utils::TestNodeBuilder::new()
-        .build_with_node_access()
-        .await?;
+    let mut setup = TestNodeBuilder::new().build_with_node_access().await?;
 
     let http_url = setup.node.rpc_url();
 
     // Fee payer is the funded TEST_MNEMONIC account
-    let fee_payer_signer = MnemonicBuilder::from_phrase(crate::utils::TEST_MNEMONIC).build()?;
+    let fee_payer_signer = MnemonicBuilder::from_phrase(TEST_MNEMONIC).build()?;
     let fee_payer_addr = fee_payer_signer.address();
 
     // User is a fresh random account with no balance
@@ -2255,9 +2249,7 @@ async fn test_aa_access_key() -> eyre::Result<()> {
     println!("\n=== Testing AA Transaction with Key Authorization and P256 Spending Limits ===\n");
 
     // Setup test node
-    let mut setup = crate::utils::TestNodeBuilder::new()
-        .build_with_node_access()
-        .await?;
+    let mut setup = TestNodeBuilder::new().build_with_node_access().await?;
 
     let http_url = setup.node.rpc_url();
 
@@ -2283,7 +2275,7 @@ async fn test_aa_access_key() -> eyre::Result<()> {
     println!("Access key public key Y: {access_pub_key_y}");
 
     // Use TEST_MNEMONIC account as the root key (funded account)
-    let root_key_signer = MnemonicBuilder::from_phrase(crate::utils::TEST_MNEMONIC).build()?;
+    let root_key_signer = MnemonicBuilder::from_phrase(TEST_MNEMONIC).build()?;
     let root_key_addr = root_key_signer.address();
 
     // Create provider with root key's wallet
@@ -2341,7 +2333,7 @@ async fn test_aa_access_key() -> eyre::Result<()> {
 
     // Create the key authorization with root key signature
     let key_authorization = KeyAuthorization {
-        signature_type: tempo_primitives::transaction::SignatureType::P256, // Type of key being authorized
+        key_type: tempo_primitives::transaction::SignatureType::P256, // Type of key being authorized
         expiry: key_expiry,
         limits: spending_limits,
         key_id: access_key_addr, // Address derived from P256 public key

@@ -643,8 +643,8 @@ where
                 // Compute the message hash for the KeyAuthorization
                 // Message format: keccak256(key_type || key_id || expiry || limits)
                 let mut auth_message = Vec::new();
-                // Use the signature_type field which specifies the type of key being authorized
-                let key_type_byte: u8 = match key_auth.signature_type {
+                // Use the key_type field which specifies the type of key being authorized
+                let key_type_byte: u8 = match key_auth.key_type {
                     tempo_primitives::transaction::SignatureType::Secp256k1 => 0,
                     tempo_primitives::transaction::SignatureType::P256 => 1,
                     tempo_primitives::transaction::SignatureType::WebAuthn => 2,
@@ -695,8 +695,8 @@ where
                 let access_key_addr = key_auth.key_id;
 
                 // Convert signature type to precompile SignatureType enum
-                // Use the signature_type field which specifies the type of key being authorized
-                let signature_type = match key_auth.signature_type {
+                // Use the key_type field which specifies the type of key being authorized
+                let signature_type = match key_auth.key_type {
                     SignatureType::Secp256k1 => PrecompileSignatureType::Secp256k1,
                     SignatureType::P256 => PrecompileSignatureType::P256,
                     SignatureType::WebAuthn => PrecompileSignatureType::WebAuthn,
