@@ -7,7 +7,6 @@ use crate::{
 };
 use alloy::{primitives::Address, sol_types::SolCall};
 use revm::precompile::{PrecompileError, PrecompileResult};
-use tempo_contracts::precompiles::ITIP20Rewards;
 
 impl<'a, S: PrecompileStorageProvider> Precompile for TIP20Token<'a, S> {
     fn call(&mut self, calldata: &[u8], msg_sender: Address) -> PrecompileResult {
@@ -124,20 +123,18 @@ impl<'a, S: PrecompileStorageProvider> Precompile for TIP20Token<'a, S> {
                     self.transfer_with_memo(s, call)
                 })
             }
-            ITIP20Rewards::startRewardCall::SELECTOR => {
-                mutate::<ITIP20Rewards::startRewardCall>(calldata, msg_sender, |s, call| {
+            ITIP20::startRewardCall::SELECTOR => {
+                mutate::<ITIP20::startRewardCall>(calldata, msg_sender, |s, call| {
                     self.start_reward(s, call)
                 })
             }
-            ITIP20Rewards::setRewardRecipientCall::SELECTOR => {
-                mutate_void::<ITIP20Rewards::setRewardRecipientCall>(
-                    calldata,
-                    msg_sender,
-                    |s, call| self.set_reward_recipient(s, call),
-                )
+            ITIP20::setRewardRecipientCall::SELECTOR => {
+                mutate_void::<ITIP20::setRewardRecipientCall>(calldata, msg_sender, |s, call| {
+                    self.set_reward_recipient(s, call)
+                })
             }
-            ITIP20Rewards::cancelRewardCall::SELECTOR => {
-                mutate::<ITIP20Rewards::cancelRewardCall>(calldata, msg_sender, |s, call| {
+            ITIP20::cancelRewardCall::SELECTOR => {
+                mutate::<ITIP20::cancelRewardCall>(calldata, msg_sender, |s, call| {
                     self.cancel_reward(s, call)
                 })
             }
@@ -147,17 +144,15 @@ impl<'a, S: PrecompileStorageProvider> Precompile for TIP20Token<'a, S> {
                 })
             }
 
-            ITIP20Rewards::totalRewardPerSecondCall::SELECTOR => {
-                view::<ITIP20Rewards::totalRewardPerSecondCall>(calldata, |_call| {
+            ITIP20::totalRewardPerSecondCall::SELECTOR => {
+                view::<ITIP20::totalRewardPerSecondCall>(calldata, |_call| {
                     self.get_total_reward_per_second()
                 })
             }
 
-            ITIP20Rewards::getStreamCall::SELECTOR => {
-                view::<ITIP20Rewards::getStreamCall>(calldata, |call| {
-                    self.get_stream(call.id).map(|stream| stream.into())
-                })
-            }
+            ITIP20::getStreamCall::SELECTOR => view::<ITIP20::getStreamCall>(calldata, |call| {
+                self.get_stream(call.id).map(|stream| stream.into())
+            }),
 
             // RolesAuth functions
             IRolesAuth::hasRoleCall::SELECTOR => {

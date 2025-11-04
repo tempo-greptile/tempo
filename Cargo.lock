@@ -11799,7 +11799,7 @@ dependencies = [
  "proptest",
  "quote",
  "revm",
- "syn 2.0.106",
+ "syn 2.0.108",
  "tempo-contracts",
  "tempo-precompiles",
 ]

@@ -1,8 +1,5 @@
 pub use IRolesAuth::{IRolesAuthErrors as RolesAuthError, IRolesAuthEvents as RolesAuthEvent};
 pub use ITIP20::{ITIP20Errors as TIP20Error, ITIP20Events as TIP20Event};
-pub use ITIP20Rewards::{
-    ITIP20RewardsErrors as TIP20RewardsError, ITIP20RewardsEvents as TIP20RewardsEvent,
-};
 use alloy::{
     primitives::{Address, U256},
     sol,
@@ -73,6 +70,36 @@ sol! {
         function updateQuoteToken(address newQuoteToken) external;
         function finalizeQuoteTokenUpdate() external;
 
+        // EIP-712 Permit
+        struct Permit {
+            address owner;
+            address spender;
+            uint256 value;
+            uint256 nonce;
+            uint256 deadline;
+        }
+        function permit(address owner, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external;
+        function DOMAIN_SEPARATOR() external view returns (bytes32);
+
+
+
+        struct RewardStream {
+            address funder;
+            uint64 startTime;
+            uint64 endTime;
+            uint256 ratePerSecondScaled;
+            uint256 amountTotal;
+        }
+
+        // Reward Functions
+        function startReward(uint256 amount, uint32 secs) external returns (uint64);
+        function setRewardRecipient(address recipient) external;
+        function cancelReward(uint64 id) external returns (uint256);
+        function claimRewards() external returns (uint256);
+        function finalizeStreams() external;
+        function getStream(uint64 id) external view returns (RewardStream memory);
+        function totalRewardPerSecond() external view returns (uint256);
+
         // Events
         event Transfer(address indexed from, address indexed to, uint256 amount);
         event Approval(address indexed owner, address indexed spender, uint256 amount);
@@ -85,6 +112,9 @@ sol! {
         event PauseStateUpdate(address indexed updater, bool isPaused);
         event UpdateQuoteToken(address indexed updater, address indexed newQuoteToken);
         event QuoteTokenUpdateFinalized(address indexed updater, address indexed newQuoteToken);
+        event RewardScheduled(address indexed funder, uint64 indexed id, uint256 amount, uint32 durationSeconds);
+        event RewardCanceled(address indexed funder, uint64 indexed id, uint256 refund);
+        event RewardRecipientSet(address indexed holder, address indexed recipient);
 
         // Errors
         error InsufficientBalance(uint256 available, uint256 required, address token);
@@ -99,37 +129,10 @@ sol! {
         error InvalidQuoteToken();
         error TransfersDisabled();
         error InvalidAmount();
-        error Unauthorized();
-    }
-
-    #[derive(Debug, PartialEq, Eq)]
-    #[sol(rpc, abi)]
-    #[allow(clippy::too_many_arguments)]
-    interface ITIP20Rewards {
-        struct RewardStream {
-            address funder;
-            uint64 startTime;
-            uint64 endTime;
-            uint256 ratePerSecondScaled;
-            uint256 amountTotal;
-        }
-
-        // Reward Functions
-        function startReward(uint256 amount, uint128 seconds) external returns (uint64);
-        function setRewardRecipient(address recipient) external;
-        function cancelReward(uint64 id) external returns (uint256);
-        function getStream(uint64 id) external view returns (RewardStream);
-        function totalRewardPerSecond() external view returns (uint256);
-
-        // Reward Events
-        event RewardScheduled(address indexed funder, uint64 indexed id, uint256 amount, uint32 durationSeconds);
-        event RewardCanceled(address indexed funder, uint64 indexed id, uint256 refund);
-        event RewardRecipientSet(address indexed holder, address indexed recipient);
-
-        // Errors
         error NotStreamFunder();
         error StreamInactive();
         error NoOptedInSupply();
+        error Unauthorized();
     }
 }
 
@@ -209,21 +212,19 @@ impl TIP20Error {
     pub const fn invalid_amount() -> Self {
         Self::InvalidAmount(ITIP20::InvalidAmount {})
     }
-}
 
-impl TIP20RewardsError {
     /// Error for when stream does not exist
     pub const fn stream_inactive() -> Self {
-        Self::StreamInactive(ITIP20Rewards::StreamInactive {})
+        Self::StreamInactive(ITIP20::StreamInactive {})
     }
 
     /// Error for when msg.sedner is not stream funder
     pub const fn not_stream_funder() -> Self {
-        Self::NotStreamFunder(ITIP20Rewards::NotStreamFunder {})
+        Self::NotStreamFunder(ITIP20::NotStreamFunder {})
     }
 
     /// Error for when opted in supply is 0
     pub const fn no_opted_in_supply() -> Self {
-        Self::NoOptedInSupply(ITIP20Rewards::NoOptedInSupply {})
+        Self::NoOptedInSupply(ITIP20::NoOptedInSupply {})
     }
 }
