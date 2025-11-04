@@ -7,7 +7,7 @@ use alloy::{
 use futures::future::try_join_all;
 use std::env;
 use tempo_chainspec::spec::TEMPO_BASE_FEE;
-use tempo_contracts::precompiles::{ITIP20, ITIP20Rewards, ITIP403Registry, TIP20Error};
+use tempo_contracts::precompiles::{ITIP20, ITIP403Registry, TIP20Error};
 use tempo_precompiles::TIP403_REGISTRY_ADDRESS;
 
 use crate::utils::{await_receipts, setup_test_token};
@@ -700,7 +700,6 @@ async fn test_tip20_rewards() -> eyre::Result<()> {
         .connect_http(http_url.clone());
 
     let token = setup_test_token(admin_provider.clone(), admin).await?;
-    let token_rewards = ITIP20Rewards::new(*token.address(), admin_provider.clone());
 
     let alice_wallet = MnemonicBuilder::from_phrase(crate::utils::TEST_MNEMONIC)
         .index(1)
@@ -711,8 +710,7 @@ async fn test_tip20_rewards() -> eyre::Result<()> {
     let alice_provider = ProviderBuilder::new()
         .wallet(alice_wallet)
         .connect_http(http_url.clone());
-    let alice_token = ITIP20::new(*token.address(), alice_provider.clone());
-    let alice_token_rewards = ITIP20Rewards::new(*token.address(), alice_provider);
+    let alice_token = ITIP20::new(*token.address(), alice_provider);
 
     let mut pending = vec![];
 
@@ -732,7 +730,7 @@ async fn test_tip20_rewards() -> eyre::Result<()> {
 
     pending.push(token.mint(alice, mint_amount).send().await?);
     pending.push(token.mint(admin, reward_amount).send().await?);
-    pending.push(alice_token_rewards.setRewardRecipient(bob).send().await?);
+    pending.push(alice_token.setRewardRecipient(bob).send().await?);
     await_receipts(&mut pending).await?;
 
     // Start reward stream
@@ -746,7 +744,7 @@ async fn test_tip20_rewards() -> eyre::Result<()> {
     let _reward_started_event = start_receipt
         .logs()
         .iter()
-        .filter_map(|log| ITIP20Rewards::RewardScheduled::decode_log(&log.inner).ok())
+        .filter_map(|log| ITIP20::RewardScheduled::decode_log(&log.inner).ok())
         .next()
         .expect("RewardStarted event should be emitted");
 
