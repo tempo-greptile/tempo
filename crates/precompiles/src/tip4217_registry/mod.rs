@@ -1,13 +1,21 @@
 // Module for tip4217_registry precompile
 pub mod dispatch;
 
+use crate::storage::PrecompileStorageProvider;
 pub use tempo_contracts::precompiles::ITIP4217Registry;
 
 const KNOWN_DECIMALS: &[(&str, u8)] = &[("USD", 6)];
 
-#[derive(Debug, Default)]
-pub struct TIP4217Registry {}
-impl TIP4217Registry {
+#[derive(Debug)]
+pub struct TIP4217Registry<'a, S: PrecompileStorageProvider> {
+    storage: &'a mut S,
+}
+
+impl<'a, S: PrecompileStorageProvider> TIP4217Registry<'a, S> {
+    pub fn new(storage: &'a mut S) -> Self {
+        Self { storage }
+    }
+
     pub fn get_currency_decimals(&mut self, call: ITIP4217Registry::getCurrencyDecimalsCall) -> u8 {
         // If it's a known currency, return the decimals
         // On perf: linear scan is faster than a hashmap lookup for small sets generally.
@@ -25,11 +33,14 @@ impl TIP4217Registry {
 
 #[cfg(test)]
 mod tests {
+    use crate::storage::hashmap::HashMapStorageProvider;
+
     use super::*;
 
     #[test]
     fn test_known_currency_usd_returns_6() {
-        let mut reg = TIP4217Registry::default();
+        let mut storage = HashMapStorageProvider::new(1);
+        let mut reg = TIP4217Registry::new(&mut storage);
         let dec = reg.get_currency_decimals(ITIP4217Registry::getCurrencyDecimalsCall {
             currency: "USD".to_string(),
         });
@@ -38,7 +49,8 @@ mod tests {
 
     #[test]
     fn test_unknown_currency_returns_0() {
-        let mut reg = TIP4217Registry::default();
+        let mut storage = HashMapStorageProvider::new(1);
+        let mut reg = TIP4217Registry::new(&mut storage);
         let dec = reg.get_currency_decimals(ITIP4217Registry::getCurrencyDecimalsCall {
             currency: "EUR".to_string(),
         });

@@ -102,7 +102,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
 
     pub fn decimals(&mut self) -> Result<u8, TempoPrecompileError> {
         let currency = self.currency()?;
-        Ok(TIP4217Registry::default()
+        Ok(TIP4217Registry::new(self.storage)
             .get_currency_decimals(ITIP4217Registry::getCurrencyDecimalsCall { currency }))
     }
 

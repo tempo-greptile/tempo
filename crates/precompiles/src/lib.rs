@@ -84,7 +84,7 @@ pub fn extend_tempo_precompiles(precompiles: &mut PrecompilesMap, chain_id: u64)
         } else if *address == TIP403_REGISTRY_ADDRESS {
             Some(TIP403RegistryPrecompile::create(chain_id))
         } else if *address == TIP4217_REGISTRY_ADDRESS {
-            Some(TIP4217RegistryPrecompile::create())
+            Some(TIP4217RegistryPrecompile::create(chain_id))
         } else if *address == TIP_FEE_MANAGER_ADDRESS {
             Some(TipFeeManagerPrecompile::create(chain_id))
         } else if *address == TIP_ACCOUNT_REGISTRAR {
@@ -145,8 +145,10 @@ impl TipAccountRegistrarPrecompile {
 
 pub struct TIP4217RegistryPrecompile;
 impl TIP4217RegistryPrecompile {
-    pub fn create() -> DynPrecompile {
-        tempo_precompile!("TIP4217Registry", |input| TIP4217Registry::default())
+    pub fn create(chain_id: u64) -> DynPrecompile {
+        tempo_precompile!("TIP4217Registry", |input| TIP4217Registry::new(
+            &mut EvmPrecompileStorageProvider::new(input.internals, input.gas, chain_id)
+        ))
     }
 }
 
