@@ -199,9 +199,7 @@ impl<'a, S: PrecompileStorageProvider> TipFeeManager<'a, S> {
         // Verify pool liquidity if user token differs from validator token
         if user_token != validator_token {
             let mut amm = TIPFeeAMM::new(self.contract_address, self.storage);
-            if !amm.has_liquidity(user_token, validator_token, max_amount)? {
-                return Err(FeeManagerError::insufficient_liquidity().into());
-            }
+            amm.reserve_liquidity(user_token, validator_token, max_amount)?;
         }
 
         let mut tip20_token = TIP20Token::from_address(user_token, self.storage);

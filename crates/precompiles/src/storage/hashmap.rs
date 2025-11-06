@@ -10,6 +10,7 @@ pub struct HashMapStorageProvider {
     pub events: HashMap<Address, Vec<LogData>>,
     chain_id: u64,
     timestamp: U256,
+    transient_storage: HashMap<(Address, U256), U256>,
 }
 
 impl HashMapStorageProvider {
@@ -19,6 +20,7 @@ impl HashMapStorageProvider {
             accounts: HashMap::new(),
             events: HashMap::new(),
             chain_id,
+            transient_storage: HashMap::new(),
             #[expect(clippy::disallowed_methods)]
             timestamp: U256::from(
                 std::time::SystemTime::now()
@@ -91,5 +93,16 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
     fn gas_used(&self) -> u64 {
         0
+    }
+
+    fn tload(&mut self, address: Address, slot: U256) -> U256 {
+        self.transient_storage
+            .get(&(address, slot))
+            .copied()
+            .unwrap_or(U256::ZERO)
+    }
+
+    fn tstore(&mut self, address: Address, slot: U256, value: U256) {
+        self.transient_storage.insert((address, slot), value);
     }
 }

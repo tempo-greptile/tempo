@@ -29,6 +29,12 @@ pub trait PrecompileStorageProvider {
 
     /// Returns the gas used so far.
     fn gas_used(&self) -> u64;
+
+    /// Stores a value in transient storage.
+    fn tstore(&mut self, address: Address, slot: U256, value: U256);
+
+    /// Loads a value from transient storage.
+    fn tload(&mut self, address: Address, slot: U256) -> U256;
 }
 
 pub trait StorageOps {

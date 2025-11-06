@@ -88,6 +88,16 @@ pub mod slots {
     }
 }
 
+/// Transient storage slots for TIPFeeAMM
+pub mod tslots {
+    use alloy::primitives::{U256, uint};
+
+    /// Slot for pool id with liquidity reserved for the current transaction.
+    pub const CURRENT_POOL_ID: U256 = uint!(0_U256);
+    /// Slot for amount of liquidity in [`CURRENT_POOL_ID`] reserved for the current transaction.
+    pub const CURRENT_MAX_AMOUNT: U256 = uint!(1_U256);
+}
+
 pub struct TIPFeeAMM<'a, S: PrecompileStorageProvider> {
     pub contract_address: Address,
     pub storage: &'a mut S,
@@ -101,6 +111,16 @@ impl<'a, S: PrecompileStorageProvider> TIPFeeAMM<'a, S> {
             contract_address,
             storage,
         }
+    }
+
+    /// Loads a value from transient storage.
+    pub fn tload(&mut self, slot: U256) -> U256 {
+        self.storage.tload(self.contract_address, slot)
+    }
+
+    /// Stores a value in transient storage.
+    pub fn tstore(&mut self, slot: U256, value: U256) {
+        self.storage.tstore(self.contract_address, slot, value)
     }
 
     /// Gets the pool id for a given set of tokens. Note that the pool id is dependent on the
@@ -123,27 +143,42 @@ impl<'a, S: PrecompileStorageProvider> TIPFeeAMM<'a, S> {
         })
     }
 
-    /// Checks if pool has enough liquidity for a fee swap
-    pub fn has_liquidity(
+    /// Checks if pool has enough liquidity for a fee swap and stores current
+    /// transaction context in transient storage.
+    pub fn reserve_liquidity(
         &mut self,
         user_token: Address,
         validator_token: Address,
-        amount_in: U256,
-    ) -> Result<bool> {
+        max_amount: U256,
+    ) -> Result<()> {
         let pool_id = PoolKey::new(user_token, validator_token).get_id();
-        let amount_out = amount_in
+        let amount_out = max_amount
             .checked_mul(M)
             .and_then(|product| product.checked_div(SCALE))
             .ok_or(TempoPrecompileError::under_overflow())?;
         let available_validator_token = self.get_effective_validator_reserve(pool_id)?;
 
-        Ok(amount_out <= available_validator_token)
+        if amount_out > available_validator_token {
+            return Err(TIPFeeAMMError::insufficient_liquidity().into());
+        }
+
+        self.tstore(tslots::CURRENT_POOL_ID, pool_id.into());
+        self.tstore(tslots::CURRENT_MAX_AMOUNT, max_amount);
+
+        Ok(())
     }
 
     /// Calculate validator token reserve minus pending swaps
     fn get_effective_validator_reserve(&mut self, pool_id: B256) -> Result<U256> {
         let pool = self.get_pool(pool_id)?;
-        let pending_fee_swap_in = self.get_pending_fee_swap_in(pool_id)?;
+        let mut pending_fee_swap_in = self.get_pending_fee_swap_in(pool_id)?;
+
+        if self.tload(tslots::CURRENT_POOL_ID) == U256::from_be_bytes(pool_id.0) {
+            pending_fee_swap_in = pending_fee_swap_in
+                .checked_add(self.tload(tslots::CURRENT_MAX_AMOUNT))
+                .ok_or(TempoPrecompileError::under_overflow())?;
+        }
+
         let pending_out = pending_fee_swap_in
             .checked_mul(M)
             .and_then(|product| product.checked_div(SCALE))
@@ -154,16 +189,6 @@ impl<'a, S: PrecompileStorageProvider> TIPFeeAMM<'a, S> {
             .ok_or(TempoPrecompileError::under_overflow())
     }
 
-    /// Calculate user token reserve plus pending swaps
-    fn get_effective_user_reserve(&mut self, pool_id: B256) -> Result<U256> {
-        let pool = self.get_pool(pool_id)?;
-        let pending_fee_swap_in = self.get_pending_fee_swap_in(pool_id)?;
-
-        U256::from(pool.reserve_user_token)
-            .checked_add(pending_fee_swap_in)
-            .ok_or(TempoPrecompileError::under_overflow())
-    }
-
     /// Execute a swap from one fee token to another
     pub fn fee_swap(
         &mut self,
@@ -171,10 +196,6 @@ impl<'a, S: PrecompileStorageProvider> TIPFeeAMM<'a, S> {
         validator_token: Address,
         amount_in: U256,
     ) -> Result<()> {
-        if !self.has_liquidity(user_token, validator_token, amount_in)? {
-            return Err(TIPFeeAMMError::insufficient_liquidity().into());
-        }
-
         let pool_id = self.get_pool_id(user_token, validator_token);
         let current_pending = self.get_pending_fee_swap_in(pool_id)?;
         self.set_pending_fee_swap_in(
@@ -628,12 +649,7 @@ impl<'a, S: PrecompileStorageProvider> TIPFeeAMM<'a, S> {
         }
 
         // Check that withdrawal does not violate pending swaps
-        let available_user_token = self.get_effective_user_reserve(pool_id)?;
         let available_validator_token = self.get_effective_validator_reserve(pool_id)?;
-
-        if amount_user_token > available_user_token {
-            return Err(TIPFeeAMMError::insufficient_reserves().into());
-        }
 
         if amount_validator_token > available_validator_token {
             return Err(TIPFeeAMMError::insufficient_reserves().into());
@@ -1170,14 +1186,16 @@ mod tests {
         // Test with amount that would work
         let ok_amount = uint!(100_U256) * uint!(10_U256).pow(U256::from(6));
         assert!(
-            amm.has_liquidity(user_token, validator_token, ok_amount)?,
+            amm.reserve_liquidity(user_token, validator_token, ok_amount)
+                .is_ok(),
             "Should have liquidity for 100 tokens"
         );
 
         // Test with amount that would fail
         let too_much = uint!(101_U256) * uint!(10_U256).pow(U256::from(6));
         assert!(
-            !amm.has_liquidity(user_token, validator_token, too_much)?,
+            amm.reserve_liquidity(user_token, validator_token, too_much)
+                .is_err(),
             "Should not have liquidity for 101 tokens"
         );
 

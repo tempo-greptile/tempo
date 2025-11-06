@@ -32,7 +32,7 @@ use revm::{
 };
 use tempo_contracts::{
     DEFAULT_7702_DELEGATE_ADDRESS,
-    precompiles::{FeeManagerError, IFeeManager},
+    precompiles::{FeeManagerError, IFeeManager, TIPFeeAMMError},
 };
 use tempo_precompiles::{
     DEFAULT_FEE_TOKEN, LINKING_USD_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
@@ -616,8 +616,8 @@ where
                 // indicate the transaction cannot be included (e.g., insufficient liquidity
                 // in FeeAMM pool for fee swaps)
                 match e {
-                    TempoPrecompileError::FeeManagerError(
-                        FeeManagerError::InsufficientLiquidity(_),
+                    TempoPrecompileError::TIPFeeAMMError(
+                        TIPFeeAMMError::InsufficientLiquidity(_),
                     ) => EVMError::Transaction(TempoInvalidTransaction::InsufficientAmmLiquidity {
                         fee: Box::new(gas_balance_spending),
                     }),

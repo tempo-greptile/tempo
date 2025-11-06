@@ -134,6 +134,16 @@ impl<'a> PrecompileStorageProvider for EvmPrecompileStorageProvider<'a> {
     fn gas_used(&self) -> u64 {
         self.gas_limit - self.gas_remaining
     }
+
+    #[inline]
+    fn tstore(&mut self, address: Address, slot: U256, value: U256) {
+        self.internals.tstore(address, slot, value);
+    }
+
+    #[inline]
+    fn tload(&mut self, address: Address, slot: U256) -> U256 {
+        self.internals.tload(address, slot)
+    }
 }
 
 impl From<EvmInternalsError> for TempoPrecompileError {
