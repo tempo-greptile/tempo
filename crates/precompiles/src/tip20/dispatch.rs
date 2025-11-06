@@ -186,6 +186,10 @@ impl<'a, S: PrecompileStorageProvider> Precompile for TIP20Token<'a, S> {
                 self.get_stream(call.id).map(|stream| stream.into())
             }),
 
+            ITIP20::nextStreamIdCall::SELECTOR => {
+                view::<ITIP20::nextStreamIdCall>(calldata, |_call| self.get_next_stream_id())
+            }
+
             ITIP20::userRewardInfoCall::SELECTOR => {
                 view::<ITIP20::userRewardInfoCall>(calldata, |call| {
                     self.get_user_reward_info(call.account)

@@ -109,6 +109,7 @@ sol! {
         function getStream(uint64 id) external view returns (RewardStream memory);
         function totalRewardPerSecond() external view returns (uint256);
         function optedInSupply() external view returns (uint128);
+        function nextStreamId() external view returns (uint64);
         function userRewardInfo(address account) external view returns (UserRewardInfo memory);
 
         // Events
