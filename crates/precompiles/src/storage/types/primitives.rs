@@ -386,7 +386,7 @@ mod tests {
     use crate::storage::{
         PrecompileStorageProvider, StorageOps,
         hashmap::HashMapStorageProvider,
-        packing::{extract_field, insert_packed_value, verify_packed_field},
+        packing::{insert_packed_value, verify_packed_field},
     };
     use proptest::prelude::*;
 

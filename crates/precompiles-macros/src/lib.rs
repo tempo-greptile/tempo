@@ -97,7 +97,7 @@ pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Main code generation function with optional call trait generation
 fn gen_contract_output(
     input: DeriveInput,
-    attrs: ContractAttrs,
+    _attrs: ContractAttrs,
 ) -> syn::Result<proc_macro2::TokenStream> {
     let (ident, vis) = (input.ident.clone(), input.vis.clone());
     let fields = parse_fields(input)?;
@@ -149,6 +149,15 @@ enum FieldKind<'a> {
     StorageBlock(&'a Type),
 }
 
+impl FieldKind<'_> {
+    pub(crate) fn is_mapping(&self) -> bool {
+        matches!(
+            self,
+            FieldKind::Mapping { .. } | FieldKind::NestedMapping { .. }
+        )
+    }
+}
+
 fn parse_fields(input: DeriveInput) -> syn::Result<Vec<FieldInfo>> {
     // Ensure no generic parameters on input
     if !input.generics.params.is_empty() {
@@ -186,7 +195,7 @@ fn parse_fields(input: DeriveInput) -> syn::Result<Vec<FieldInfo>> {
                 ));
             }
 
-            let (slot, base_slot, slot_count, map) = extract_attributes(&field.attrs)?;
+            let (slot, base_slot, _slot_count, map) = extract_attributes(&field.attrs)?;
             Ok(FieldInfo {
                 name: name.to_owned(),
                 ty: field.ty,

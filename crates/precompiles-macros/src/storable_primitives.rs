@@ -364,7 +364,7 @@ struct ArrayConfig {
     elem_is_packable: bool,
 }
 
-/// Determine if an element type can be packed (primitives only, and 32 % bytes == 0)
+/// Whether a given amount of bytes (primitives only) should be packed, or not.
 fn is_packable(byte_count: usize) -> bool {
     byte_count < 32 && 32 % byte_count == 0
 }

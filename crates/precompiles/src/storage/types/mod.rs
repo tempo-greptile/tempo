@@ -10,6 +10,20 @@ mod vec;
 use crate::{error::Result, storage::StorageOps};
 use alloy::primitives::U256;
 
+// Helper trait to access byte count without requiring const generic parameter.
+///
+/// This trait exists to allow the derive macro to query the byte size of field types
+/// during layout computation, before the slot count is known.
+///
+/// Primitives may have `BYTE_COUNT < 32`.
+/// Non-primitives (arrays, Vec, structs) must satisfy `BYTE_COUNT = SLOT_COUNT * 32` as they are not packable.
+pub trait StorableType {
+    /// Number of bytes that the type occupies (even if partially-empty).
+    ///
+    /// For dynamic types, set to a full 32-byte slot.
+    const BYTE_COUNT: usize;
+}
+
 /// Trait for types that can be stored/loaded from EVM storage.
 ///
 /// This trait provides a flexible abstraction for reading and writing Rust types
@@ -105,20 +119,6 @@ pub trait Storable<const N: usize>: Sized + StorableType {
     /// extracted from the appropriate word using bit shifts and masks.
     /// The derive macro handles this automatically.
     fn from_evm_words(words: [U256; N]) -> Result<Self>;
-}
-
-// Helper trait to access byte count without requiring const generic parameter.
-///
-/// This trait exists to allow the derive macro to query the byte size of field types
-/// during layout computation, before the slot count is known.
-///
-/// Primitives may have `BYTE_COUNT < 32`.
-/// Non-primitives (arrays, Vec, structs) must satisfy `BYTE_COUNT = SLOT_COUNT * 32` as they are not packable.
-pub trait StorableType {
-    /// Number of bytes that the type occupies (even if partially-empty).
-    ///
-    /// For dynamic types, set to a full 32-byte slot.
-    const BYTE_COUNT: usize;
 }
 
 /// Trait for types that can be used as storage mapping keys.

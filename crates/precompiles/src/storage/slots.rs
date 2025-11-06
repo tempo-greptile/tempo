@@ -1,14 +1,8 @@
 use alloy::primitives::{U256, keccak256};
 
-pub const fn pad_to_32(x: &[u8]) -> [u8; 32] {
+fn left_pad_to_32(data: &[u8]) -> [u8; 32] {
     let mut buf = [0u8; 32];
-    let mut i = 0;
-    // Note: This is not idiomatic but it's the cleanest
-    // way to make this function const as far as I can tell.
-    while i < x.len() && i < 32 {
-        buf[i] = x[i];
-        i += 1;
-    }
+    buf[32 - data.len()..].copy_from_slice(data);
     buf
 }
 
@@ -16,8 +10,8 @@ pub const fn pad_to_32(x: &[u8]) -> [u8; 32] {
 #[inline]
 pub fn mapping_slot<T: AsRef<[u8]>>(key: T, mapping_slot: U256) -> U256 {
     let mut buf = [0u8; 64];
-    buf[..32].copy_from_slice(&pad_to_32(key.as_ref()));
-    buf[32..].copy_from_slice(&mapping_slot.to_le_bytes::<32>());
+    buf[..32].copy_from_slice(&left_pad_to_32(key.as_ref()));
+    buf[32..].copy_from_slice(&mapping_slot.to_be_bytes::<32>());
     U256::from_be_bytes(keccak256(buf).0)
 }
 
@@ -30,7 +24,7 @@ pub fn double_mapping_slot<T: AsRef<[u8]>, U: AsRef<[u8]>>(
 ) -> U256 {
     let intermediate_slot = mapping_slot(key1, base_slot);
     let mut buf = [0u8; 64];
-    buf[..32].copy_from_slice(&pad_to_32(key2.as_ref()));
+    buf[..32].copy_from_slice(&left_pad_to_32(key2.as_ref()));
     buf[32..].copy_from_slice(&intermediate_slot.to_be_bytes::<32>());
     U256::from_be_bytes(keccak256(buf).0)
 }
@@ -38,12 +32,11 @@ pub fn double_mapping_slot<T: AsRef<[u8]>, U: AsRef<[u8]>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::Address;
-    use std::str::FromStr;
+    use alloy_primitives::{B256, address};
 
     #[test]
     fn test_mapping_slot_deterministic() {
-        let key = U256::from(123).to_be_bytes::<32>();
+        let key: B256 = U256::from(123).into();
         let slot1 = mapping_slot(key, U256::ZERO);
         let slot2 = mapping_slot(key, U256::ZERO);
 
@@ -52,8 +45,8 @@ mod tests {
 
     #[test]
     fn test_different_keys_different_slots() {
-        let key1 = U256::from(123).to_be_bytes::<32>();
-        let key2 = U256::from(456).to_be_bytes::<32>();
+        let key1: B256 = U256::from(123).into();
+        let key2: B256 = U256::from(456).into();
 
         let slot1 = mapping_slot(key1, U256::ZERO);
         let slot2 = mapping_slot(key2, U256::ZERO);
@@ -64,8 +57,8 @@ mod tests {
     #[test]
     fn test_tip20_balance_slots() {
         // Test balance slot calculation for TIP20 tokens (slot 10)
-        let alice = Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap();
-        let bob = Address::from_str("0x70997970C51812dc3A010C7d01b50e0d17dc79C8").unwrap();
+        let alice = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let bob = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
 
         let alice_balance_slot = mapping_slot(alice, U256::from(10));
         let bob_balance_slot = mapping_slot(bob, U256::from(10));
@@ -80,8 +73,8 @@ mod tests {
     #[test]
     fn test_tip20_allowance_slots() {
         // Test allowance slot calculation for TIP20 tokens (slot 11)
-        let alice = Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap();
-        let tip_fee_mgr = Address::from_str("0xfeec000000000000000000000000000000000000").unwrap();
+        let alice = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let tip_fee_mgr = address!("0xfeec000000000000000000000000000000000000");
 
         let allowance_slot = double_mapping_slot(alice, tip_fee_mgr, U256::from(11));
 
@@ -94,13 +87,61 @@ mod tests {
 
     #[test]
     fn test_double_mapping_different_keys() {
-        let alice = Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266").unwrap();
-        let bob = Address::from_str("0x70997970C51812dc3A010C7d01b50e0d17dc79C8").unwrap();
-        let spender = Address::from_str("0xfeec000000000000000000000000000000000000").unwrap();
+        let alice = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let bob = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+        let spender = address!("0xfeec000000000000000000000000000000000000");
 
         let alice_allowance = double_mapping_slot(alice, spender, U256::from(11));
         let bob_allowance = double_mapping_slot(bob, spender, U256::from(11));
 
         assert_ne!(alice_allowance, bob_allowance);
+    }
+
+    #[test]
+    fn test_left_padding_correctness() {
+        let addr = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let bytes: &[u8] = addr.as_ref();
+        let padded = left_pad_to_32(bytes);
+
+        // First 12 bytes should be zeros (left padding)
+        assert_eq!(&padded[..12], &[0u8; 12]);
+        // Last 20 bytes should be the address
+        assert_eq!(&padded[12..], bytes);
+    }
+
+    #[test]
+    fn test_mapping_slot_encoding() {
+        let key = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let base_slot = U256::from(10);
+
+        // Manual computation to validate
+        let mut buf = [0u8; 64];
+        // Left-pad the address to 32 bytes
+        buf[12..32].copy_from_slice(key.as_ref());
+        // Slot in big-endian
+        buf[32..].copy_from_slice(&base_slot.to_be_bytes::<32>());
+
+        let expected = U256::from_be_bytes(keccak256(buf).0);
+        let computed = mapping_slot(key, base_slot);
+
+        assert_eq!(computed, expected, "mapping_slot encoding mismatch");
+    }
+
+    #[test]
+    fn test_double_mapping_account_role() {
+        let account = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+        let role: B256 = U256::from(1).into();
+        let base_slot = U256::from(1).into();
+
+        let slot = double_mapping_slot(account, role, base_slot);
+
+        // Verify deterministic
+        let slot2 = double_mapping_slot(account, role, base_slot);
+        assert_eq!(slot, slot2);
+
+        // Verify different role yields different slot
+        let different_role: B256 = U256::from(2).into();
+        let different_slot = double_mapping_slot(account, different_role, base_slot);
+        assert_ne!(slot, different_slot);
     }
 }

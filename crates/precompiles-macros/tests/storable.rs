@@ -9,7 +9,7 @@ mod storage {
 use alloy::primitives::{Address, U256};
 use proptest::prelude::*;
 use storage::{
-    ContractStorage, PrecompileStorageProvider, Storable, StorableType, StorageOps,
+    ContractStorage, PrecompileStorageProvider, Storable, StorableType,
     hashmap::HashMapStorageProvider,
     packing::{extract_field, verify_packed_field},
 };

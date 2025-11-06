@@ -1,6 +1,6 @@
 use crate::{
     FieldInfo, FieldKind,
-    utils::{extract_mapping_types, is_array_type, is_custom_struct},
+    utils::{extract_mapping_types, is_array_type, is_custom_struct, is_dynamic_type},
 };
 use alloy::primitives::U256;
 use quote::{format_ident, quote};
@@ -15,8 +15,15 @@ pub(crate) struct AllocatedField<'a> {
     assigned_slot: SlotAssignment,
     /// Classification based on the field's type
     kind: FieldKind<'a>,
-    /// The computed SlotId type name (e.g., "Slot0", "Slot100")
-    slot_id_name: String,
+    /// Field index in packing module (used to reference packing constants)
+    field_index: usize,
+}
+
+impl<'a> AllocatedField<'a> {
+    /// Returns the SlotId type name for this field
+    fn slot_id_name(&self) -> String {
+        format!("Field{}Slot", self.field_index)
+    }
 }
 
 /// Represents how a slot is assigned
@@ -25,34 +32,14 @@ pub(crate) enum SlotAssignment {
     /// Manual slot value: `#[slot(N)]` or `#[base_slot(N)]`
     Manual(U256),
     /// Auto-assigned: stores after the latest auto-assigned field
-    Auto(U256),
-}
-
-/// Get the `SlotId` name for a given field
-fn get_field_slot_id_name(
-    assigned_slot: &SlotAssignment,
-    allocated_fields: &[AllocatedField<'_>],
-) -> String {
-    match assigned_slot {
-        SlotAssignment::Manual(slot) => format!("Slot{}", slot),
-        SlotAssignment::Auto(slot) => {
-            // Check if follows a `StorageBlock` field by finding the last auto-assigned field
-            let prev_auto_field = allocated_fields
-                .iter()
-                .rev()
-                .find(|f| matches!(f.assigned_slot, SlotAssignment::Auto(_)));
-
-            if let Some(prev) = prev_auto_field {
-                if matches!(prev.kind, FieldKind::StorageBlock(_)) {
-                    // the multi-slot block size is not yet known at macro expansion
-                    return format!("SlotAfter{}", prev.slot_id_name);
-                }
-            }
-
-            // Otherwise, we can use the exact slot number
-            format!("Slot{}", slot)
-        }
-    }
+    Auto {
+        /// Base slot for packing decisions. Consecutive primitives sharing the same
+        /// base_slot are candidates for packing together. The actual slot/offset is
+        /// computed later during const-eval in `gen_packing_constants_for_slots_module`.
+        base_slot: U256,
+        /// Whether this field can participate in slot packing (primitive types only)
+        is_primitive: bool,
+    },
 }
 
 /// Allocate slots to fields (explicit + auto-assignment)
@@ -64,7 +51,7 @@ pub(crate) fn allocate_slots(fields: &[FieldInfo]) -> syn::Result<Vec<AllocatedF
         .map(|field| classify_field(&field.ty))
         .collect::<syn::Result<_>>()?;
 
-    for (field, kind) in fields.iter().zip(classified_fields.into_iter()) {
+    for (idx, (field, kind)) in fields.iter().zip(classified_fields.into_iter()).enumerate() {
         let assigned_slot = if let Some(explicit) = field.slot {
             // Explicit fixed slot, doesn't affect auto-assignment chain
             SlotAssignment::Manual(explicit)
@@ -74,18 +61,48 @@ pub(crate) fn allocate_slots(fields: &[FieldInfo]) -> syn::Result<Vec<AllocatedF
             last_auto_slot = base + U256::from(1);
             slot
         } else {
-            // Auto-assignment: this field gets last_auto_slot
-            let slot = SlotAssignment::Auto(last_auto_slot);
-            last_auto_slot = last_auto_slot + U256::from(1);
-            slot
+            // Auto-assignment with packing support
+            let is_primitive = is_primitive_field(&kind);
+
+            // For primitives: try to reuse previous primitive's base slot (packing candidates)
+            // For non-primitives: always start new slot
+            let base_slot = if idx == 0 || !is_primitive {
+                // First field or non-primitive: start new slot
+                let slot = last_auto_slot;
+                last_auto_slot = last_auto_slot + U256::from(1);
+                slot
+            } else {
+                // Subsequent primitive: check if previous field was also primitive
+                let prev: &AllocatedField<'_> = &allocated_fields[idx - 1];
+
+                // If previous was also a primitive, reuse base slot (becomes packing candidate)
+                if let SlotAssignment::Auto {
+                    base_slot,
+                    is_primitive: true,
+                } = &prev.assigned_slot
+                    && is_primitive_field(&prev.kind)
+                {
+                    *base_slot
+                }
+                // Otherwise, start new slot
+                else {
+                    let slot = last_auto_slot;
+                    last_auto_slot = last_auto_slot + U256::from(1);
+                    slot
+                }
+            };
+
+            SlotAssignment::Auto {
+                base_slot,
+                is_primitive,
+            }
         };
 
-        let slot_id_name = get_field_slot_id_name(&assigned_slot, &allocated_fields);
         allocated_fields.push(AllocatedField {
             info: field,
             assigned_slot,
             kind,
-            slot_id_name,
+            field_index: idx,
         });
     }
 
@@ -116,6 +133,11 @@ fn classify_field(ty: &Type) -> syn::Result<FieldKind<'_>> {
     } else {
         Ok(FieldKind::Direct)
     }
+}
+
+/// Check if a field kind represents a primitive type that can participate in slot packing
+fn is_primitive_field(kind: &FieldKind<'_>) -> bool {
+    matches!(kind, FieldKind::Direct)
 }
 
 /// Generate the transformed struct with generic parameters and runtime fields
@@ -178,25 +200,79 @@ pub(crate) fn gen_getters_and_setters(
     let getter_name = format_ident!("sload_{}", field_name);
     let setter_name = format_ident!("sstore_{}", field_name);
     let cleaner_name = format_ident!("clear_{}", field_name);
-    let slot_id = format_ident!("{}", allocated.slot_id_name);
+    let slot_id = format_ident!("{}", allocated.slot_id_name());
 
     match &allocated.kind {
         FieldKind::Direct => {
-            quote! {
-                impl<'a, S: crate::storage::PrecompileStorageProvider> #struct_name<'a, S> {
-                    #[inline]
-                    fn #getter_name(&mut self) -> crate::error::Result<#field_ty> {
-                        crate::storage::Slot::<#field_ty, #slot_id>::read(self)
-                    }
+            // Manual slots are never packed (always at offset 0)
+            if matches!(allocated.assigned_slot, SlotAssignment::Manual(_)) {
+                // Generate normal full-slot accessors for manual slots
+                quote! {
+                    impl<'a, S: crate::storage::PrecompileStorageProvider> #struct_name<'a, S> {
+                        #[inline]
+                        fn #getter_name(&mut self) -> crate::error::Result<#field_ty> {
+                            crate::storage::Slot::<#field_ty, #slot_id>::read(self)
+                        }
 
-                    #[inline]
-                    fn #cleaner_name(&mut self) -> crate::error::Result<()> {
-                        crate::storage::Slot::<#field_ty, #slot_id>::delete(self)
-                    }
+                        #[inline]
+                        fn #cleaner_name(&mut self) -> crate::error::Result<()> {
+                            crate::storage::Slot::<#field_ty, #slot_id>::delete(self)
+                        }
 
-                    #[inline]
-                    fn #setter_name(&mut self, value: #field_ty) -> crate::error::Result<()> {
-                        crate::storage::Slot::<#field_ty, #slot_id>::write(self, value)
+                        #[inline]
+                        fn #setter_name(&mut self, value: #field_ty) -> crate::error::Result<()> {
+                            crate::storage::Slot::<#field_ty, #slot_id>::write(self, value)
+                        }
+                    }
+                }
+            } else {
+                // Auto-assigned: generate code that uses packing helpers
+                let field_name_upper = field_name.to_string().to_uppercase();
+                let offset_const_name = format_ident!("{}_OFFSET", field_name_upper);
+                let bytes_const_name = format_ident!("{}_BYTES", field_name_upper);
+
+                quote! {
+                    impl<'a, S: crate::storage::PrecompileStorageProvider> #struct_name<'a, S> {
+                        #[inline]
+                        fn #getter_name(&mut self) -> crate::error::Result<#field_ty> {
+                            let slot_value = self.storage.sload(
+                                self.address,
+                                <#slot_id as crate::storage::SlotId>::SLOT
+                            )?;
+                            crate::storage::packing::extract_packed_value::<#field_ty>(
+                                slot_value,
+                                slots::#offset_const_name,
+                                slots::#bytes_const_name
+                            )
+                        }
+
+                        #[inline]
+                        fn #cleaner_name(&mut self) -> crate::error::Result<()> {
+                            // For packed fields, clear by inserting zero value
+                            let slot = <#slot_id as crate::storage::SlotId>::SLOT;
+                            let current = self.storage.sload(self.address, slot)?;
+                            let zero_value: #field_ty = Default::default();
+                            let cleared = crate::storage::packing::insert_packed_value(
+                                current,
+                                &zero_value,
+                                slots::#offset_const_name,
+                                slots::#bytes_const_name
+                            )?;
+                            self.storage.sstore(self.address, slot, cleared)
+                        }
+
+                        #[inline]
+                        fn #setter_name(&mut self, value: #field_ty) -> crate::error::Result<()> {
+                            let slot = <#slot_id as crate::storage::SlotId>::SLOT;
+                            let current = self.storage.sload(self.address, slot)?;
+                            let new_value = crate::storage::packing::insert_packed_value(
+                                current,
+                                &value,
+                                slots::#offset_const_name,
+                                slots::#bytes_const_name
+                            )?;
+                            self.storage.sstore(self.address, slot, new_value)
+                        }
                     }
                 }
             }
@@ -239,9 +315,7 @@ pub(crate) fn gen_getters_and_setters(
             key2: key2_ty,
             value: value_ty,
         } => {
-            // For nested mappings, we need to use the full Mapping type with dummy inner slot
             let dummy_slot = quote! { SlotDummy };
-
             quote! {
                 impl<'a, S: crate::storage::PrecompileStorageProvider> #struct_name<'a, S> {
                     #[inline]
@@ -326,17 +400,21 @@ fn field_name_to_const_name(name: &Ident) -> String {
 
 /// Generate the `slots` module with SlotId types inside it, plus constants and re-exports
 ///
-/// Returns: (re-exports for outer scope, slots module with types inside)
+/// Returns: (re-exports for outer scope, slots module with types and packing constants inside)
 pub(crate) fn gen_slots_module_with_types(
     allocated_fields: &[AllocatedField<'_>],
 ) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
-    let slot_id_types = gen_slot_id_types(allocated_fields);
+    // Generate packing constants that will go INSIDE the slots module
+    let packing_constants = gen_packing_constants_for_slots_module(allocated_fields);
+
+    // Generate SlotId types (they'll reference the packing constants in the same module)
+    let slot_id_types = gen_slot_id_types_inline(allocated_fields);
 
     let slot_constants: Vec<_> = allocated_fields
         .iter()
         .map(|allocated| {
             let const_name = format_ident!("{}", field_name_to_const_name(&allocated.info.name));
-            let slot_id = format_ident!("{}", allocated.slot_id_name);
+            let slot_id = format_ident!("{}", allocated.slot_id_name());
 
             quote! {
                 pub const #const_name: ::alloy::primitives::U256 = <#slot_id as tempo_precompiles::storage::SlotId>::SLOT;
@@ -344,10 +422,29 @@ pub(crate) fn gen_slots_module_with_types(
         })
         .collect();
 
+    // Generate offset and byte constants for each field (referencing packing constants in same module)
+    let offset_and_byte_constants: Vec<_> = allocated_fields
+        .iter()
+        .map(|allocated| {
+            let field_name_upper = field_name_to_const_name(&allocated.info.name);
+            let offset_const_name = format_ident!("{}_OFFSET", field_name_upper);
+            let bytes_const_name = format_ident!("{}_BYTES", field_name_upper);
+            let idx = allocated.field_index;
+            let packing_offset = format_ident!("FIELD_{}_OFFSET", idx);
+            let packing_bytes = format_ident!("FIELD_{}_BYTES", idx);
+
+            quote! {
+                pub const #offset_const_name: usize = #packing_offset;
+                pub const #bytes_const_name: usize = #packing_bytes;
+            }
+        })
+        .collect();
+
+    // Generate re-exports for all SlotId types
     let slot_reexports: Vec<_> = allocated_fields
         .iter()
         .map(|allocated| {
-            let slot_id = format_ident!("{}", allocated.slot_id_name);
+            let slot_id = format_ident!("{}", allocated.slot_id_name());
             quote! {
                 pub use slots::#slot_id;
             }
@@ -357,8 +454,13 @@ pub(crate) fn gen_slots_module_with_types(
     let slots_module = quote! {
         pub mod slots {
             use super::*;
+
+            // Packing constants directly in this module (no separate packing module needed)
+            #packing_constants
+
             #slot_id_types
             #(#slot_constants)*
+            #(#offset_and_byte_constants)*
         }
     };
 
@@ -370,64 +472,184 @@ pub(crate) fn gen_slots_module_with_types(
     (reexports, slots_module)
 }
 
-/// Generate `SlotId` marker types for each field with const-eval chaining
-pub(crate) fn gen_slot_id_types(
+/// Generate the three constant identifiers for a field: SLOT, OFFSET, and BYTES
+fn field_constants(idx: usize) -> (Ident, Ident, Ident) {
+    (
+        format_ident!("FIELD_{}_SLOT", idx),
+        format_ident!("FIELD_{}_OFFSET", idx),
+        format_ident!("FIELD_{}_BYTES", idx),
+    )
+}
+
+/// Generate packing constants that will be placed directly inside the slots module
+fn gen_packing_constants_for_slots_module(
     allocated_fields: &[AllocatedField<'_>],
 ) -> proc_macro2::TokenStream {
-    let mut generated = proc_macro2::TokenStream::new();
+    let mut constants = proc_macro2::TokenStream::new();
 
-    // Generate all `SlotId` types
+    // Generate byte count constants for each field
     for (idx, allocated) in allocated_fields.iter().enumerate() {
-        let slot_id_name = format_ident!("{}", allocated.slot_id_name);
-        let field_name = &allocated.info.name;
+        let field_ty = &allocated.info.ty;
+        let bytes_const = format_ident!("FIELD_{}_BYTES", idx);
 
-        let slot_expr = match &allocated.assigned_slot {
-            SlotAssignment::Manual(slot_value) => {
-                // Fixed slots are always known exactly
-                let slot_literal = syn::LitInt::new(
-                    &format!("{}_U256", slot_value),
-                    proc_macro2::Span::call_site(),
-                );
-                quote! {
-                    ::alloy::primitives::uint!(#slot_literal)
-                }
+        // Mappings and dynamic types always take a full slot (32 bytes) for their base
+        let byte_count_expr = match &allocated.kind {
+            FieldKind::Mapping { .. } | FieldKind::NestedMapping { .. } => {
+                quote! { 32 }
             }
-            SlotAssignment::Auto(slot_value) => {
-                // For auto slots, check if previous auto field is a StorageBlock
-                let prev_auto_field = allocated_fields[..idx]
-                    .iter()
-                    .rev()
-                    .find(|f| matches!(f.assigned_slot, SlotAssignment::Auto(_)));
+            _ if is_dynamic_type(field_ty) => {
+                quote! { 32 }
+            }
+            _ => {
+                quote! { <#field_ty as crate::storage::StorableType>::BYTE_COUNT }
+            }
+        };
 
-                let prev_is_storage_block = prev_auto_field
-                    .map(|f| matches!(f.kind, FieldKind::StorageBlock(_)))
-                    .unwrap_or(false);
+        constants.extend(quote! {
+            const #bytes_const: usize = #byte_count_expr;
+        });
+    }
 
-                if prev_is_storage_block {
-                    // Previous auto field is StorageBlock, defer to const-eval
-                    let prev = prev_auto_field.unwrap();
-                    let prev_slot_id = format_ident!("{}", prev.slot_id_name);
-                    let prev_field_ty = &prev.info.ty;
-                    quote! {
-                        {
-                            const PREV_SLOT: ::alloy::primitives::U256 = <#prev_slot_id as crate::storage::SlotId>::SLOT;
-                            const PREV_COUNT: usize = <#prev_field_ty>::SLOT_COUNT;
-                            const OFFSET: ::alloy::primitives::U256 = ::alloy::primitives::U256::from_limbs([PREV_COUNT as u64, 0, 0, 0]);
-                            PREV_SLOT.saturating_add(OFFSET)
-                        }
-                    }
+    // Generate slot and offset constants for each field
+    for (idx, allocated) in allocated_fields.iter().enumerate() {
+        let (slot_const, offset_const, bytes_const) = field_constants(idx);
+
+        let (slot_expr, offset_expr) = match &allocated.assigned_slot {
+            SlotAssignment::Manual(manual_slot) => {
+                // Manual slot assignment (from #[slot(N)] or #[base_slot(N)])
+                // These fields always have offset 0 (no packing with manual slots)
+                let hex_value = format!("{}_U256", manual_slot);
+                let slot_lit = syn::LitInt::new(&hex_value, proc_macro2::Span::call_site());
+                let slot_expr = quote! {
+                    ::alloy::primitives::uint!(#slot_lit)
+                };
+                (slot_expr, quote! { 0 })
+            }
+            SlotAssignment::Auto {
+                base_slot,
+                is_primitive: _,
+            } => {
+                // Auto-assignment with proper slot packing
+                // Generate const expressions that compute slot/offset based on previous fields
+                if idx == 0 {
+                    // First field always starts at slot 0, offset 0
+                    (quote! { ::alloy::primitives::U256::ZERO }, quote! { 0 })
                 } else {
-                    // Use exact slot value (known at macro time)
-                    let slot_literal = syn::LitInt::new(
-                        &format!("{}_U256", slot_value),
-                        proc_macro2::Span::call_site(),
-                    );
-                    quote! {
-                        ::alloy::primitives::uint!(#slot_literal)
+                    // Subsequent fields: compute based on previous field
+                    let prev_idx = idx - 1;
+                    let prev = &allocated_fields[prev_idx];
+                    let (prev_slot, prev_offset, prev_bytes) = field_constants(prev_idx);
+
+                    if !matches!(prev.assigned_slot, SlotAssignment::Auto { .. }) {
+                        // Previous was manual, current is auto - they're independent
+                        let limbs = *base_slot.as_limbs();
+                        let slot_expr = quote! {
+                            ::alloy::primitives::U256::from_limbs([#(#limbs),*])
+                        };
+                        (slot_expr, quote! { 0 })
+                    } else {
+                        // Previous was also auto - compute based on its slot/offset/bytes
+                        if prev.kind.is_mapping() || is_dynamic_type(&prev.info.ty) {
+                            // Previous field occupies exactly 1 full slot
+                            let slot_expr = quote! {
+                                #prev_slot.saturating_add(::alloy::primitives::U256::from_limbs([1, 0, 0, 0]))
+                            };
+                            (slot_expr, quote! { 0 })
+                        } else if is_custom_struct(&prev.info.ty) {
+                            // Previous field is a multi-slot struct
+                            let prev_ty = &prev.info.ty;
+                            let slot_expr = quote! {
+                                #prev_slot.saturating_add(
+                                    ::alloy::primitives::U256::from_limbs([<#prev_ty>::SLOT_COUNT as u64, 0u64, 0u64, 0u64])
+                                )
+                            };
+                            (slot_expr, quote! { 0 })
+                        } else if is_array_type(&prev.info.ty) {
+                            // Previous field is an array, compute slot count from BYTE_COUNT
+                            let slot_expr = quote! {
+                                #prev_slot.saturating_add(
+                                    ::alloy::primitives::U256::from_limbs([((#prev_bytes + 31) / 32) as u64, 0u64, 0u64, 0u64])
+                                )
+                            };
+                            (slot_expr, quote! { 0 })
+                        } else {
+                            // Previous field is a primitive
+                            if allocated.kind.is_mapping()
+                                || is_dynamic_type(&allocated.info.ty)
+                                || is_array_type(&allocated.info.ty)
+                                || is_custom_struct(&allocated.info.ty)
+                            {
+                                // Current is non-primitive: must start on slot boundary
+                                let slot_expr = quote! {
+                                    {
+                                        if #prev_offset + #prev_bytes >= 32 {
+                                            // Previous field filled or exceeded slot boundary: move extra slot
+                                            #prev_slot.saturating_add(::alloy::primitives::U256::from_limbs([1, 0, 0, 0]))
+                                        } else if #prev_offset == 0 {
+                                            // Previous field started at offset 0 and didn't fill slot: stay in same slot
+                                            #prev_slot
+                                        } else {
+                                            // Previous field was packed (offset > 0) - advance to next slot
+                                            #prev_slot.saturating_add(::alloy::primitives::U256::from_limbs([1, 0, 0, 0]))
+                                        }
+                                    }
+                                };
+                                (slot_expr, quote! { 0 })
+                            } else {
+                                // Both previous and current are primitives: try to pack
+                                let slot_expr = quote! {
+                                    {
+                                        // Check if current field fits in same slot after previous
+                                        if #prev_offset + #prev_bytes + #bytes_const <= 32 {
+                                            #prev_slot
+                                        } else {
+                                            #prev_slot.saturating_add(::alloy::primitives::U256::from_limbs([1, 0, 0, 0]))
+                                        }
+                                    }
+                                };
+
+                                let offset_expr = quote! {
+                                    {
+                                        // Offset depends on whether we packed or moved to new slot
+                                        if #prev_offset + #prev_bytes + #bytes_const <= 32 {
+                                            #prev_offset + #prev_bytes
+                                        } else {
+                                            0
+                                        }
+                                    }
+                                };
+
+                                (slot_expr, offset_expr)
+                            }
+                        }
                     }
                 }
             }
         };
+
+        // Generate constants - all slots are now U256
+        constants.extend(quote! {
+            const #slot_const: ::alloy::primitives::U256 = #slot_expr;
+            const #offset_const: usize = #offset_expr;
+        });
+    }
+
+    constants
+}
+
+/// Generate `SlotId` marker types for each field (inline version without path prefixes)
+fn gen_slot_id_types_inline(allocated_fields: &[AllocatedField<'_>]) -> proc_macro2::TokenStream {
+    let mut generated = proc_macro2::TokenStream::new();
+
+    // Generate all `SlotId` types (one per field, even if they pack into the same slot)
+    for allocated in allocated_fields.iter() {
+        let slot_id_name = format_ident!("{}", allocated.slot_id_name());
+        let field_name = &allocated.info.name;
+        let field_idx = allocated.field_index;
+        let packing_slot = format_ident!("FIELD_{}_SLOT", field_idx);
+
+        // Each SlotId references its field's slot constant (computed with packing logic)
+        let slot_expr = quote! { #packing_slot };
 
         generated.extend(quote! {
             #[doc = concat!("Storage slot for `", stringify!(#field_name), "` field")]
@@ -445,9 +667,9 @@ pub(crate) fn gen_slot_id_types(
         generated.extend(collision_checks);
     }
 
-    // Always generate `SlotDummy` for nested mappings
+    // Generate dummy SlotId for nested mapping inner values (never accessed)
     generated.extend(quote! {
-        #[doc = "Dummy slot ID for nested mapping inner types (never accessed at runtime)"]
+        ///Dummy slot ID for nested mapping inner types (never accessed at runtime)
         pub struct SlotDummy;
 
         impl crate::storage::SlotId for SlotDummy {
@@ -456,6 +678,18 @@ pub(crate) fn gen_slot_id_types(
     });
 
     generated
+}
+
+/// Generate a U256 expression for the number of slots occupied by a field
+fn generate_slot_count_expr(kind: &FieldKind<'_>, ty: &Type) -> proc_macro2::TokenStream {
+    match kind {
+        FieldKind::StorageBlock(_) => {
+            quote! { ::alloy::primitives::U256::from_limbs([<#ty>::SLOT_COUNT as u64, 0u64, 0u64, 0u64]) }
+        }
+        _ => {
+            quote! { ::alloy::primitives::U256::from_limbs([1, 0, 0, 0]) }
+        }
+    }
 }
 
 /// Generate collision detection debug assertions for a field
@@ -468,7 +702,7 @@ fn generate_collision_checks(
 
     // Only check explicit slot assignments against other fields
     if let SlotAssignment::Manual(_) = current_field.assigned_slot {
-        let current_slot_id = format_ident!("{}", current_field.slot_id_name);
+        let current_slot_id = format_ident!("{}", current_field.slot_id_name());
         let current_field_name = &current_field.info.name;
 
         // Check against all other fields
@@ -477,41 +711,14 @@ fn generate_collision_checks(
                 continue;
             }
 
-            let other_slot_id = format_ident!("{}", other_field.slot_id_name);
+            let other_slot_id = format_ident!("{}", other_field.slot_id_name());
             let other_field_name = &other_field.info.name;
 
             // Generate slot count expressions
-            let (current_count_expr, other_count_expr) = match (
-                &current_field.kind,
-                &other_field.kind,
-            ) {
-                (FieldKind::StorageBlock(_), FieldKind::StorageBlock(_)) => {
-                    let current_ty = &current_field.info.ty;
-                    let other_ty = &other_field.info.ty;
-                    (
-                        quote! { ::alloy::primitives::U256::from_limbs([<#current_ty>::SLOT_COUNT as u64, 0, 0, 0]) },
-                        quote! { ::alloy::primitives::U256::from_limbs([<#other_ty>::SLOT_COUNT as u64, 0, 0, 0]) },
-                    )
-                }
-                (FieldKind::StorageBlock(_), _) => {
-                    let current_ty = &current_field.info.ty;
-                    (
-                        quote! { ::alloy::primitives::U256::from_limbs([<#current_ty>::SLOT_COUNT as u64, 0, 0, 0]) },
-                        quote! { ::alloy::primitives::U256::from_limbs([1, 0, 0, 0]) },
-                    )
-                }
-                (_, FieldKind::StorageBlock(_)) => {
-                    let other_ty = &other_field.info.ty;
-                    (
-                        quote! { ::alloy::primitives::U256::from_limbs([1, 0, 0, 0]) },
-                        quote! { ::alloy::primitives::U256::from_limbs([<#other_ty>::SLOT_COUNT as u64, 0, 0, 0]) },
-                    )
-                }
-                _ => (
-                    quote! { ::alloy::primitives::U256::from_limbs([1, 0, 0, 0]) },
-                    quote! { ::alloy::primitives::U256::from_limbs([1, 0, 0, 0]) },
-                ),
-            };
+            let current_count_expr =
+                generate_slot_count_expr(&current_field.kind, &current_field.info.ty);
+            let other_count_expr =
+                generate_slot_count_expr(&other_field.kind, &other_field.info.ty);
 
             // Generate a debug assertion that checks for overlap
             checks.extend(quote! {
