@@ -302,7 +302,7 @@ mod tests {
         assert!(result.is_ok(), "Should accept U256 at offset 0");
     }
 
-    // -- PACKING VAILDATION ------------------------------------------------------
+    // -- PACKING VALIDATION ------------------------------------------------------
 
     #[test]
     fn test_bool() {

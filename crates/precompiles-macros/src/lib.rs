@@ -16,9 +16,12 @@ mod utils;
 use alloy::primitives::U256;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::parse::{ParseStream, Parser};
-use syn::punctuated::Punctuated;
-use syn::{Data, DeriveInput, Expr, Fields, Ident, Token, Type, Visibility, parse_macro_input};
+use syn::{
+    Data, DeriveInput, Expr, Fields, Ident, Token, Type, Visibility,
+    parse::{ParseStream, Parser},
+    parse_macro_input,
+    punctuated::Punctuated,
+};
 
 use crate::utils::extract_attributes;
 

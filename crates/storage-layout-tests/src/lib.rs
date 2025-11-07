@@ -5,9 +5,11 @@
 
 use alloy_primitives::U256;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 /// Represents the full compiler output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,8 +233,8 @@ pub fn compare_layouts(
     }
 
     // Check for Solidity fields missing in Rust
-    for (solc_field_name, _) in &solc_fields {
-        if !rust_fields.iter().any(|rf| &rf.name == solc_field_name) {
+    for solc_field_name in solc_fields.keys() {
+        if !rust_fields.iter().any(|rf| rf.name == solc_field_name) {
             errors.push(format!(
                 "Field '{}' exists in Solidity but not in Rust layout",
                 solc_field_name
@@ -345,10 +347,10 @@ pub fn compare_struct_members(
     }
 
     // Check for Solidity members missing in Rust
-    for (solc_member_name, _) in &solc_member_info {
+    for solc_member_name in solc_member_info.keys() {
         if !rust_member_slots
             .iter()
-            .any(|rm| &rm.name == solc_member_name)
+            .any(|rm| rm.name == solc_member_name)
         {
             errors.push(format!(
                 "Struct member '{}.{}' exists in Solidity but not in Rust",

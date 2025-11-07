@@ -1,8 +1,6 @@
 use alloy::primitives::U256;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::Path;
-use std::process::Command;
+use std::{collections::HashMap, path::Path, process::Command};
 
 /// Represents the full compiler output.
 #[derive(Debug, Clone, Serialize, Deserialize)]

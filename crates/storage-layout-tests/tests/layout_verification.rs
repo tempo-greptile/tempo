@@ -5,8 +5,7 @@ use std::path::PathBuf;
 use storage_layout_tests::{
     compare_layouts, compare_struct_members, load_solc_layout, RustStorageField,
 };
-use tempo_precompiles::error;
-use tempo_precompiles::storage::Storable;
+use tempo_precompiles::{error, storage::Storable};
 
 // Re-export storage module so tests can use it
 mod storage {
