@@ -6,6 +6,7 @@ use alloy::{
         utils::secret_key_to_address,
     },
 };
+use alloy_primitives::Bytes;
 use clap::Parser;
 use commonware_codec::{Decode as _, DecodeExt as _, Encode as _};
 use commonware_cryptography::{
@@ -328,8 +329,10 @@ impl GenesisArgs {
             .with_gas_limit(self.gas_limit)
             .with_base_fee(Some(self.base_fee_per_gas))
             .with_nonce(0x42)
-            // TODO(janis): should use rlp here.
-            .with_extra_data(initial_dkg.encode().freeze().to_vec().into())
+            .with_extra_data(initial_dkg.map_or_else(
+                || Bytes::from_static(b"tempo-genesis"),
+                |dkg| dkg.encode().freeze().to_vec().into(),
+            ))
             .with_coinbase(self.coinbase);
 
         genesis.alloc = genesis_alloc;
@@ -556,7 +559,10 @@ fn initialize_validator_config(
     polynomial: String,
     mnemonic: String,
     evm: &mut TempoEvm<CacheDB<EmptyDB>>,
-) -> eyre::Result<(PublicOutcome, Vec<Address>)> {
+) -> eyre::Result<(Option<PublicOutcome>, Vec<Address>)> {
+    if addresses.is_empty() && public_keys.is_empty() && polynomial.is_empty() {
+        return Ok((None, vec![]));
+    }
     let block = evm.block.clone();
     let evm_internals = EvmInternals::new(evm.journal_mut(), &block);
     let mut provider = EvmPrecompileStorageProvider::new_max_gas(evm_internals, 1);
@@ -623,7 +629,7 @@ fn initialize_validator_config(
         public: polynomial_decoded,
     };
 
-    Ok((initial_dkg_outcome, validator_addresses))
+    Ok((Some(initial_dkg_outcome), validator_addresses))
 }
 
 fn mint_pairwise_liquidity(
