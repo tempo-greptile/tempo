@@ -7342,6 +7342,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b3789b30bd25ba102de4beabd95d21ac45b69b1be7d14522bab988c526d6799"
 
 [[package]]
+<<<<<<< HEAD
 name = "reth"
 version = "1.9.0"
 source = "git+https://github.com/paradigmxyz/reth?rev=99fe175#99fe17582343828b5b1b8e346a11c0a8c83196aa"
@@ -7388,6 +7389,8 @@ dependencies = [
 ]
 
 [[package]]
+=======
+>>>>>>> 5274b6e (chore: rm reth crate from workspace (#819))
 name = "reth-basic-payload-builder"
 version = "1.9.0"
 source = "git+https://github.com/paradigmxyz/reth?rev=99fe175#99fe17582343828b5b1b8e346a11c0a8c83196aa"
@@ -9291,6 +9294,7 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 name = "reth-ress-protocol"
 version = "1.9.0"
 source = "git+https://github.com/paradigmxyz/reth?rev=99fe175#99fe17582343828b5b1b8e346a11c0a8c83196aa"
@@ -9337,6 +9341,8 @@ dependencies = [
 ]
 
 [[package]]
+=======
+>>>>>>> 5274b6e (chore: rm reth crate from workspace (#819))
 name = "reth-revm"
 version = "1.9.0"
 source = "git+https://github.com/paradigmxyz/reth?rev=99fe175#99fe17582343828b5b1b8e346a11c0a8c83196aa"
@@ -11937,7 +11943,6 @@ dependencies = [
  "itertools 0.14.0",
  "rand 0.8.5",
  "rayon",
- "reth",
  "reth-evm",
  "reth-network-peers",
  "secp256k1 0.30.0",
