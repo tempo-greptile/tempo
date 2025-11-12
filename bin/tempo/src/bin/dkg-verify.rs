@@ -16,7 +16,6 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use reth_provider::HeaderProvider;
-use alloy_genesis::Genesis;
 use bytes::Buf;
 use clap::Parser;
 use commonware_codec::{DecodeExt, Encode as _, RangeCfg, Read as CodecRead, ReadExt as _};
@@ -32,9 +31,9 @@ use eyre::{Context, Result};
 use reth_db::open_db_read_only;
 use reth_node_builder::NodeTypesWithDBAdapter;
 use reth_provider::{
-    providers::StaticFileProvider, BlockNumReader, BlockReader, ProviderFactory,
+    providers::StaticFileProvider, BlockNumReader, ProviderFactory,
 };
-use tempo_chainspec::{TempoChainSpec, spec::ANDANTINO};
+use tempo_chainspec::spec::ANDANTINO;
 use tempo_node::node::TempoNode;
 
 /// DKG Verification Tool
@@ -161,6 +160,7 @@ impl CodecRead for IntermediateOutcome {
 
 #[derive(Debug)]
 struct EpochData {
+    #[allow(dead_code)]
     epoch: u64,
     intermediate_outcomes: BTreeMap<PublicKey, IntermediateOutcome>,
     public_outcome: Option<PublicOutcome>,
@@ -248,7 +248,20 @@ fn main() -> Result<()> {
 
     // Collect outcomes by epoch
     let mut epochs: BTreeMap<u64, EpochData> = BTreeMap::new();
-    let mut last_public: Option<Public<MinSig>> = None;
+
+    // Hardcoded genesis public polynomial (epoch 0)
+    // For ANDANTINO genesis with 4 validators, threshold = quorum(4) = 3
+    let genesis_public_hex = "b17b0f669a53111784c7fe25630a3a9a881ad053891ab985f210bddec6fc3c7bcf60f8aa9e38af079f70bae640c279ce0ef92a122439ea5ccce408defb4af7325f236569049a2ec6af5ce383d845fa626d2a5c59942527b29692175e580735579213978d91b98cf578affdebdcaf1a8232dfa81909d82ff2d30f50f6d7687f85ea35e49b88aefae09f12ebfa38e275aa137e378f24c2d677e501bc4f9bc19a119406dbbb56384beb0854b8761ebc116cb38a0ec4f262d20a421a386ad3daac459994ef06f4e845bd43b84bc0f4f90f0f2bd80ccf9db0fcaa9948cf034c6be31c745d76fa691c4ec9cf607a9b801fd0e7094b4be65e7202c64fb19ee529628a0b2dec9f108a30b8ccd656e3b9f04398e402579aca02c870c27561422e5799a30f";
+    let genesis_public_bytes = hex::decode(genesis_public_hex)
+        .wrap_err("failed to decode hardcoded genesis public polynomial")?;
+    let mut genesis_buf = genesis_public_bytes.as_slice();
+    let mut last_public: Option<Public<MinSig>> = Some(
+        Public::<MinSig>::read_cfg(&mut genesis_buf, &3usize)
+            .wrap_err("failed to decode genesis public polynomial")?
+    );
+
+    println!("Using hardcoded genesis public polynomial for epoch 0");
+    println!();
 
     for height in start_height..=end_height {
         let header_opt = static_file_provider
@@ -529,7 +542,7 @@ fn main() -> Result<()> {
                     // Use recover_public if we have a previous polynomial, otherwise construct_public
                     let computed_result = if let Some(ref previous) = data.previous_public {
                         let mut commitments_map = std::collections::BTreeMap::new();
-                        for (idx, (orig_idx, commitment)) in data
+                        for (_idx, (orig_idx, commitment)) in data
                             .intermediate_outcomes
                             .iter()
                             .filter_map(|(dealer_key, intermediate)| {
