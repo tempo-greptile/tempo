@@ -28,14 +28,28 @@ impl StorableType for bool {
 
 impl Storable<1> for bool {
     #[inline]
-    fn load<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<Self> {
-        storage.sload(base_slot).map(|val| !val.is_zero())
+    fn load<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<Self> {
+        match ctx {
+            LayoutCtx::Full => storage.sload(base_slot).map(|val| !val.is_zero()),
+            LayoutCtx::Packed(offset) => {
+                let slot = storage.sload(base_slot)?;
+                crate::storage::packing::extract_packed_value(slot, offset, 1)
+            }
+        }
     }
 
     #[inline]
-    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256) -> Result<()> {
+    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
         let value = if *self { U256::ONE } else { U256::ZERO };
-        storage.sstore(base_slot, value)
+        match ctx {
+            LayoutCtx::Full => storage.sstore(base_slot, value),
+            LayoutCtx::Packed(offset) => {
+                let current = storage.sload(base_slot)?;
+                let updated =
+                    crate::storage::packing::insert_packed_value(current, &value, offset, 1)?;
+                storage.sstore(base_slot, updated)
+            }
+        }
     }
 
     #[inline]
@@ -55,13 +69,28 @@ impl StorableType for Address {
 
 impl Storable<1> for Address {
     #[inline]
-    fn load<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<Self> {
-        storage.sload(base_slot).map(|val| val.into_address())
+    fn load<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<Self> {
+        match ctx {
+            LayoutCtx::Full => storage.sload(base_slot).map(|val| val.into_address()),
+            LayoutCtx::Packed(offset) => {
+                let slot = storage.sload(base_slot)?;
+                crate::storage::packing::extract_packed_value(slot, offset, 20)
+            }
+        }
     }
 
     #[inline]
-    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256) -> Result<()> {
-        storage.sstore(base_slot, self.into_u256())
+    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
+        match ctx {
+            LayoutCtx::Full => storage.sstore(base_slot, self.into_u256()),
+            LayoutCtx::Packed(offset) => {
+                let current = storage.sload(base_slot)?;
+                let value = self.into_u256();
+                let updated =
+                    crate::storage::packing::insert_packed_value(current, &value, offset, 20)?;
+                storage.sstore(base_slot, updated)
+            }
+        }
     }
 
     #[inline]

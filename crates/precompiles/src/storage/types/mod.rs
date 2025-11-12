@@ -72,6 +72,38 @@ impl Layout {
     }
 }
 
+/// Describes the context in which a `Storable` value is being loaded or stored.
+///
+/// This determines whether the value occupies an entire storage slot or is packed
+/// with other values at a specific byte offset within a slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutCtx {
+    /// Load/store the entire value at `base_slot`.
+    ///
+    /// For writes, this directly overwrites the entire slot without needing SLOAD.
+    /// All `Storable` types support this context.
+    ///
+    /// Examples:
+    /// - Loading a standalone `U256` value
+    /// - Storing a struct to its base slot
+    /// - Writing a full-slot field in a struct
+    Full,
+
+    /// Load/store a packed primitive at the given byte offset within a slot.
+    ///
+    /// For writes, this requires a read-modify-write: SLOAD the current slot value,
+    /// modify the bytes at the offset, then SSTORE back. This preserves other
+    /// packed fields in the same slot.
+    ///
+    /// Only primitive types with `Layout::Bytes(n)` where `n < 32` support this context.
+    ///
+    /// Examples:
+    /// - Loading a `bool` (1 byte) at offset 0
+    /// - Storing an `Address` (20 bytes) at offset 0
+    /// - Writing a `u64` (8 bytes) at offset 8 (second field in a packed slot)
+    Packed(usize),
+}
+
 /// Helper trait to access storage layout information without requiring const generic parameter.
 ///
 /// This trait exists to allow the derive macro to query the layout and size of field types
@@ -119,37 +151,67 @@ pub trait Storable<const SLOTS: usize>: Sized + StorableType {
     ///
     /// Reads `SLOTS` consecutive slots starting from `base_slot`.
     ///
+    /// # Context
+    ///
+    /// - `LayoutCtx::Full`: Load the entire value from `base_slot` (and subsequent slots if multi-slot)
+    /// - `LayoutCtx::Packed(offset)`: Load a packed primitive from byte `offset` within `base_slot`
+    ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - Storage read fails
     /// - Data cannot be decoded into this type
-    fn load<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<Self>;
+    /// - Context is invalid for this type (e.g., `Packed` for a multi-slot type)
+    fn load<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<Self>;
 
     /// Store this type to storage starting at the given base slot.
     ///
     /// Writes `SLOTS` consecutive slots starting from `base_slot`.
     ///
+    /// # Context
+    ///
+    /// - `LayoutCtx::Full`: Write the entire value to `base_slot` (overwrites full slot)
+    /// - `LayoutCtx::Packed(offset)`: Write a packed primitive at byte `offset` (read-modify-write)
+    ///
     /// # Errors
     ///
-    /// Returns an error if the storage write fails.
-    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256) -> Result<()>;
+    /// Returns an error if:
+    /// - Storage write fails
+    /// - Context is invalid for this type (e.g., `Packed` for a multi-slot type)
+    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()>;
 
     /// Delete this type from storage (set all slots to zero).
     ///
     /// Sets `SLOTS` consecutive slots to zero, starting from `base_slot`.
     ///
-    /// The default implementation sets each slot to zero individually.
-    /// Types may override this for optimized bulk deletion.
+    /// # Context
+    ///
+    /// - `LayoutCtx::Full`: Clear entire slot(s) by writing zero
+    /// - `LayoutCtx::Packed(offset)`: Clear only the bytes at the offset (read-modify-write)
+    ///
+    /// The default implementation handles both contexts appropriately.
     ///
     /// # Errors
     ///
-    /// Returns an error if the storage write fails.
-    fn delete<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<()> {
-        for offset in 0..SLOTS {
-            storage.sstore(base_slot + U256::from(offset), U256::ZERO)?;
+    /// Returns an error if:
+    /// - Storage write fails
+    /// - Context is invalid for this type
+    fn delete<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
+        match ctx {
+            LayoutCtx::Full => {
+                for offset in 0..SLOTS {
+                    storage.sstore(base_slot + U256::from(offset), U256::ZERO)?;
+                }
+                Ok(())
+            }
+            LayoutCtx::Packed(offset) => {
+                // For packed context, we need to preserve other fields in the slot
+                let bytes = Self::LAYOUT.bytes();
+                let current = storage.sload(base_slot)?;
+                let cleared = crate::storage::packing::zero_packed_value(current, offset, bytes)?;
+                storage.sstore(base_slot, cleared)
+            }
         }
-        Ok(())
     }
 
     /// Encode this type to an array of U256 words.

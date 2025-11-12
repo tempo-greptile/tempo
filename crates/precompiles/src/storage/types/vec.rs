@@ -34,71 +34,66 @@ impl<T> Storable<1> for Vec<T>
 where
     T: Storable<1> + StorableType,
 {
-    fn load<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<Self> {
-        // Read length from base slot
-        let length_value = storage.sload(base_slot)?;
-        let length = length_value.to::<usize>();
+    fn load<S: StorageOps>(
+        storage: &mut S,
+        base_slot: U256,
+        ctx: crate::storage::types::LayoutCtx,
+    ) -> Result<Self> {
+        // Vec is always loaded with Full context (loads entire vec from its base slot)
+        match ctx {
+            crate::storage::types::LayoutCtx::Full => {
+                // Read length from base slot
+                let length_value = storage.sload(base_slot)?;
+                let length = length_value.to::<usize>();
 
-        if length == 0 {
-            return Ok(Self::new());
-        }
+                if length == 0 {
+                    return Ok(Self::new());
+                }
 
-        let data_start = calc_data_slot(base_slot);
+                let data_start = calc_data_slot(base_slot);
 
-        // Pack elements if necessary
-        if is_packable(T::LAYOUT.bytes()) {
-            load_packed_elements(storage, data_start, length, T::LAYOUT.bytes())
-        } else {
-            load_unpacked_elements(storage, data_start, length)
+                // Pack elements if necessary
+                if is_packable(T::LAYOUT.bytes()) {
+                    load_packed_elements(storage, data_start, length, T::LAYOUT.bytes())
+                } else {
+                    load_unpacked_elements(storage, data_start, length)
+                }
+            }
+            crate::storage::types::LayoutCtx::Packed(_) => {
+                unreachable!("Vec occupies a full slot and cannot be packed")
+            }
         }
     }
 
-    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256) -> Result<()> {
-        // Write length to base slot
-        storage.sstore(base_slot, U256::from(self.len()))?;
+    fn store<S: StorageOps>(
+        &self,
+        storage: &mut S,
+        base_slot: U256,
+        ctx: crate::storage::types::LayoutCtx,
+    ) -> Result<()> {
+        // Vec is always stored with Full context (stores entire vec to its base slot)
+        match ctx {
+            crate::storage::types::LayoutCtx::Full => {
+                // Write length to base slot
+                storage.sstore(base_slot, U256::from(self.len()))?;
 
-        if self.is_empty() {
-            return Ok(());
-        }
+                if self.is_empty() {
+                    return Ok(());
+                }
 
-        let data_start = calc_data_slot(base_slot);
+                let data_start = calc_data_slot(base_slot);
 
-        // Pack elements if necessary
-        if is_packable(T::LAYOUT.bytes()) {
-            store_packed_elements(self, storage, data_start, T::LAYOUT.bytes())
-        } else {
-            store_unpacked_elements(self, storage, data_start)
-        }
-    }
-
-    fn delete<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<()> {
-        // Read length from base slot to determine how many slots to clear
-        let length_value = storage.sload(base_slot)?;
-        let length = length_value.to::<usize>();
-
-        // Clear base slot (length)
-        storage.sstore(base_slot, U256::ZERO)?;
-
-        if length == 0 {
-            return Ok(());
-        }
-
-        let data_start = calc_data_slot(base_slot);
-        if is_packable(T::LAYOUT.bytes()) {
-            // Clear packed element slots
-            let slot_count = calc_packed_slot_count(length, T::LAYOUT.bytes());
-            for slot_idx in 0..slot_count {
-                storage.sstore(data_start + U256::from(slot_idx), U256::ZERO)?;
+                // Pack elements if necessary
+                if is_packable(T::LAYOUT.bytes()) {
+                    store_packed_elements(self, storage, data_start, T::LAYOUT.bytes())
+                } else {
+                    store_unpacked_elements(self, storage, data_start)
+                }
             }
-        } else {
-            // Clear unpacked element slots
-            for elem_idx in 0..length {
-                let elem_slot = data_start + U256::from(elem_idx);
-                T::delete(storage, elem_slot)?;
+            crate::storage::types::LayoutCtx::Packed(_) => {
+                unreachable!("Vec occupies a full slot and cannot be packed")
             }
         }
-
-        Ok(())
     }
 
     fn to_evm_words(&self) -> Result<[U256; 1]> {
@@ -380,7 +375,7 @@ where
 {
     for (elem_idx, elem) in elements.iter().enumerate() {
         let elem_slot = data_start + U256::from(elem_idx);
-        elem.store(storage, elem_slot)?;
+        elem.store(storage, elem_slot, crate::storage::types::LayoutCtx::Full)?;
     }
 
     Ok(())
@@ -477,7 +472,7 @@ where
     S: StorageOps,
 {
     let elem_slot = data_start + U256::from(index);
-    T::load(storage, elem_slot)
+    T::load(storage, elem_slot, crate::storage::types::LayoutCtx::Full)
 }
 
 /// Write a single unpacked element to storage.
@@ -492,7 +487,7 @@ where
     S: StorageOps,
 {
     let elem_slot = data_start + U256::from(index);
-    value.store(storage, elem_slot)
+    value.store(storage, elem_slot, crate::storage::types::LayoutCtx::Full)
 }
 
 /// Zero out a single unpacked element in storage.

@@ -24,18 +24,19 @@ impl StorableType for Bytes {
 
 impl Storable<1> for Bytes {
     #[inline]
-    fn load<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<Self> {
-        load_bytes_like(storage, base_slot, |data| Ok(Self::from(data)))
+    fn load<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<Self> {
+        match ctx {
+            LayoutCtx::Full => load_bytes_like(storage, base_slot, |data| Ok(Self::from(data))),
+            LayoutCtx::Packed(_) => unreachable!("Bytes is a dynamic type and cannot be packed"),
+        }
     }
 
     #[inline]
-    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256) -> Result<()> {
-        store_bytes_like(self.as_ref(), storage, base_slot)
-    }
-
-    #[inline]
-    fn delete<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<()> {
-        delete_bytes_like(storage, base_slot)
+    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
+        match ctx {
+            LayoutCtx::Full => store_bytes_like(self.as_ref(), storage, base_slot),
+            LayoutCtx::Packed(_) => unreachable!("Bytes is a dynamic type and cannot be packed"),
+        }
     }
 
     #[inline]
@@ -55,22 +56,23 @@ impl StorableType for String {
 
 impl Storable<1> for String {
     #[inline]
-    fn load<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<Self> {
-        load_bytes_like(storage, base_slot, |data| {
-            Self::from_utf8(data).map_err(|e| {
-                TempoPrecompileError::Fatal(format!("Invalid UTF-8 in stored string: {e}"))
-            })
-        })
+    fn load<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<Self> {
+        match ctx {
+            LayoutCtx::Full => load_bytes_like(storage, base_slot, |data| {
+                Self::from_utf8(data).map_err(|e| {
+                    TempoPrecompileError::Fatal(format!("Invalid UTF-8 in stored string: {e}"))
+                })
+            }),
+            LayoutCtx::Packed(_) => unreachable!("String is a dynamic type and cannot be packed"),
+        }
     }
 
     #[inline]
-    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256) -> Result<()> {
-        store_bytes_like(self.as_bytes(), storage, base_slot)
-    }
-
-    #[inline]
-    fn delete<S: StorageOps>(storage: &mut S, base_slot: U256) -> Result<()> {
-        delete_bytes_like(storage, base_slot)
+    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
+        match ctx {
+            LayoutCtx::Full => store_bytes_like(self.as_bytes(), storage, base_slot),
+            LayoutCtx::Packed(_) => unreachable!("String is a dynamic type and cannot be packed"),
+        }
     }
 
     #[inline]
