@@ -347,12 +347,14 @@ async fn generate_transactions(input: GenerateTransactionsInput<'_>) -> eyre::Re
     )
     .await?;
 
+    let accounts = signers.len();
     // Fetch current nonces for all accounts
     let provider = ProviderBuilder::new().connect_http(rpc_url);
-    println!("Fetching nonces for {} accounts...", signers.len());
+
+    println!("Fetching nonces for {accounts} accounts...");
 
     let mut params = Vec::new();
-    for signer in signers.clone() {
+    for signer in signers {
         let address = signer.address();
         let current_nonce = provider
             .get_transaction_count(address)
@@ -369,7 +371,7 @@ async fn generate_transactions(input: GenerateTransactionsInput<'_>) -> eyre::Re
 
     println!(
         "Pregenerating {} transactions",
-        txs_per_sender as usize * signers.len(),
+        txs_per_sender as usize * accounts,
     );
 
     let transactions: Vec<_> = params
