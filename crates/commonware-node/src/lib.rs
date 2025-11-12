@@ -20,9 +20,9 @@ use tempo_node::TempoFullNode;
 
 use crate::config::{
     BOUNDARY_CERT_CHANNEL_IDENT, BOUNDARY_CERT_LIMIT, BROADCASTER_CHANNEL_IDENT, BROADCASTER_LIMIT,
-    DKG_CHANNEL_IDENT, DKG_LIMIT, MARSHAL_CHANNEL_IDENT, MARSHAL_LIMIT, PENDING_CHANNEL_IDENT,
-    PENDING_LIMIT, RECOVERED_CHANNEL_IDENT, RECOVERED_LIMIT, RESOLVER_CHANNEL_IDENT,
-    RESOLVER_LIMIT, SUBBLOCKS_CHANNEL_IDENT, SUBBLOCKS_LIMIT,
+    DKG_CHANNEL_IDENT, DKG_LIMIT, MARSHAL_CHANNEL_IDENT, MARSHAL_LIMIT, PEERSETS_TO_TRACK,
+    PENDING_CHANNEL_IDENT, PENDING_LIMIT, RECOVERED_CHANNEL_IDENT, RECOVERED_LIMIT,
+    RESOLVER_CHANNEL_IDENT, RESOLVER_LIMIT, SUBBLOCKS_CHANNEL_IDENT, SUBBLOCKS_LIMIT,
 };
 
 pub async fn run_consensus_stack(
@@ -121,6 +121,7 @@ async fn instantiate_network(
     let p2p_namespace = commonware_utils::union_unique(crate::config::NAMESPACE, b"_P2P");
     let p2p_cfg = lookup::Config {
         mailbox_size: config.mailbox_size,
+        tracked_peer_sets: PEERSETS_TO_TRACK,
         ..lookup::Config::local(
             config.signer.clone(),
             &p2p_namespace,
