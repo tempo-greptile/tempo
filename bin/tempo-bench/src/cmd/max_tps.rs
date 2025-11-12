@@ -334,6 +334,7 @@ async fn generate_transactions(
 mod dex {
     use super::*;
     use tempo_contracts::precompiles::IStablecoinExchange;
+    use tempo_precompiles::stablecoin_exchange::{MAX_TICK, MIN_TICK, price_to_tick};
 
     type DexProvider = FillProvider<
         JoinFill<
@@ -442,13 +443,28 @@ mod dex {
                 .connect_http(url.clone());
             let exchange = IStablecoinExchange::new(STABLECOIN_EXCHANGE_ADDRESS, account_provider);
 
+            let tick_over = price_to_tick(100010);
+            let tick_under = price_to_tick(99990);
+
             receipts.extend([
                 exchange
-                    .place(*base1.address(), first_order_amount, true, 0)
+                    .placeFlip(
+                        *base1.address(),
+                        first_order_amount,
+                        true,
+                        tick_under,
+                        tick_over,
+                    )
                     .send()
                     .await?,
                 exchange
-                    .place(*base2.address(), first_order_amount, true, 0)
+                    .placeFlip(
+                        *base2.address(),
+                        first_order_amount,
+                        true,
+                        tick_under,
+                        tick_over,
+                    )
                     .send()
                     .await?,
             ]);
