@@ -217,27 +217,37 @@ where
         // Note that for epochs 0 and 1 this will read the same block twice.
         // That's ok.
         let dealers_epoch = epoch_state.epoch.saturating_sub(2);
-        let dealers = read_validator_config_from_contract(0, &config.execution_node, dealers_epoch)
-            .await
-            .wrap_err_with(|| {
-                format!(
-                    "validator config could not be read for epoch \
+        let dealers = read_validator_config_from_contract(
+            0,
+            &config.execution_node,
+            dealers_epoch,
+            config.epoch_length,
+        )
+        .await
+        .wrap_err_with(|| {
+            format!(
+                "validator config could not be read for epoch \
                     `{dealers_epoch}` (latest known epoch `{}`)",
-                    epoch_state.epoch,
-                )
-            })?;
+                epoch_state.epoch,
+            )
+        })?;
         let mut all_participants = Participants::new(dealers);
 
         let players_epoch = epoch_state.epoch.saturating_sub(1);
-        let players = read_validator_config_from_contract(0, &config.execution_node, players_epoch)
-            .await
-            .wrap_err_with(|| {
-                format!(
-                    "validator config could not be read for epoch \
+        let players = read_validator_config_from_contract(
+            0,
+            &config.execution_node,
+            players_epoch,
+            config.epoch_length,
+        )
+        .await
+        .wrap_err_with(|| {
+            format!(
+                "validator config could not be read for epoch \
                     `{players_epoch}` (latest known epoch `{}`)",
-                    epoch_state.epoch,
-                )
-            })?;
+                epoch_state.epoch,
+            )
+        })?;
         all_participants.push(players);
 
         // Similarly, try and recover the peers registered on the peer manager
@@ -592,13 +602,13 @@ where
         TReceiver: Receiver<PublicKey = PublicKey>,
         TSender: Sender<PublicKey = PublicKey>,
     {
-        let boundary = self.epoch_state.epoch.checked_sub(1).map_or(0, |previous| {
-            utils::last_block_in_epoch(self.config.epoch_length, previous)
-        });
-
-        let syncers =
-            read_validator_config_with_retry(&self.context, &self.config.execution_node, boundary)
-                .await;
+        let syncers = read_validator_config_with_retry(
+            &self.context,
+            &self.config.execution_node,
+            self.epoch_state.epoch,
+            self.config.epoch_length,
+        )
+        .await;
 
         self.all_participants.push(syncers);
         // TODO: report changes between the validators here.
@@ -727,12 +737,14 @@ struct Metrics {
 async fn read_validator_config_with_retry<C: commonware_runtime::Clock>(
     context: &C,
     node: &TempoFullNode,
-    at_height: u64,
+    epoch: Epoch,
+    epoch_length: u64,
 ) -> OrderedAssociated<PublicKey, DecodedValidator> {
     let mut attempts = 1;
     let retry_after = Duration::from_secs(1);
     loop {
-        if let Ok(validators) = read_validator_config_from_contract(attempts, node, at_height).await
+        if let Ok(validators) =
+            read_validator_config_from_contract(attempts, node, epoch, epoch_length).await
         {
             break validators;
         }
@@ -748,12 +760,24 @@ async fn read_validator_config_with_retry<C: commonware_runtime::Clock>(
     }
 }
 
-/// Reads the validator config `at_height` from a smart contract.
-#[instrument(skip_all, fields(attempt = _attempt, at_height), err)]
+/// Reads the validator config of `epoch`.
+///
+/// The validator config for `epoch` is always read from the last height of
+/// `epoch-1`.
+#[instrument(
+    skip_all,
+    fields(
+        attempt = _attempt,
+        for_epoch,
+        last_height_before = last_height_before_epoch(for_epoch, epoch_length),
+    ),
+    err
+)]
 async fn read_validator_config_from_contract(
     _attempt: u32,
     node: &TempoFullNode,
-    at_height: u64,
+    for_epoch: Epoch,
+    epoch_length: u64,
 ) -> eyre::Result<OrderedAssociated<PublicKey, DecodedValidator>> {
     use alloy_evm::EvmInternals;
     use reth_chainspec::EthChainSpec as _;
@@ -768,19 +792,20 @@ async fn read_validator_config_from_contract(
         validator_config::{IValidatorConfig, ValidatorConfig},
     };
 
+    let last_height = last_height_before_epoch(for_epoch, epoch_length);
     let block = node
         .provider
-        .block_by_number(at_height)
+        .block_by_number(last_height)
         .map_err(Into::<eyre::Report>::into)
         .and_then(|maybe| maybe.ok_or_eyre("execution layer returned empty block"))
-        .wrap_err_with(|| format!("failed reading block at height `{at_height}`"))?;
+        .wrap_err_with(|| format!("failed reading block at height `{last_height}`"))?;
 
     let db = State::builder()
         .with_database(StateProviderDatabase::new(
             node.provider
-                .state_by_block_id(at_height.into())
+                .state_by_block_id(last_height.into())
                 .wrap_err_with(|| {
-                    format!("failed to get state from node provider for height `{at_height}`")
+                    format!("failed to get state from node provider for height `{last_height}`")
                 })?,
         ))
         .build();
@@ -876,4 +901,10 @@ impl Read for EpochState {
             share,
         })
     }
+}
+
+fn last_height_before_epoch(epoch: Epoch, epoch_length: u64) -> u64 {
+    epoch
+        .checked_sub(1)
+        .map_or(0, |epoch| utils::last_block_in_epoch(epoch_length, epoch))
 }
