@@ -74,7 +74,7 @@ pub struct MaxTpsArgs {
     mnemonic: String,
 
     #[arg(short, long, default_value = "0")]
-    from_mnemonic_index: u64,
+    from_mnemonic_index: u32,
 
     /// Chain ID
     #[arg(long, default_value = "1337")]
@@ -135,12 +135,25 @@ impl MaxTpsArgs {
         let transactions = Arc::new(
             generate_transactions(
                 total_txs,
+<<<<<<< HEAD
                 self.accounts,
                 &self.mnemonic,
                 self.chain_id,
                 self.token_address,
                 &target_urls[0],
             )
+=======
+                num_accounts: self.accounts,
+                mnemonic: &self.mnemonic,
+                from_mnemonic_index: self.from_mnemonic_index,
+                chain_id: self.chain_id,
+                rpc_url: target_urls[0].clone(),
+                max_concurrent_requests: self.max_concurrent_requests,
+                tip20_weight,
+                place_order_weight,
+                swap_weight,
+            })
+>>>>>>> df8d432 (fix: index)
             .await
             .context("Failed to generate transactions")?,
         );
@@ -271,6 +284,7 @@ fn send_transactions(
     Ok(())
 }
 
+<<<<<<< HEAD
 async fn generate_transactions(
     total_txs: u64,
     num_accounts: u64,
@@ -281,6 +295,25 @@ async fn generate_transactions(
 ) -> eyre::Result<Vec<Vec<u8>>> {
     println!("Generating {num_accounts} accounts...");
     let signers: Vec<PrivateKeySigner> = (0..num_accounts as u32)
+=======
+async fn generate_transactions(input: GenerateTransactionsInput<'_>) -> eyre::Result<Vec<Vec<u8>>> {
+    let GenerateTransactionsInput {
+        total_txs,
+        num_accounts,
+        mnemonic,
+        from_mnemonic_index,
+        chain_id,
+        rpc_url,
+        max_concurrent_requests,
+        tip20_weight: transfer_weight,
+        place_order_weight: place_weight,
+        swap_weight,
+    } = input;
+    println!("Generating {num_accounts} accounts...");
+
+    let signers: Vec<PrivateKeySigner> = (from_mnemonic_index
+        ..(from_mnemonic_index + num_accounts as u32))
+>>>>>>> df8d432 (fix: index)
         .into_par_iter()
         .tqdm()
         .map(|i| -> eyre::Result<PrivateKeySigner> {
@@ -500,3 +533,57 @@ fn monitor_tps(tx_counter: Arc<AtomicU64>) -> thread::JoinHandle<()> {
         }
     })
 }
+<<<<<<< HEAD
+=======
+
+async fn await_receipts(
+    pending_txs: &mut Vec<PendingTransactionBuilder<Ethereum>>,
+    tx_count: &ProgressBar,
+    max_concurrent_requests: usize,
+) -> eyre::Result<()> {
+    let mut futures = FuturesUnordered::new();
+    for tx in pending_txs.drain(..) {
+        futures.push(tx.get_receipt());
+
+        if futures.len() >= max_concurrent_requests {
+            while let Some(fut) = futures.next().await {
+                let receipt = fut?;
+                tx_count.inc(1);
+                assert!(receipt.status());
+            }
+        }
+    }
+    while let Some(fut) = futures.next().await {
+        let receipt = fut?;
+        tx_count.inc(1);
+        assert!(receipt.status());
+    }
+
+    Ok(())
+}
+
+fn into_signed_encoded(
+    mut tx: impl SignableTransaction<Signature> + RlpEcdsaEncodableTx,
+    signer: PrivateKeySigner,
+) -> eyre::Result<Vec<u8>> {
+    let signature = signer
+        .sign_transaction_sync(&mut tx)
+        .map_err(|e| eyre::eyre!("Failed to sign transaction: {e}"))?;
+    let mut payload = Vec::new();
+    tx.into_signed(signature).eip2718_encode(&mut payload);
+    Ok(payload)
+}
+
+struct GenerateTransactionsInput<'input> {
+    total_txs: u64,
+    num_accounts: u64,
+    mnemonic: &'input str,
+    chain_id: u64,
+    rpc_url: Url,
+    from_mnemonic_index: u32,
+    max_concurrent_requests: usize,
+    tip20_weight: u64,
+    place_order_weight: u64,
+    swap_weight: u64,
+}
+>>>>>>> df8d432 (fix: index)
