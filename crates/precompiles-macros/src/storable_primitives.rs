@@ -428,7 +428,7 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
         // Helper module with compile-time constants
         mod #mod_ident {
             use super::*;
-            pub const ELEM_BYTES: usize = <#elem_type as StorableType>::LAYOUT.byte_count();
+            pub const ELEM_BYTES: usize = <#elem_type as StorableType>::LAYOUT.bytes();
             pub const ELEM_SLOTS: usize = 1; // For single-slot primitives
             pub const ARRAY_LEN: usize = #array_size;
             pub const SLOT_COUNT: usize = #slot_count;

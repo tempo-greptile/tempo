@@ -39,16 +39,16 @@ impl Layout {
     /// Full-slot types (`Bytes(32)` and all `Slots` variants) cannot be packed.
     pub const fn is_packable(&self) -> bool {
         match self {
-            Layout::Bytes(n) => *n < 32,
-            Layout::Slots(_) => false,
+            Self::Bytes(n) => *n < 32,
+            Self::Slots(_) => false,
         }
     }
 
     /// Returns the number of storage slots this type occupies.
-    pub const fn slot_count(&self) -> usize {
+    pub const fn slots(&self) -> usize {
         match self {
-            Layout::Bytes(_) => 1,
-            Layout::Slots(n) => *n,
+            Self::Bytes(_) => 1,
+            Self::Slots(n) => *n,
         }
     }
 
@@ -56,13 +56,12 @@ impl Layout {
     ///
     /// For `Bytes(n)`, returns n.
     /// For `Slots(n)`, returns n * 32 (each slot is 32 bytes).
-    pub const fn byte_count(&self) -> usize {
+    pub const fn bytes(&self) -> usize {
         match self {
-            Layout::Bytes(n) => *n,
-            Layout::Slots(n) => {
-                // Compute n * 32 using repeated addition for const compatibiliy
-                let mut result = 0;
-                let mut i = 0;
+            Self::Bytes(n) => *n,
+            Self::Slots(n) => {
+                // Compute n * 32 using repeated addition for const compatibility
+                let (mut i, mut result) = (0, 0);
                 while i < *n {
                     result += 32;
                     i += 1;

@@ -489,7 +489,7 @@ fn gen_packing_constants_for_slots_module(
         let byte_count_expr = match &allocated.kind {
             FieldKind::Mapping { .. } | FieldKind::NestedMapping { .. } => quote! { 32 },
             _ if is_dynamic_type(field_ty) => quote! { 32 },
-            _ => quote! { <#field_ty as crate::storage::StorableType>::LAYOUT.byte_count() },
+            _ => quote! { <#field_ty as crate::storage::StorableType>::LAYOUT.bytes() },
         };
 
         constants.extend(quote! {

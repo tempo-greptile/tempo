@@ -518,7 +518,7 @@ mod tests {
         ];
 
         // Verify LAYOUT and SLOT_COUNT
-        assert_eq!(<[u8; 32] as StorableType>::LAYOUT.byte_count(), 32);
+        assert_eq!(<[u8; 32] as StorableType>::LAYOUT.bytes(), 32);
         assert_eq!(<[u8; 32] as Storable<1>>::SLOT_COUNT, 1);
 
         // Store and load
@@ -666,7 +666,7 @@ mod tests {
         ];
 
         // Verify SLOT_COUNT: 8 slots (one per inner array)
-        assert_eq!(<[[u8; 4]; 8] as StorableType>::LAYOUT.byte_count(), 256); // 8 slots × 32 bytes
+        assert_eq!(<[[u8; 4]; 8] as StorableType>::LAYOUT.bytes(), 256); // 8 slots × 32 bytes
         assert_eq!(<[[u8; 4]; 8] as Storable<8>>::SLOT_COUNT, 8);
 
         // Store and load
@@ -709,7 +709,7 @@ mod tests {
         ];
 
         // Verify SLOT_COUNT: 8 slots (one per inner array)
-        assert_eq!(<[[u16; 2]; 8] as StorableType>::LAYOUT.byte_count(), 256); // 8 slots × 32 bytes
+        assert_eq!(<[[u16; 2]; 8] as StorableType>::LAYOUT.bytes(), 256); // 8 slots × 32 bytes
         assert_eq!(<[[u16; 2]; 8] as Storable<8>>::SLOT_COUNT, 8);
 
         // Store and load

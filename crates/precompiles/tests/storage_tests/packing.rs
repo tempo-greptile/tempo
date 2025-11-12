@@ -163,37 +163,37 @@ struct ExactFit {
 fn test_slot_and_byte_counts() {
     // Rule verification
     assert_eq!(Rule1Test::SLOT_COUNT, 2);
-    assert_eq!(Rule1Test::LAYOUT.byte_count(), 64);
+    assert_eq!(Rule1Test::LAYOUT.bytes(), 64);
 
     assert_eq!(Rule2Test::SLOT_COUNT, 1);
-    assert_eq!(Rule2Test::LAYOUT.byte_count(), 32);
+    assert_eq!(Rule2Test::LAYOUT.bytes(), 32);
 
     assert_eq!(Rule3TestFull::SLOT_COUNT, 2);
-    assert_eq!(Rule3TestFull::LAYOUT.byte_count(), 64);
+    assert_eq!(Rule3TestFull::LAYOUT.bytes(), 64);
 
     assert_eq!(Rule3TestPartial::SLOT_COUNT, 2);
-    assert_eq!(Rule3TestPartial::LAYOUT.byte_count(), 64);
+    assert_eq!(Rule3TestPartial::LAYOUT.bytes(), 64);
 
     assert_eq!(Rule4Test::SLOT_COUNT, 3);
-    assert_eq!(Rule4Test::LAYOUT.byte_count(), 96);
+    assert_eq!(Rule4Test::LAYOUT.bytes(), 96);
 
     // Basic packed types
     assert_eq!(PackedTwo::SLOT_COUNT, 1);
-    assert_eq!(PackedTwo::LAYOUT.byte_count(), 32);
+    assert_eq!(PackedTwo::LAYOUT.bytes(), 32);
     assert_eq!(PackedThree::SLOT_COUNT, 1);
-    assert_eq!(PackedThree::LAYOUT.byte_count(), 32);
+    assert_eq!(PackedThree::LAYOUT.bytes(), 32);
 
     // Partially packed types
     assert_eq!(PartiallyPacked::SLOT_COUNT, 3);
-    assert_eq!(PartiallyPacked::LAYOUT.byte_count(), 96);
+    assert_eq!(PartiallyPacked::LAYOUT.bytes(), 96);
 
     // Nested structs
     assert_eq!(WithNestedStruct::SLOT_COUNT, 4);
-    assert_eq!(WithNestedStruct::LAYOUT.byte_count(), 128);
+    assert_eq!(WithNestedStruct::LAYOUT.bytes(), 128);
 
     // Multi-level nesting
     assert_eq!(DeepNested::SLOT_COUNT, 6);
-    assert_eq!(DeepNested::LAYOUT.byte_count(), 192);
+    assert_eq!(DeepNested::LAYOUT.bytes(), 192);
 }
 
 proptest! {

@@ -346,7 +346,7 @@ fn gen_packing_module(fields: &[(&Ident, &Type)], mod_ident: &Ident) -> TokenStr
     let field_byte_sizes = fields.iter().map(|(name, ty)| {
         let bytes_const = PackingField::new(name).bytes_const;
         quote! {
-            pub const #bytes_const: usize = <#ty as crate::storage::StorableType>::LAYOUT.byte_count();
+            pub const #bytes_const: usize = <#ty as crate::storage::StorableType>::LAYOUT.bytes();
         }
     });
 
