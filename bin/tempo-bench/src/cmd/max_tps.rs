@@ -645,38 +645,20 @@ fn monitor_tps(tx_counter: Arc<AtomicU64>, target_count: u64) -> thread::JoinHan
     })
 }
 
-async fn await_receipts(
-    pending_txs: &mut Vec<PendingTransactionBuilder<Ethereum>>,
-    max_concurrent_requests: usize,
-) -> eyre::Result<()> {
-    let mut futures = Vec::new();
-    for tx in pending_txs.drain(..) {
-        futures.push(tx.get_receipt());
-    }
-    let mut iter = stream::iter(futures).buffer_unordered(max_concurrent_requests);
-    while let Some(fut) = iter.next().await {
-        let receipt = fut?;
-        assert!(receipt.status());
-    }
-
-    Ok(())
-}
-
 async fn join_all(
     futures: impl IntoIterator<
         Item: Future<Output = alloy::contract::Result<PendingTransactionBuilder<Ethereum>>>,
     >,
-    receipts: &mut Vec<PendingTransactionBuilder<Ethereum>>,
     tx_count: &ProgressBar,
     max_concurrent_requests: usize,
 ) -> eyre::Result<()> {
-    let mut iter = stream::iter(futures).buffer_unordered(max_concurrent_requests);
-    while let Some(next) = iter.next().await {
+    let mut iter = stream::iter(futures)
+        .map(|receipt| async { eyre::Ok(receipt.await?.get_receipt().await?) })
+        .buffer_unordered(max_concurrent_requests);
+    while let Some(receipt) = iter.next().await {
         tx_count.inc(1);
-        receipts.push(next?);
+        assert!(receipt?.status());
     }
-
-    await_receipts(receipts, max_concurrent_requests).await?;
 
     Ok(())
 }

@@ -62,7 +62,6 @@ pub(super) async fn setup(
     let first_order_amount = 1000000000000u128;
 
     let user_tokens = [*base1.address(), *base2.address()];
-    let mut receipts = Vec::new();
     let tokens = [&base1, &base2, &quote];
     let mut futures = Vec::new();
 
@@ -85,7 +84,7 @@ pub(super) async fn setup(
         }
     }
 
-    join_all(futures, &mut receipts, &tx_count, max_concurrent_requests).await?;
+    join_all(futures, &tx_count, max_concurrent_requests).await?;
 
     let mut futures = Vec::new();
 
@@ -113,7 +112,7 @@ pub(super) async fn setup(
         }
     }
 
-    join_all(futures, &mut receipts, &tx_count, max_concurrent_requests).await?;
+    join_all(futures, &tx_count, max_concurrent_requests).await?;
 
     let tick_over = price_to_tick(100010);
     let tick_under = price_to_tick(99990);
@@ -134,7 +133,7 @@ pub(super) async fn setup(
         }
     }
 
-    join_all(futures, &mut receipts, &tx_count, max_concurrent_requests).await?;
+    join_all(futures, &tx_count, max_concurrent_requests).await?;
 
     let exchange = IStablecoinExchange::new(STABLECOIN_EXCHANGE_ADDRESS, provider.clone());
 
