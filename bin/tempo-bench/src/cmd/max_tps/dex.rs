@@ -46,6 +46,9 @@ pub(super) async fn setup(
             + user_tokens_count * signers_count,
     );
     tx_count.tick();
+    let rate_limiter = Arc::new(RateLimiter::direct(Quota::per_second(
+        NonZeroU32::new(max_concurrent_requests as u32).unwrap(),
+    )));
 
     // Setup HTTP provider with a test wallet
     let wallet = MnemonicBuilder::from_phrase(mnemonic).build()?;
@@ -69,30 +72,22 @@ pub(super) async fn setup(
 
     for token in user_tokens {
         let exchange = IStablecoinExchange::new(STABLECOIN_EXCHANGE_ADDRESS, provider.clone());
+        let rate_limiter = rate_limiter.clone();
 
-        futures.push(
-            Box::pin(async move { exchange.createPair(token).send().await })
-                as Pin<Box<dyn Future<Output = _>>>,
-        );
-        if futures.len() >= max_concurrent_requests {
-            while let Some(next) = futures.next().await {
-                receipts.push(next?);
-            }
-        }
+        futures.push(Box::pin(async move {
+            rate_limiter.until_ready().await;
+            exchange.createPair(token).send().await
+        }) as Pin<Box<dyn Future<Output = _>>>);
     }
 
     for signer in signers.iter() {
         for token in &tokens {
             let recipient = signer.address();
-            futures.push(
-                Box::pin(async move { token.mint(recipient, mint_amount).send().await })
-                    as Pin<Box<dyn Future<Output = _>>>,
-            );
-            if futures.len() >= max_concurrent_requests {
-                while let Some(next) = futures.next().await {
-                    receipts.push(next?);
-                }
-            }
+            let rate_limiter = rate_limiter.clone();
+            futures.push(Box::pin(async move {
+                rate_limiter.until_ready().await;
+                token.mint(recipient, mint_amount).send().await
+            }) as Pin<Box<dyn Future<Output = _>>>);
         }
     }
 
@@ -112,17 +107,14 @@ pub(super) async fn setup(
         let tokens = [base1, base2, quote];
 
         for token in tokens {
+            let rate_limiter = rate_limiter.clone();
             futures.push(Box::pin(async move {
+                rate_limiter.until_ready().await;
                 token
                     .approve(STABLECOIN_EXCHANGE_ADDRESS, U256::MAX)
                     .send()
                     .await
             }) as Pin<Box<dyn Future<Output = _>>>);
-            if futures.len() >= max_concurrent_requests {
-                while let Some(next) = futures.next().await {
-                    receipts.push(next?);
-                }
-            }
         }
     }
 
@@ -143,18 +135,15 @@ pub(super) async fn setup(
         for token in user_tokens {
             let exchange =
                 IStablecoinExchange::new(STABLECOIN_EXCHANGE_ADDRESS, account_provider.clone());
+            let rate_limiter = rate_limiter.clone();
 
             futures.push(Box::pin(async move {
+                rate_limiter.until_ready().await;
                 exchange
                     .placeFlip(token, first_order_amount, true, tick_under, tick_over)
                     .send()
                     .await
             }) as Pin<Box<dyn Future<Output = _>>>);
-            if futures.len() >= max_concurrent_requests {
-                while let Some(next) = futures.next().await {
-                    receipts.push(next?);
-                }
-            }
         }
     }
 
