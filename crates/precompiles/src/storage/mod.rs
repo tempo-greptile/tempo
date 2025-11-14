@@ -7,8 +7,6 @@ pub use types::*;
 
 pub mod packing;
 pub use packing::FieldLocation;
-
-// TODO(rusowsky): remove once precompiles don't rely it (directly) anymore
 pub use types::mapping as slots;
 
 // Re-export extension traits for convenience

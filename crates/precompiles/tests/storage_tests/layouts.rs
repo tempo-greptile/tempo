@@ -4,6 +4,7 @@
 //! including auto-assignment, explicit slots, base_slot, and string literal slots.
 
 use super::*;
+use tempo_precompiles::storage::Mapping;
 
 #[test]
 fn test_mixed_slot_allocation() {

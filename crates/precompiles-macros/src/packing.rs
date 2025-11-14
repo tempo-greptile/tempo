@@ -30,13 +30,13 @@ impl PackingConstants {
         Ident::new(&format!("{}_SLOT", self.0), span)
     }
 
-    /// The `OFFSET` constant identifier
+    /// The `_OFFSET` constant identifier
     pub(crate) fn offset(&self) -> Ident {
         let span = proc_macro2::Span::call_site();
         Ident::new(&format!("{}_OFFSET", self.0), span)
     }
 
-    /// The `BYTES` constant identifier
+    /// The `_BYTES` constant identifier
     pub(crate) fn bytes(&self) -> Ident {
         let span = proc_macro2::Span::call_site();
         Ident::new(&format!("{}_BYTES", self.0), span)
@@ -88,28 +88,16 @@ pub(crate) struct LayoutField<'a> {
 /// Helper trait to extract field information needed for layout IR construction.
 ///
 /// This allows `allocate_slots` to work with different field types from
-/// different macros (e.g., `FieldInfo` from `#[contract]`, or tuples from `#[derive(Storable)]`).
-pub(crate) trait FieldInfoExt {
-    fn field_name(&self) -> &Ident;
-    fn field_type(&self) -> &Type;
-    fn manual_slot(&self) -> Option<U256>;
-    fn base_slot_attr(&self) -> Option<U256>;
+/// different macros (`FieldInfo` from `#[contract]`, or tuples from `#[derive(Storable)]`).
+pub(crate) trait AllocInfoExt {
+    fn alloc_info(&self) -> (&Ident, &Type, Option<U256>, Option<U256>);
 }
 
 /// Implementation for simple (name, type) tuples used by the `Storable` derive macro.
 /// These fields never have manual slot assignments.
-impl<'a> FieldInfoExt for (&'a Ident, &'a Type) {
-    fn field_name(&self) -> &Ident {
-        self.0
-    }
-    fn field_type(&self) -> &Type {
-        self.1
-    }
-    fn manual_slot(&self) -> Option<U256> {
-        None
-    }
-    fn base_slot_attr(&self) -> Option<U256> {
-        None
+impl<'a> AllocInfoExt for (&'a Ident, &'a Type) {
+    fn alloc_info(&self) -> (&Ident, &Type, Option<U256>, Option<U256>) {
+        (self.0, self.1, None, None)
     }
 }
 
@@ -124,29 +112,27 @@ impl<'a> FieldInfoExt for (&'a Ident, &'a Type) {
 /// which are manually assigned, etc.) using the `SlotAssignment` enum.
 pub(crate) fn allocate_slots<'a, F>(fields: &'a [F]) -> syn::Result<Vec<LayoutField<'a>>>
 where
-    F: FieldInfoExt,
+    F: AllocInfoExt,
 {
     let mut result = Vec::with_capacity(fields.len());
     let mut last_auto_slot = U256::ZERO;
 
     for (index, field) in fields.iter().enumerate() {
-        let name = field.field_name();
-        let ty = field.field_type();
-        let manual_slot = field.manual_slot();
-        let base_slot_attr = field.base_slot_attr();
+        let (name, ty, manual_slot, base_slot) = field.alloc_info();
         let kind = classify_field_type(ty)?;
 
-        // Determine slot assignment
+        // Explicit fixed slot, doesn't affect auto-assignment chain
         let assigned_slot = if let Some(explicit) = manual_slot {
-            // Explicit fixed slot, doesn't affect auto-assignment chain
             SlotAssignment::Manual(explicit)
-        } else if let Some(base) = base_slot_attr {
-            // Explicit base slot, resets auto-assignment chain
+        }
+        // Explicit base slot, resets auto-assignment chain
+        else if let Some(base) = base_slot {
             let assignment = SlotAssignment::Manual(base);
             last_auto_slot = base + U256::ONE;
             assignment
-        } else {
-            // Auto-assignment with packing support
+        }
+        // Auto-assignment with packing support
+        else {
             let base_slot = if index == 0 {
                 let slot = last_auto_slot;
                 last_auto_slot += U256::ONE;
@@ -190,14 +176,12 @@ pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>]) -> TokenStream {
     let mut constants = TokenStream::new();
 
     for field in fields {
+        let ty = field.ty;
         let consts = PackingConstants::new(field.name);
         let (slot_const, offset_const, bytes_const) = consts.into_tuple();
 
         // Generate byte count constants for each field
-        let byte_count_expr = gen_byte_count_expr(field.ty, field.kind.is_mapping());
-        constants.extend(quote! {
-            pub const #bytes_const: usize = #byte_count_expr;
-        });
+        let bytes_expr = quote! { <#ty as crate::storage::StorableType>::BYTES };
 
         // Generate slot and offset constants for each field
         let (slot_expr, offset_expr) = match &field.assigned_slot {
@@ -205,16 +189,14 @@ pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>]) -> TokenStream {
             SlotAssignment::Manual(manual_slot) => {
                 let hex_value = format!("{manual_slot}_U256");
                 let slot_lit = syn::LitInt::new(&hex_value, proc_macro2::Span::call_site());
-                let slot_expr =
-                    quote! { ::alloy::primitives::U256 = ::alloy::primitives::uint!(#slot_lit) };
+                let slot_expr = quote! { ::alloy::primitives::uint!(#slot_lit) };
                 (slot_expr, quote! { 0 })
             }
             // Auto-assignment computes slot/offset using const expressions
             SlotAssignment::Auto { base_slot, .. } => {
                 // First field always starts at slot 0, offset 0
                 if field.index == 0 {
-                    let slot_expr =
-                        quote! { ::alloy::primitives::U256 = ::alloy::primitives::U256::ZERO };
+                    let slot_expr = quote! { ::alloy::primitives::U256::ZERO };
                     (slot_expr, quote! { 0 })
                 }
                 // Subsequent fields compute their slots based on the previous field
@@ -223,23 +205,19 @@ pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>]) -> TokenStream {
                     if matches!(prev_field.assigned_slot, SlotAssignment::Manual(_)) {
                         // If previous was manual and current is auto, use base slot directly
                         let limbs = *base_slot.as_limbs();
-                        let slot_expr = quote! { ::alloy::primitives::U256 = ::alloy::primitives::U256::from_limbs([#(#limbs),*]) };
+                        let slot_expr =
+                            quote! { ::alloy::primitives::U256::from_limbs([#(#limbs),*]) };
                         (slot_expr, quote! { 0 })
                     } else {
                         // If previous was also auto, use packing logic
                         let (prev_slot, prev_offset, _) =
                             PackingConstants::new(prev_field.name).into_tuple();
-
-                        let (slot_expr_inner, offset_expr) = gen_slot_packing_logic(
+                        let (slot_expr, offset_expr) = gen_slot_packing_logic(
                             prev_field.ty,
                             field.ty,
                             quote! { #prev_slot },
                             quote! { #prev_offset },
-                            prev_field.kind.is_mapping(),
-                            field.kind.is_mapping(),
                         );
-
-                        let slot_expr = quote! { ::alloy::primitives::U256 = #slot_expr_inner };
 
                         (slot_expr, offset_expr)
                     }
@@ -249,7 +227,8 @@ pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>]) -> TokenStream {
 
         // Generate slot constant without suffix (U256) and offset constant (usize)
         constants.extend(quote! {
-            pub const #slot_const: #slot_expr;
+            pub const #slot_const: ::alloy::primitives::U256 = #slot_expr;
+            pub const #bytes_const: usize = #bytes_expr;
             pub const #offset_const: usize = #offset_expr;
         });
     }
@@ -283,20 +262,6 @@ pub(crate) fn classify_field_type(ty: &Type) -> syn::Result<FieldKind<'_>> {
     Ok(FieldKind::Slot(ty))
 }
 
-/// Generate byte count expression for a field type.
-///
-/// Returns a const expression that evaluates to the byte size of the type.
-/// For mapping types, returns `32` directly to avoid type resolution issues.
-pub(crate) fn gen_byte_count_expr(ty: &Type, is_mapping: bool) -> TokenStream {
-    if is_mapping {
-        // Mappings: hardcode 32 bytes to avoid type resolution issues
-        // TODO(rusowsky): remove once `SlotId` is dropped
-        quote! { 32 }
-    } else {
-        quote! { <#ty as crate::storage::StorableType>::BYTES }
-    }
-}
-
 /// Generate slot packing decision logic.
 ///
 /// This function generates const expressions that determine whether two consecutive
@@ -308,31 +273,11 @@ pub(crate) fn gen_slot_packing_logic(
     curr_ty: &Type,
     prev_slot_expr: TokenStream,
     prev_offset_expr: TokenStream,
-    is_prev_mapping: bool,
-    is_curr_mapping: bool,
 ) -> (TokenStream, TokenStream) {
     // Helper for converting SLOTS to U256
     let prev_layout_slots = quote! {
         ::alloy::primitives::U256::from_limbs([<#prev_ty as crate::storage::StorableType>::SLOTS as u64, 0, 0, 0])
     };
-
-    // If previous field is a mapping, current field starts on next slot
-    // TODO(rusowsky): Necessary to avoid type resolution issues. Remove once `SlotId` is dropped
-    if is_prev_mapping {
-        let slot_expr = quote! {
-            #prev_slot_expr.checked_add(::alloy::primitives::U256::ONE).expect("slot overflow")
-        };
-        return (slot_expr, quote! { 0 });
-    }
-
-    // If current field is a mapping, it must start on a new slot
-    // TODO(rusowsky): Necessary to avoid type resolution issues. Remove once `SlotId` is dropped
-    if is_curr_mapping {
-        let slot_expr = quote! {{
-            #prev_slot_expr.checked_add(#prev_layout_slots).expect("slot overflow")
-        }};
-        return (slot_expr, quote! { 0 });
-    }
 
     // Compute packing decision at compile-time
     let can_pack_expr = quote! {
@@ -377,7 +322,6 @@ pub(crate) fn gen_layout_ctx_expr(
     }
 }
 
-
 /// Generate collision detection debug assertions for a field against all other fields.
 ///
 /// This function generates runtime checks that verify storage slots don't overlap.
@@ -388,12 +332,8 @@ pub(crate) fn gen_collision_check_fn(
     field: &LayoutField<'_>,
     all_fields: &[LayoutField<'_>],
 ) -> Option<(Ident, TokenStream)> {
-    fn gen_slot_count_expr(kind: &FieldKind<'_>, ty: &Type) -> TokenStream {
-        if kind.is_mapping() {
-            quote! { ::alloy::primitives::U256::ONE }
-        } else {
-            quote! { ::alloy::primitives::U256::from_limbs([<#ty as crate::storage::StorableType>::SLOTS as u64, 0, 0, 0]) }
-        }
+    fn gen_slot_count_expr(ty: &Type) -> TokenStream {
+        quote! { ::alloy::primitives::U256::from_limbs([<#ty as crate::storage::StorableType>::SLOTS as u64, 0, 0, 0]) }
     }
 
     // Only check explicit slot assignments against other fields
@@ -414,8 +354,8 @@ pub(crate) fn gen_collision_check_fn(
             let other_name = other_field.name;
 
             // Generate slot count expressions
-            let current_count_expr = gen_slot_count_expr(&field.kind, field.ty);
-            let other_count_expr = gen_slot_count_expr(&other_field.kind, other_field.ty);
+            let current_count_expr = gen_slot_count_expr(field.ty);
+            let other_count_expr = gen_slot_count_expr(other_field.ty);
 
             // Generate runtime assertion that checks for overlap
             checks.extend(quote! {

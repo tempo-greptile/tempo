@@ -87,21 +87,9 @@ struct FieldInfo {
     base_slot: Option<U256>,
 }
 
-impl packing::FieldInfoExt for FieldInfo {
-    fn field_name(&self) -> &Ident {
-        &self.name
-    }
-
-    fn field_type(&self) -> &Type {
-        &self.ty
-    }
-
-    fn manual_slot(&self) -> Option<U256> {
-        self.slot
-    }
-
-    fn base_slot_attr(&self) -> Option<U256> {
-        self.base_slot
+impl packing::AllocInfoExt for FieldInfo {
+    fn alloc_info(&self) -> (&Ident, &Type, Option<U256>, Option<U256>) {
+        (&self.name, &self.ty, self.slot, self.base_slot)
     }
 }
 
@@ -118,15 +106,6 @@ enum FieldKind<'a> {
         key2: &'a Type,
         value: &'a Type,
     },
-}
-
-impl FieldKind<'_> {
-    pub(crate) fn is_mapping(&self) -> bool {
-        matches!(
-            self,
-            FieldKind::Mapping { .. } | FieldKind::NestedMapping { .. }
-        )
-    }
 }
 
 fn parse_fields(input: DeriveInput) -> syn::Result<Vec<FieldInfo>> {

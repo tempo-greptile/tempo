@@ -19,7 +19,7 @@ use crate::{
     error::{Result, TempoPrecompileError},
     linking_usd::LinkingUSD,
     stablecoin_exchange::orderbook::compute_book_key,
-    storage::{PrecompileStorageProvider, Slot, VecSlotExt},
+    storage::{Mapping, PrecompileStorageProvider, Slot, VecSlotExt},
     tip20::{ITIP20, TIP20Token, validate_usd_currency},
 };
 use alloy::primitives::{Address, B256, Bytes, IntoLogData, U256};
@@ -44,7 +44,7 @@ pub struct StablecoinExchange {
     balances: Mapping<Address, Mapping<Address, u128>>,
     active_order_id: u128,
     pending_order_id: u128,
-    book_keys: Vec<B256>, // TODO(rusowsky): make sure this is in the correct slot
+    book_keys: Vec<B256>,
 }
 
 /// Helper type to easily interact with the `stream_ending_at` array
@@ -362,8 +362,6 @@ impl<'a, S: PrecompileStorageProvider> StablecoinExchange<'a, S> {
 
         Ok(book_key)
     }
-
-    // TODO(rusowsky): continue implementing below
 
     /// Place a limit order on the orderbook
     ///
