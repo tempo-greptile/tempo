@@ -70,6 +70,15 @@ pub(crate) enum SlotAssignment {
     },
 }
 
+impl SlotAssignment {
+    pub(crate) fn ref_slot(&self) -> &U256 {
+        match self {
+            Self::Manual(slot) => slot,
+            Self::Auto { base_slot } => base_slot,
+        }
+    }
+}
+
 /// A single field in the storage layout with computed slot information.
 #[derive(Debug)]
 pub(crate) struct LayoutField<'a> {
@@ -81,8 +90,6 @@ pub(crate) struct LayoutField<'a> {
     pub kind: FieldKind<'a>,
     /// The assigned storage slot for this field (or base for const-eval chain)
     pub assigned_slot: SlotAssignment,
-    /// Original field index in the struct
-    pub index: usize,
 }
 
 /// Helper trait to extract field information needed for layout IR construction.
@@ -127,9 +134,9 @@ where
     F: FieldInfoExt,
 {
     let mut result = Vec::with_capacity(fields.len());
-    let mut last_auto_slot = U256::ZERO;
+    let mut current_base_slot = U256::ZERO;
 
-    for (index, field) in fields.iter().enumerate() {
+    for field in fields.iter() {
         let name = field.field_name();
         let ty = field.field_type();
         let manual_slot = field.manual_slot();
@@ -140,33 +147,16 @@ where
         let assigned_slot = if let Some(explicit) = manual_slot {
             // Explicit fixed slot, doesn't affect auto-assignment chain
             SlotAssignment::Manual(explicit)
-        } else if let Some(base) = base_slot_attr {
+        } else if let Some(new_base) = base_slot_attr {
             // Explicit base slot, resets auto-assignment chain
-            let assignment = SlotAssignment::Manual(base);
-            last_auto_slot = base + U256::ONE;
-            assignment
+            current_base_slot = new_base;
+            SlotAssignment::Auto {
+                base_slot: new_base,
+            }
         } else {
-            // Auto-assignment with packing support
-            let base_slot = if index == 0 {
-                let slot = last_auto_slot;
-                last_auto_slot += U256::ONE;
-                slot
-            } else {
-                let prev: &LayoutField<'_> = &result[index - 1];
-
-                // If previous also was auto-assigned, reuse base slot (becomes packing candidate)
-                if let SlotAssignment::Auto { base_slot } = &prev.assigned_slot {
-                    *base_slot
-                }
-                // Otherwise, start new slot
-                else {
-                    let slot = last_auto_slot;
-                    last_auto_slot += U256::ONE;
-                    slot
-                }
-            };
-
-            SlotAssignment::Auto { base_slot }
+            SlotAssignment::Auto {
+                base_slot: current_base_slot,
+            }
         };
 
         result.push(LayoutField {
@@ -174,7 +164,6 @@ where
             ty,
             kind,
             assigned_slot,
-            index,
         });
     }
 
@@ -188,6 +177,7 @@ where
 /// Slot constants (`<FIELD>`) are generated as `U256` types, while offset and bytes constants use `usize`.
 pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>]) -> TokenStream {
     let mut constants = TokenStream::new();
+    let mut last_auto: Option<&LayoutField<'_>> = None;
 
     for field in fields {
         let consts = PackingConstants::new(field.name);
@@ -211,39 +201,44 @@ pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>]) -> TokenStream {
             }
             // Auto-assignment computes slot/offset using const expressions
             SlotAssignment::Auto { base_slot, .. } => {
-                // First field always starts at slot 0, offset 0
-                if field.index == 0 {
-                    let slot_expr =
-                        quote! { ::alloy::primitives::U256 = ::alloy::primitives::U256::ZERO };
-                    (slot_expr, quote! { 0 })
-                }
-                // Subsequent fields compute their slots based on the previous field
-                else {
-                    let prev_field = &fields[field.index - 1];
-                    if matches!(prev_field.assigned_slot, SlotAssignment::Manual(_)) {
-                        // If previous was manual and current is auto, use base slot directly
-                        let limbs = *base_slot.as_limbs();
-                        let slot_expr = quote! { ::alloy::primitives::U256 = ::alloy::primitives::U256::from_limbs([#(#limbs),*]) };
-                        (slot_expr, quote! { 0 })
-                    } else {
-                        // If previous was also auto, use packing logic
+                let output = if let Some(last_auto) = last_auto {
+                    // Fields that share the same base compute their slots based on the previous field
+                    if last_auto.assigned_slot.ref_slot() == field.assigned_slot.ref_slot() {
                         let (prev_slot, prev_offset, _) =
-                            PackingConstants::new(prev_field.name).into_tuple();
-
+                            PackingConstants::new(last_auto.name).into_tuple();
                         let (slot_expr_inner, offset_expr) = gen_slot_packing_logic(
-                            prev_field.ty,
+                            last_auto.ty,
                             field.ty,
                             quote! { #prev_slot },
                             quote! { #prev_offset },
-                            prev_field.kind.is_mapping(),
+                            last_auto.kind.is_mapping(),
                             field.kind.is_mapping(),
                         );
 
-                        let slot_expr = quote! { ::alloy::primitives::U256 = #slot_expr_inner };
-
-                        (slot_expr, offset_expr)
+                        (
+                            quote! { ::alloy::primitives::U256 = #slot_expr_inner },
+                            offset_expr,
+                        )
+                    }
+                    // If a new base is adopted, start from the base slot and offset 0
+                    else {
+                        let limbs = *base_slot.as_limbs();
+                        (
+                            quote! { ::alloy::primitives::U256 = ::alloy::primitives::U256::from_limbs([#(#limbs),*]) },
+                            quote! { 0 },
+                        )
                     }
                 }
+                // First field always starts at slot 0 and offset 0
+                else {
+                    (
+                        quote! { ::alloy::primitives::U256 = ::alloy::primitives::U256::ZERO },
+                        quote! { 0 },
+                    )
+                };
+                // update cache
+                last_auto = Some(field);
+                output
             }
         };
 
