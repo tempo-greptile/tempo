@@ -1,6 +1,6 @@
 use crate::{
     FieldKind,
-    packing::{self, LayoutField, PackingConstants, SlotAssignment, SlotType},
+    packing::{self, LayoutField, PackingConstants, SlotAssignment},
 };
 use quote::{format_ident, quote};
 use syn::{Ident, Visibility};
@@ -169,11 +169,9 @@ pub(crate) fn gen_getters_and_setters(
 /// Generate the `slots` module with constants and collision checks
 ///
 /// Returns the slots module containing only constants and collision detection functions
-pub(crate) fn gen_slots_module(
-    allocated_fields: &[LayoutField<'_>],
-) -> proc_macro2::TokenStream {
+pub(crate) fn gen_slots_module(allocated_fields: &[LayoutField<'_>]) -> proc_macro2::TokenStream {
     // Generate constants and collision check functions
-    let constants = packing::gen_constants_from_ir(allocated_fields, SlotType::U256);
+    let constants = packing::gen_constants_from_ir(allocated_fields);
     let collision_checks = gen_collision_checks(allocated_fields);
 
     quote! {

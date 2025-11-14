@@ -102,7 +102,7 @@ impl<'a, S: PrecompileStorageProvider> ValidatorConfig<'a, S> {
         let count = self.validator_count()?;
         let mut validators = Vec::new();
 
-        let validators_array = ValidatorsArray::new(slots::VALIDATORS_ARRAY_SLOT);
+        let validators_array = ValidatorsArray::new(slots::VALIDATORS_ARRAY);
         for i in 0..count {
             // Read validator address from the array at index i
             let validator_address = validators_array.read_at(self, i as usize)?;
@@ -173,7 +173,7 @@ impl<'a, S: PrecompileStorageProvider> ValidatorConfig<'a, S> {
         self.sstore_validators(call.newValidatorAddress, validator)?;
 
         // Add the validator public key to the validators array
-        ValidatorsArray::new(slots::VALIDATORS_ARRAY_SLOT).push(self, call.newValidatorAddress)?;
+        ValidatorsArray::new(slots::VALIDATORS_ARRAY).push(self, call.newValidatorAddress)?;
 
         // Increment the validator count
         self.sstore_validator_count(
@@ -206,7 +206,7 @@ impl<'a, S: PrecompileStorageProvider> ValidatorConfig<'a, S> {
             }
 
             // Update the validators array to point at the new validator address
-            ValidatorsArray::new(slots::VALIDATORS_ARRAY_SLOT).write_at(
+            ValidatorsArray::new(slots::VALIDATORS_ARRAY).write_at(
                 self,
                 old_validator.index as usize,
                 call.newValidatorAddress,

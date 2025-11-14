@@ -49,7 +49,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20RewardsRegistry<'a, S> {
     /// Add a token to the registry for a given stream end time
     pub fn add_stream(&mut self, token: Address, end_time: u128) -> Result<()> {
         let stream_key = keccak256((token, end_time).abi_encode());
-        let stream_ending_at = StreamEndingAt::new(slots::STREAMS_ENDING_AT_SLOT);
+        let stream_ending_at = StreamEndingAt::new(slots::STREAMS_ENDING_AT);
         let length = stream_ending_at.len(self, end_time)?;
 
         self.sstore_stream_index(stream_key, U256::from(length))?;
@@ -61,7 +61,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20RewardsRegistry<'a, S> {
         let stream_key = keccak256((token, end_time).abi_encode());
         let index = self.sload_stream_index(stream_key)?.to::<usize>();
 
-        let stream_ending_at = StreamEndingAt::new(slots::STREAMS_ENDING_AT_SLOT);
+        let stream_ending_at = StreamEndingAt::new(slots::STREAMS_ENDING_AT);
         let length = stream_ending_at.len(self, end_time)?;
         let last_index = length
             .checked_sub(1)

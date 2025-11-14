@@ -10,13 +10,6 @@ use syn::{Ident, Type};
 
 use crate::FieldKind;
 
-/// Configuration for slot type generation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SlotType {
-    U256,  // used by `contract` macro
-    Usize, // used by `Storable` derive
-}
-
 /// Helper for generating packing constant identifiers
 pub(crate) struct PackingConstants(String);
 
@@ -26,12 +19,13 @@ impl PackingConstants {
         Self(const_name(name))
     }
 
-    pub(crate) fn ident(&self) -> Ident {
+    /// The bare field name constant (U256 slot, used by `#[contract]` macro)
+    pub(crate) fn slot(&self) -> Ident {
         format_ident!("{}", &self.0)
     }
 
-    /// The `SLOT` constant identifier
-    pub(crate) fn slot(&self) -> Ident {
+    /// The `_SLOT` suffixed constant (usize slot, used by `Storable` macro)
+    pub(crate) fn slot_usize(&self) -> Ident {
         let span = proc_macro2::Span::call_site();
         Ident::new(&format!("{}_SLOT", self.0), span)
     }
@@ -48,9 +42,14 @@ impl PackingConstants {
         Ident::new(&format!("{}_BYTES", self.0), span)
     }
 
-    /// Returns all three constant identifiers as a tuple
+    /// Returns all three constant identifiers as a tuple (slot, offset, bytes)
     pub(crate) fn into_tuple(self) -> (Ident, Ident, Ident) {
         (self.slot(), self.offset(), self.bytes())
+    }
+
+    /// Returns all three constant identifiers as a tuple (slot_usize, offset, bytes)
+    pub(crate) fn into_tuple_usize(self) -> (Ident, Ident, Ident) {
+        (self.slot_usize(), self.offset(), self.bytes())
     }
 }
 
@@ -68,8 +67,6 @@ pub(crate) enum SlotAssignment {
     Auto {
         /// Base slot for packing decisions.
         base_slot: U256,
-        /// Whether this field is directly assigned to a slot (not a mapping).
-        direct_alloc: bool,
     },
 }
 
@@ -150,25 +147,15 @@ where
             assignment
         } else {
             // Auto-assignment with packing support
-            let is_primitive = kind.is_direct();
-
-            // Non-primitives always start a new slot
-            let base_slot = if index == 0 || !is_primitive {
+            let base_slot = if index == 0 {
                 let slot = last_auto_slot;
                 last_auto_slot += U256::ONE;
                 slot
-            }
-            // Otherwise, check if previous field was also primitive
-            else {
+            } else {
                 let prev: &LayoutField<'_> = &result[index - 1];
 
-                // If previous was also a primitive, reuse base slot (becomes packing candidate)
-                if let SlotAssignment::Auto {
-                    base_slot,
-                    direct_alloc: true,
-                } = &prev.assigned_slot
-                    && prev.kind.is_direct()
-                {
+                // If previous also was auto-assigned, reuse base slot (becomes packing candidate)
+                if let SlotAssignment::Auto { base_slot } = &prev.assigned_slot {
                     *base_slot
                 }
                 // Otherwise, start new slot
@@ -179,10 +166,7 @@ where
                 }
             };
 
-            SlotAssignment::Auto {
-                base_slot,
-                direct_alloc: is_primitive,
-            }
+            SlotAssignment::Auto { base_slot }
         };
 
         result.push(LayoutField {
@@ -199,17 +183,14 @@ where
 
 /// Generate packing constants from layout IR.
 ///
-/// This function generates compile-time constants (`<FIELD>_SLOT`, `<FIELD>_OFFSET`, `<FIELD>_BYTES`)
+/// This function generates compile-time constants (`<FIELD>`, `<FIELD>_OFFSET`, `<FIELD>_BYTES`)
 /// for slot assignments, offsets, and byte sizes based on the layout IR using field-name-based naming.
-pub(crate) fn gen_constants_from_ir(
-    fields: &[LayoutField<'_>],
-    slot_type: SlotType,
-) -> TokenStream {
+/// Slot constants (`<FIELD>`) are generated as `U256` types, while offset and bytes constants use `usize`.
+pub(crate) fn gen_constants_from_ir(fields: &[LayoutField<'_>]) -> TokenStream {
     let mut constants = TokenStream::new();
 
     for field in fields {
         let consts = PackingConstants::new(field.name);
-        let const_name = consts.ident();
         let (slot_const, offset_const, bytes_const) = consts.into_tuple();
 
         // Generate byte count constants for each field
@@ -222,29 +203,18 @@ pub(crate) fn gen_constants_from_ir(
         let (slot_expr, offset_expr) = match &field.assigned_slot {
             // Manual slot assignment always has offset 0
             SlotAssignment::Manual(manual_slot) => {
-                let slot_expr = match slot_type {
-                    SlotType::Usize => {
-                        let value = manual_slot.to::<usize>();
-                        quote! { usize = #value }
-                    }
-                    SlotType::U256 => {
-                        let hex_value = format!("{manual_slot}_U256");
-                        let slot_lit = syn::LitInt::new(&hex_value, proc_macro2::Span::call_site());
-                        quote! { ::alloy::primitives::U256 = ::alloy::primitives::uint!(#slot_lit) }
-                    }
-                };
+                let hex_value = format!("{manual_slot}_U256");
+                let slot_lit = syn::LitInt::new(&hex_value, proc_macro2::Span::call_site());
+                let slot_expr =
+                    quote! { ::alloy::primitives::U256 = ::alloy::primitives::uint!(#slot_lit) };
                 (slot_expr, quote! { 0 })
             }
             // Auto-assignment computes slot/offset using const expressions
             SlotAssignment::Auto { base_slot, .. } => {
                 // First field always starts at slot 0, offset 0
                 if field.index == 0 {
-                    let slot_expr = match slot_type {
-                        SlotType::Usize => quote! { usize = 0 },
-                        SlotType::U256 => {
-                            quote! { ::alloy::primitives::U256 = ::alloy::primitives::U256::ZERO }
-                        }
-                    };
+                    let slot_expr =
+                        quote! { ::alloy::primitives::U256 = ::alloy::primitives::U256::ZERO };
                     (slot_expr, quote! { 0 })
                 }
                 // Subsequent fields compute their slots based on the previous field
@@ -252,16 +222,8 @@ pub(crate) fn gen_constants_from_ir(
                     let prev_field = &fields[field.index - 1];
                     if matches!(prev_field.assigned_slot, SlotAssignment::Manual(_)) {
                         // If previous was manual and current is auto, use base slot directly
-                        let slot_expr = match slot_type {
-                            SlotType::Usize => {
-                                let value = base_slot.to::<usize>();
-                                quote! { usize = #value }
-                            }
-                            SlotType::U256 => {
-                                let limbs = *base_slot.as_limbs();
-                                quote! { ::alloy::primitives::U256 = ::alloy::primitives::U256::from_limbs([#(#limbs),*]) }
-                            }
-                        };
+                        let limbs = *base_slot.as_limbs();
+                        let slot_expr = quote! { ::alloy::primitives::U256 = ::alloy::primitives::U256::from_limbs([#(#limbs),*]) };
                         (slot_expr, quote! { 0 })
                     } else {
                         // If previous was also auto, use packing logic
@@ -273,17 +235,11 @@ pub(crate) fn gen_constants_from_ir(
                             field.ty,
                             quote! { #prev_slot },
                             quote! { #prev_offset },
-                            slot_type,
                             prev_field.kind.is_mapping(),
                             field.kind.is_mapping(),
                         );
 
-                        let slot_expr = match slot_type {
-                            SlotType::Usize => quote! { usize = #slot_expr_inner },
-                            SlotType::U256 => {
-                                quote! { ::alloy::primitives::U256 = #slot_expr_inner }
-                            }
-                        };
+                        let slot_expr = quote! { ::alloy::primitives::U256 = #slot_expr_inner };
 
                         (slot_expr, offset_expr)
                     }
@@ -291,13 +247,8 @@ pub(crate) fn gen_constants_from_ir(
             }
         };
 
-        let slot_const_without_suffix = match slot_type {
-            SlotType::U256 => quote! { pub const #const_name: #slot_expr; },
-            SlotType::Usize => quote! {},
-        };
-
+        // Generate slot constant without suffix (U256) and offset constant (usize)
         constants.extend(quote! {
-            #slot_const_without_suffix
             pub const #slot_const: #slot_expr;
             pub const #offset_const: usize = #offset_expr;
         });
@@ -342,7 +293,7 @@ pub(crate) fn gen_byte_count_expr(ty: &Type, is_mapping: bool) -> TokenStream {
         // TODO(rusowsky): remove once `SlotId` is dropped
         quote! { 32 }
     } else {
-        quote! { <#ty as crate::storage::StorableType>::LAYOUT.bytes() }
+        quote! { <#ty as crate::storage::StorableType>::BYTES }
     }
 }
 
@@ -350,82 +301,58 @@ pub(crate) fn gen_byte_count_expr(ty: &Type, is_mapping: bool) -> TokenStream {
 ///
 /// This function generates const expressions that determine whether two consecutive
 /// fields can be packed into the same storage slot, and if so, calculates the
-/// appropriate slot index and offset.
+/// appropriate slot index and offset. Slot expressions use U256 arithmetic,
+/// while offset expressions use usize.
 pub(crate) fn gen_slot_packing_logic(
     prev_ty: &Type,
     curr_ty: &Type,
     prev_slot_expr: TokenStream,
     prev_offset_expr: TokenStream,
-    slot_type: SlotType,
     is_prev_mapping: bool,
     is_curr_mapping: bool,
 ) -> (TokenStream, TokenStream) {
-    // Helper reused in several arms
-    let prev_layout_slots = match slot_type {
-        SlotType::Usize => quote! {  PREV_LAYOUT.slots() },
-        SlotType::U256 => {
-            quote! { ::alloy::primitives::U256::from_limbs([PREV_LAYOUT.slots() as u64, 0, 0, 0]) }
-        }
+    // Helper for converting SLOTS to U256
+    let prev_layout_slots = quote! {
+        ::alloy::primitives::U256::from_limbs([<#prev_ty as crate::storage::StorableType>::SLOTS as u64, 0, 0, 0])
     };
 
     // If previous field is a mapping, current field starts on next slot
+    // TODO(rusowsky): Necessary to avoid type resolution issues. Remove once `SlotId` is dropped
     if is_prev_mapping {
-        let slot_expr = match slot_type {
-            SlotType::Usize => quote! { #prev_slot_expr + 1 },
-            SlotType::U256 => {
-                quote! { #prev_slot_expr.checked_add(::alloy::primitives::U256::ONE).expect("slot overflow") }
-            }
+        let slot_expr = quote! {
+            #prev_slot_expr.checked_add(::alloy::primitives::U256::ONE).expect("slot overflow")
         };
         return (slot_expr, quote! { 0 });
     }
 
     // If current field is a mapping, it must start on a new slot
+    // TODO(rusowsky): Necessary to avoid type resolution issues. Remove once `SlotId` is dropped
     if is_curr_mapping {
-        let slot_expr = match slot_type {
-            SlotType::Usize => quote! {
-                {
-                    const PREV_LAYOUT: crate::storage::Layout = <#prev_ty as crate::storage::StorableType>::LAYOUT;
-                    #prev_slot_expr + #prev_layout_slots
-                }
-            },
-            SlotType::U256 => quote! {
-                {
-                    const PREV_LAYOUT: crate::storage::Layout = <#prev_ty as crate::storage::StorableType>::LAYOUT;
-                    #prev_slot_expr.checked_add(#prev_layout_slots).expect("slot overflow")
-                }
-            },
-        };
+        let slot_expr = quote! {{
+            #prev_slot_expr.checked_add(#prev_layout_slots).expect("slot overflow")
+        }};
         return (slot_expr, quote! { 0 });
     }
 
-    // Standard packing logic for non-mapping fields
+    // Compute packing decision at compile-time
     let can_pack_expr = quote! {
-        const PREV_LAYOUT: crate::storage::Layout = <#prev_ty as crate::storage::StorableType>::LAYOUT;
-        const CURR_LAYOUT: crate::storage::Layout = <#curr_ty as crate::storage::StorableType>::LAYOUT;
-
-        // Compute packing decision at compile-time
-        const PREV_END: usize = #prev_offset_expr + PREV_LAYOUT.bytes();
-        const CAN_PACK: bool = PREV_LAYOUT.is_packable() && CURR_LAYOUT.is_packable() && PREV_END + CURR_LAYOUT.bytes() <= 32;
+        #prev_offset_expr
+            + <#prev_ty as crate::storage::StorableType>::BYTES
+            + <#curr_ty as crate::storage::StorableType>::BYTES <= 32
     };
 
-    let slot_expr = quote! {
-        {
-            #can_pack_expr
-            if CAN_PACK { #prev_slot_expr } else { #prev_slot_expr.checked_add(#prev_layout_slots).expect("slot overflow") }
-        }
-    };
+    let slot_expr = quote! {{
+        if #can_pack_expr { #prev_slot_expr } else { #prev_slot_expr.checked_add(#prev_layout_slots).expect("slot overflow") }
+    }};
 
-    let offset_expr = quote! {
-        {
-            #can_pack_expr
-            if CAN_PACK { PREV_END } else { 0 }
-        }
-    };
+    let offset_expr = quote! {{
+        if #can_pack_expr { #prev_offset_expr + <#prev_ty as crate::storage::StorableType>::BYTES } else { 0 }
+    }};
 
     (slot_expr, offset_expr)
 }
 
-/// Generate a LayoutCtx expression for accessing a field.
+/// Generate a `LayoutCtx` expression for accessing a field.
 ///
 /// This helper unifies the logic for choosing between `LayoutCtx::Full` and
 /// `LayoutCtx::Packed` based on whether the field is manually assigned and
@@ -440,10 +367,8 @@ pub(crate) fn gen_layout_ctx_expr(
     } else {
         quote! {
             {
-                const IS_PACKABLE: bool = <#ty as crate::storage::StorableType>::LAYOUT.is_packable();
-                const OFFSET: usize = #offset_const_ref;
-                if IS_PACKABLE {
-                    crate::storage::LayoutCtx::Packed(OFFSET)
+                if <#ty as crate::storage::StorableType>::IS_PACKABLE {
+                    crate::storage::LayoutCtx::Packed(#offset_const_ref)
                 } else {
                     crate::storage::LayoutCtx::Full
                 }
@@ -467,7 +392,7 @@ pub(crate) fn gen_collision_check_fn(
         if kind.is_mapping() {
             quote! { ::alloy::primitives::U256::ONE }
         } else {
-            quote! { ::alloy::primitives::U256::from_limbs([<#ty as crate::storage::StorableType>::LAYOUT.slots() as u64, 0, 0, 0]) }
+            quote! { ::alloy::primitives::U256::from_limbs([<#ty as crate::storage::StorableType>::SLOTS as u64, 0, 0, 0]) }
         }
     }
 

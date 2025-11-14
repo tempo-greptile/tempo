@@ -51,8 +51,8 @@ where
 
         // Pack elements if necessary. Vec elements can't be split across slots.
         let data_start = calc_data_slot(base_slot);
-        if T::LAYOUT.bytes() <= 16 {
-            load_packed_elements(storage, data_start, length, T::LAYOUT.bytes())
+        if T::BYTES <= 16 {
+            load_packed_elements(storage, data_start, length, T::BYTES)
         } else {
             load_unpacked_elements(storage, data_start, length)
         }
@@ -75,8 +75,8 @@ where
 
         // Pack elements if necessary. Vec elements can't be split across slots.
         let data_start = calc_data_slot(base_slot);
-        if T::LAYOUT.bytes() <= 16 {
-            store_packed_elements(self, storage, data_start, T::LAYOUT.bytes())
+        if T::BYTES <= 16 {
+            store_packed_elements(self, storage, data_start, T::BYTES)
         } else {
             store_unpacked_elements(self, storage, data_start)
         }
@@ -97,9 +97,9 @@ where
         }
 
         let data_start = calc_data_slot(base_slot);
-        if T::LAYOUT.bytes() <= 16 {
+        if T::BYTES <= 16 {
             // Clear packed element slots. Vec elements can't be split across slots.
-            let slot_count = calc_packed_slot_count(length, T::LAYOUT.bytes());
+            let slot_count = calc_packed_slot_count(length, T::BYTES);
             for slot_idx in 0..slot_count {
                 storage.sstore(data_start + U256::from(slot_idx), U256::ZERO)?;
             }
@@ -268,7 +268,7 @@ pub(crate) fn calc_data_slot(base_slot: U256) -> U256 {
 
 /// Load packed elements from storage.
 ///
-/// Used when `T::LAYOUT.bytes() < 32` and evenly divides 32, allowing multiple elements per slot.
+/// Used when `T::BYTES < 32` and evenly divides 32, allowing multiple elements per slot.
 fn load_packed_elements<T, S>(
     storage: &mut S,
     data_start: U256,
@@ -522,7 +522,7 @@ where
     S: StorageOps,
     T: Storable<1> + StorableType,
 {
-    let byte_count = T::LAYOUT.bytes();
+    let byte_count = T::BYTES;
     let data_start = calc_data_slot(base_slot);
 
     if is_packable(byte_count) {
@@ -541,7 +541,7 @@ where
     S: StorageOps,
     T: Storable<1> + StorableType,
 {
-    let byte_count = T::LAYOUT.bytes();
+    let byte_count = T::BYTES;
     let data_start = calc_data_slot(base_slot);
     let length = read_length(storage, base_slot)?;
 
@@ -568,7 +568,7 @@ where
     S: StorageOps,
     T: Storable<1> + StorableType,
 {
-    let byte_count = T::LAYOUT.bytes();
+    let byte_count = T::BYTES;
     let data_start = calc_data_slot(base_slot);
     let length = read_length(storage, base_slot)?;
 
@@ -592,7 +592,7 @@ where
     S: StorageOps,
     T: Storable<1> + StorableType,
 {
-    let byte_count = T::LAYOUT.bytes();
+    let byte_count = T::BYTES;
     let data_start = calc_data_slot(base_slot);
 
     // Read current length
@@ -789,7 +789,7 @@ mod tests {
         );
 
         // Also verify each element can be extracted correctly
-        let byte_count = u8::LAYOUT.bytes();
+        let byte_count = u8::BYTES;
         verify_packed_element(&mut contract, data_start, 10u8, 0, byte_count, "elem[0]");
         verify_packed_element(&mut contract, data_start, 20u8, 1, byte_count, "elem[1]");
         verify_packed_element(&mut contract, data_start, 30u8, 2, byte_count, "elem[2]");
@@ -835,7 +835,7 @@ mod tests {
         );
 
         // Also verify each element can be extracted
-        let byte_count = u16::LAYOUT.bytes();
+        let byte_count = u16::BYTES;
         for (i, &expected) in data_exact.iter().enumerate() {
             verify_packed_element(
                 &mut contract,
@@ -951,7 +951,7 @@ mod tests {
         );
 
         // Also verify each element in slot 1 can be extracted
-        let byte_count = u8::LAYOUT.bytes();
+        let byte_count = u8::BYTES;
         verify_packed_element(
             &mut contract,
             slot1_addr,
@@ -1430,7 +1430,7 @@ mod tests {
             // Verify data slots are cleared (if length > 0)
             if data_len > 0 {
                 let data_start = calc_data_slot(base_slot);
-                let byte_count = u8::LAYOUT.bytes();
+                let byte_count = u8::BYTES;
                 let slot_count = calc_packed_slot_count(data_len, byte_count);
 
                 for i in 0..slot_count {
@@ -1463,7 +1463,7 @@ mod tests {
             // Verify data slots are cleared (if length > 0)
             if data_len > 0 {
                 let data_start = calc_data_slot(base_slot);
-                let byte_count = u16::LAYOUT.bytes();
+                let byte_count = u16::BYTES;
                 let slot_count = calc_packed_slot_count(data_len, byte_count);
 
                 for i in 0..slot_count {
@@ -1496,7 +1496,7 @@ mod tests {
             // Verify data slots are cleared (if length > 0)
             if data_len > 0 {
                 let data_start = calc_data_slot(base_slot);
-                let byte_count = u32::LAYOUT.bytes();
+                let byte_count = u32::BYTES;
                 let slot_count = calc_packed_slot_count(data_len, byte_count);
 
                 for i in 0..slot_count {
@@ -1524,7 +1524,7 @@ mod tests {
             // Verify data slots are cleared (if length > 0)
             if data_len > 0 {
                 let data_start = calc_data_slot(base_slot);
-                let byte_count = u64::LAYOUT.bytes();
+                let byte_count = u64::BYTES;
                 let slot_count = calc_packed_slot_count(data_len, byte_count);
 
                 for i in 0..slot_count {
@@ -1552,7 +1552,7 @@ mod tests {
             // Verify data slots are cleared (if length > 0)
             if data_len > 0 {
                 let data_start = calc_data_slot(base_slot);
-                let byte_count = u128::LAYOUT.bytes();
+                let byte_count = u128::BYTES;
                 let slot_count = calc_packed_slot_count(data_len, byte_count);
 
                 for i in 0..slot_count {
@@ -1642,7 +1642,7 @@ mod tests {
             // Verify data slots are cleared (if length > 0)
             if !data.is_empty() {
                 let data_start = calc_data_slot(base_slot);
-                let byte_count = u8::LAYOUT.bytes();
+                let byte_count = u8::BYTES;
                 let slot_count = calc_packed_slot_count(data.len(), byte_count);
 
                 for i in 0..slot_count {

@@ -100,6 +100,15 @@ pub trait StorableType {
     /// - Dynamic types (String, Bytes, Vec) use `Layout::Slots(1)`
     /// - Structs and arrays use `Layout::Slots(N)` where N is the slot count
     const LAYOUT: Layout;
+
+    /// Number of storage slots this type takes.
+    const SLOTS: usize = Self::LAYOUT.slots();
+
+    /// Number of bytes this type takes.
+    const BYTES: usize = Self::LAYOUT.bytes();
+
+    /// Whether this type can be packed with adjacent fields.
+    const IS_PACKABLE: bool = Self::LAYOUT.is_packable();
 }
 
 /// Trait for types that can be stored/loaded from EVM storage.
@@ -190,7 +199,7 @@ pub trait Storable<const SLOTS: usize>: Sized + StorableType {
             }
             LayoutCtx::Packed(offset) => {
                 // For packed context, we need to preserve other fields in the slot
-                let bytes = Self::LAYOUT.bytes();
+                let bytes = Self::BYTES;
                 let current = storage.sload(base_slot)?;
                 let cleared = crate::storage::packing::zero_packed_value(current, offset, bytes)?;
                 storage.sstore(base_slot, cleared)
@@ -225,7 +234,7 @@ pub trait Storable<const SLOTS: usize>: Sized + StorableType {
 
     /// Test helper to ensure `LAYOUT` and `SLOTS` are in sync.
     fn validate_layout() {
-        debug_assert_eq!(<Self as StorableType>::LAYOUT.slots(), SLOTS)
+        debug_assert_eq!(<Self as StorableType>::SLOTS, SLOTS)
     }
 }
 

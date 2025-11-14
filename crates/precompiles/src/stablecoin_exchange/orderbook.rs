@@ -149,7 +149,7 @@ impl Orderbook {
         book_key: B256,
         new_best_bid: i16,
     ) -> Result<(), TempoPrecompileError> {
-        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS_SLOT);
+        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS);
         BestOrders::write_at_offset_packed(
             contract,
             orderbook_base_slot,
@@ -169,7 +169,7 @@ impl Orderbook {
         book_key: B256,
         new_best_ask: i16,
     ) -> Result<(), TempoPrecompileError> {
-        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS_SLOT);
+        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS);
         BestOrders::write_at_offset_packed(
             contract,
             orderbook_base_slot,
@@ -188,7 +188,7 @@ impl Orderbook {
         book_key: B256,
         contract: &mut S,
     ) -> Result<bool, TempoPrecompileError> {
-        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS_SLOT);
+        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS);
         let base = Tokens::read_at_offset(
             contract,
             orderbook_base_slot,
@@ -205,7 +205,7 @@ impl Orderbook {
         is_bid: bool,
         tick: i16,
     ) -> Result<TickLevel, TempoPrecompileError> {
-        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS_SLOT);
+        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS);
         if is_bid {
             Orders::read_at_offset(
                 storage,
@@ -231,7 +231,7 @@ impl Orderbook {
         tick: i16,
         tick_level: TickLevel,
     ) -> Result<(), TempoPrecompileError> {
-        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS_SLOT);
+        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS);
         if is_bid {
             Orders::write_at_offset(
                 storage,
@@ -258,7 +258,7 @@ impl Orderbook {
         is_bid: bool,
         tick: i16,
     ) -> Result<(), TempoPrecompileError> {
-        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS_SLOT);
+        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS);
         if is_bid {
             Orders::delete_at_offset(
                 storage,
@@ -293,7 +293,7 @@ impl Orderbook {
         let mask = U256::from(1u8) << bit_index;
 
         // Read current bitmap word
-        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS_SLOT);
+        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS);
         let bitmap_slot = if is_bid {
             __packing_orderbook::BID_BITMAP_SLOT
         } else {
@@ -332,7 +332,7 @@ impl Orderbook {
         let mask = !(U256::from(1u8) << bit_index);
 
         // Read current bitmap word
-        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS_SLOT);
+        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS);
         let bitmap_slot = if is_bid {
             __packing_orderbook::BID_BITMAP_SLOT
         } else {
@@ -370,7 +370,7 @@ impl Orderbook {
         let bit_index = (tick & 0xFF) as usize;
         let mask = U256::from(1u8) << bit_index;
 
-        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS_SLOT);
+        let orderbook_base_slot = mapping_slot(book_key.as_slice(), super::slots::BOOKS);
         let bitmap_slot = if is_bid {
             __packing_orderbook::BID_BITMAP_SLOT
         } else {

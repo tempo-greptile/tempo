@@ -250,7 +250,7 @@ impl<'a, S: PrecompileStorageProvider> TipFeeManager<'a, S> {
 
     /// Add a token to the tokens with fees array
     fn add_token_to_fees_array(&mut self, token: Address) -> Result<()> {
-        TokensWithFees::new(slots::TOKENS_WITH_FEES_SLOT).push(self, token)
+        TokensWithFees::new(slots::TOKENS_WITH_FEES).push(self, token)
     }
 
     /// Drain all tokens with fees by popping from the back until empty
@@ -258,7 +258,7 @@ impl<'a, S: PrecompileStorageProvider> TipFeeManager<'a, S> {
     /// Also sets token_in_fees_array to false for each token
     fn drain_tokens_with_fees(&mut self) -> Result<Vec<Address>> {
         let mut tokens = Vec::new();
-        let tokens_with_fees = TokensWithFees::new(slots::TOKENS_WITH_FEES_SLOT);
+        let tokens_with_fees = TokensWithFees::new(slots::TOKENS_WITH_FEES);
         while let Some(token) = tokens_with_fees.pop(self)? {
             tokens.push(token);
         }
