@@ -31,8 +31,7 @@ pub struct TempoGenesisInfo {
     moderato_time: Option<u64>,
 
     /// The length of a Tempo epoch as measured in blocks.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    epoch_length: Option<u64>,
+    epoch_length: u64,
 }
 
 impl TempoGenesisInfo {
@@ -45,7 +44,7 @@ impl TempoGenesisInfo {
             .unwrap_or_default()
     }
 
-    pub fn epoch_length(&self) -> Option<u64> {
+    pub fn epoch_length(&self) -> u64 {
         self.epoch_length
     }
 }
@@ -299,8 +298,7 @@ mod tests {
         let chainspec = super::TempoChainSpec::from_genesis(genesis);
 
         assert_eq!(
-            Some(604_800),
-            chainspec.info.epoch_length,
+            604_800, chainspec.info.epoch_length,
             "configured epoch length should be deserialized and available",
         );
     }
@@ -378,7 +376,8 @@ mod tests {
                 "terminalTotalDifficultyPassed": true,
                 "shanghaiTime": 0,
                 "cancunTime": 0,
-                "adagioTime": 1000
+                "adagioTime": 1000,
+                "epochLength": 604_800
             },
             "alloc": {}
         });
@@ -436,7 +435,8 @@ mod tests {
                 "terminalTotalDifficultyPassed": true,
                 "shanghaiTime": 0,
                 "cancunTime": 2000,
-                "adagioTime": 1000
+                "adagioTime": 1000,
+                "epochLength": 604_800
             },
             "alloc": {}
         });

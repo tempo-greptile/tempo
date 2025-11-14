@@ -20,7 +20,8 @@
     "terminalTotalDifficulty": 0,
     "terminalTotalDifficultyPassed": true,
     "adagioTime": 0,
-    "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa"
+    "depositContractAddress": "0x00000000219ab540356cbb839cbe05303d7705fa",
+    "epochLength": 302400
   },
   "nonce": "0x42",
   "timestamp": "0x0",
