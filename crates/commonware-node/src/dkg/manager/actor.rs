@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use commonware_codec::{
     DecodeExt as _, Encode as _, EncodeSize, RangeCfg, Read, ReadExt as _, Write, varint::UInt,
@@ -37,6 +37,7 @@ use crate::{
         manager::{
             DecodedValidator, Participants, PeersRegistered,
             ingress::{Finalize, GetIntermediateDealing, GetOutcome},
+            validators,
         },
     },
     epoch,
@@ -217,7 +218,7 @@ where
         // Note that for epochs 0 and 1 this will read the same block twice.
         // That's ok.
         let dealers_epoch = epoch_state.epoch.saturating_sub(2);
-        let dealers = read_validator_config_from_contract(
+        let dealers = validators::read_from_contract(
             0,
             &config.execution_node,
             dealers_epoch,
@@ -234,7 +235,7 @@ where
         let mut all_participants = Participants::new(dealers);
 
         let players_epoch = epoch_state.epoch.saturating_sub(1);
-        let players = read_validator_config_from_contract(
+        let players = validators::read_from_contract(
             0,
             &config.execution_node,
             players_epoch,
@@ -744,7 +745,7 @@ async fn read_validator_config_with_retry<C: commonware_runtime::Clock>(
     let retry_after = Duration::from_secs(1);
     loop {
         if let Ok(validators) =
-            read_validator_config_from_contract(attempts, node, epoch, epoch_length).await
+            validators::read_from_contract(attempts, node, epoch, epoch_length).await
         {
             break validators;
         }
@@ -758,95 +759,6 @@ async fn read_validator_config_with_retry<C: commonware_runtime::Clock>(
         attempts += 1;
         context.sleep(retry_after).await;
     }
-}
-
-/// Reads the validator config of `epoch`.
-///
-/// The validator config for `epoch` is always read from the last height of
-/// `epoch-1`.
-#[instrument(
-    skip_all,
-    fields(
-        attempt = _attempt,
-        for_epoch,
-        last_height_before = last_height_before_epoch(for_epoch, epoch_length),
-    ),
-    err
-)]
-async fn read_validator_config_from_contract(
-    _attempt: u32,
-    node: &TempoFullNode,
-    for_epoch: Epoch,
-    epoch_length: u64,
-) -> eyre::Result<OrderedAssociated<PublicKey, DecodedValidator>> {
-    use alloy_evm::EvmInternals;
-    use reth_ethereum::evm::revm::{State, database::StateProviderDatabase};
-    use reth_node_builder::{Block as _, ConfigureEvm as _};
-    use reth_provider::{BlockReader as _, StateProviderFactory as _};
-    use tempo_precompiles::{
-        storage::evm::EvmPrecompileStorageProvider,
-        validator_config::{IValidatorConfig, ValidatorConfig},
-    };
-
-    let last_height = last_height_before_epoch(for_epoch, epoch_length);
-    let block = node
-        .provider
-        .block_by_number(last_height)
-        .map_err(Into::<eyre::Report>::into)
-        .and_then(|maybe| maybe.ok_or_eyre("execution layer returned empty block"))
-        .wrap_err_with(|| format!("failed reading block at height `{last_height}`"))?;
-
-    let db = State::builder()
-        .with_database(StateProviderDatabase::new(
-            node.provider
-                .state_by_block_id(last_height.into())
-                .wrap_err_with(|| {
-                    format!("failed to get state from node provider for height `{last_height}`")
-                })?,
-        ))
-        .build();
-
-    // XXX: Ensure that evm and internals go out of scope before the await point
-    // below.
-    let contract_validators = {
-        let mut evm = node
-            .evm_config
-            .evm_for_block(db, block.header())
-            .wrap_err("failed instantiating evm for genesis block")?;
-
-        let ctx = evm.ctx_mut();
-        let internals = EvmInternals::new(&mut ctx.journaled_state, &ctx.block);
-        let mut provider = EvmPrecompileStorageProvider::new_max_gas(internals, &ctx.cfg);
-
-        let mut validator_config = ValidatorConfig::new(&mut provider);
-        validator_config
-            .get_validators(IValidatorConfig::getValidatorsCall {})
-            .wrap_err("failed to query contract for validator config")?
-    };
-
-    Ok(decode_contract_validators(contract_validators).await)
-}
-
-use tempo_precompiles::validator_config::IValidatorConfig;
-#[instrument(skip_all, fields(validators_to_decode = contract_vals.len()))]
-async fn decode_contract_validators(
-    contract_vals: Vec<IValidatorConfig::Validator>,
-) -> OrderedAssociated<PublicKey, DecodedValidator> {
-    let mut decoded = HashMap::new();
-    for val in contract_vals.into_iter().filter(|val| val.active) {
-        // NOTE: not reporting errors because `decode_from_contract` emits
-        // events on success and error
-        if let Ok(val) = DecodedValidator::decode_from_contract(val)
-            && let Some(old) = decoded.insert(val.public_key.clone(), val)
-        {
-            warn!(
-                %old,
-                new = %decoded.get(&old.public_key).expect("just inserted it"),
-                "replaced peer because public keys were duplicated",
-            );
-        }
-    }
-    decoded.into_iter().collect::<_>()
 }
 
 /// The state with all participants, public and private key share for an epoch.
@@ -895,10 +807,4 @@ impl Read for EpochState {
             share,
         })
     }
-}
-
-fn last_height_before_epoch(epoch: Epoch, epoch_length: u64) -> u64 {
-    epoch
-        .checked_sub(1)
-        .map_or(0, |epoch| utils::last_block_in_epoch(epoch_length, epoch))
 }
