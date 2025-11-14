@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{run, Setup};
+use crate::{Setup, run};
 use commonware_macros::test_traced;
 use commonware_p2p::simulated::Link;
 

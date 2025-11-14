@@ -479,7 +479,7 @@ fn initialize_fee_manager(
     validators: Vec<Address>,
     evm: &mut TempoEvm<CacheDB<EmptyDB>>,
 ) {
-    // Update the beneficiary since the validator cant set the validator fee token for themselves
+    // Update the beneficiary since the validator can't set the validator fee token for themselves
     let ctx = evm.ctx_mut();
     let evm_internals = EvmInternals::new(&mut ctx.journaled_state, &ctx.block);
     let mut provider = EvmPrecompileStorageProvider::new_max_gas(evm_internals, &ctx.cfg);

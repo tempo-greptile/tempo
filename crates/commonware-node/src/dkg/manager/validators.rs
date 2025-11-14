@@ -1,11 +1,12 @@
-use std::collections::HashMap;
-use std::net::{SocketAddr, ToSocketAddrs as _};
+use std::{
+    collections::HashMap,
+    net::{SocketAddr, ToSocketAddrs as _},
+};
 
 use alloy_evm::EvmInternals;
 use alloy_primitives::Address;
 use commonware_codec::{DecodeExt as _, EncodeSize, RangeCfg, Read, Write};
-use commonware_consensus::types::Epoch;
-use commonware_consensus::utils;
+use commonware_consensus::{types::Epoch, utils};
 use commonware_cryptography::ed25519::PublicKey;
 use commonware_utils::set::{Ordered, OrderedAssociated};
 use eyre::{OptionExt as _, WrapErr as _, ensure};
@@ -14,9 +15,11 @@ use reth_node_builder::{Block as _, ConfigureEvm as _};
 use reth_provider::{BlockReader as _, StateProviderFactory as _};
 use ringbuffer::RingBuffer as _;
 use tempo_node::TempoFullNode;
-use tempo_precompiles::storage::evm::EvmPrecompileStorageProvider;
-use tempo_precompiles::validator_config::{
-    IValidatorConfig, ValidatorConfig, ensure_inbound_is_host_port, ensure_outbound_is_ip_port,
+use tempo_precompiles::{
+    storage::evm::EvmPrecompileStorageProvider,
+    validator_config::{
+        IValidatorConfig, ValidatorConfig, ensure_inbound_is_host_port, ensure_outbound_is_ip_port,
+    },
 };
 
 use tracing::{Level, info, instrument, warn};

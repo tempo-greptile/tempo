@@ -167,7 +167,7 @@ async fn ensure_no_progress(context: &Context, tries: u32) {
     }
 }
 
-/// This is the simplest possible restart case: the network stops becasue we
+/// This is the simplest possible restart case: the network stops because we
 /// dropped below quorum. The node should be able to pick up after.
 #[test_traced]
 fn network_resumes_after_restart() {
