@@ -6,6 +6,7 @@ use revm::{
     state::{AccountInfo, Bytecode},
 };
 use tempo_chainspec::hardfork::TempoHardfork;
+use tracing::debug;
 
 use crate::{error::TempoPrecompileError, storage::PrecompileStorageProvider};
 
@@ -96,6 +97,10 @@ impl<'a> PrecompileStorageProvider for EvmPrecompileStorageProvider<'a> {
     ) -> Result<(), TempoPrecompileError> {
         self.ensure_loaded_account(address)?;
         let result = self.internals.sstore(address, key, value)?;
+        debug!(
+            "[SSTORE: {address}] key: {key}, value: {value}, cold: {}",
+            result.is_cold
+        );
 
         self.deduct_gas(revm::interpreter::gas::sstore_cost(
             SpecId::AMSTERDAM,
@@ -125,6 +130,10 @@ impl<'a> PrecompileStorageProvider for EvmPrecompileStorageProvider<'a> {
     fn sload(&mut self, address: Address, key: U256) -> Result<U256, TempoPrecompileError> {
         self.ensure_loaded_account(address)?;
         let val = self.internals.sload(address, key)?;
+        debug!(
+            "[SLOAD: {address}] key: {key}, value: {}, cold: {}",
+            val.data, val.is_cold
+        );
 
         self.deduct_gas(revm::interpreter::gas::sload_cost(
             SpecId::AMSTERDAM,
