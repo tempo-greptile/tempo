@@ -104,7 +104,7 @@ pub async fn run_consensus_stack(
         // TODO: Set this through config?
         partition_prefix: "engine".into(),
         signer: signing_key,
-        share: share,
+        share,
         mailbox_size: config.mailbox_size,
         deque_size: config.deque_size,
 

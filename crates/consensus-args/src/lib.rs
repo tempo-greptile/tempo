@@ -1,5 +1,8 @@
+//! Command line arguments for configuring the consensus layer of a tempo node.
 use std::{net::SocketAddr, path::PathBuf};
 
+/// Arguments for configuring the consensus layer of a tempo node.
+/// Command line arguments for configuring the consensus layer of a tempo node.
 #[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
 pub struct ConsensusArgs {
     /// The file containing the ed25519 signing key for p2p communication.
