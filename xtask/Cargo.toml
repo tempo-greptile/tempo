@@ -12,7 +12,6 @@ workspace = true
 
 [dependencies]
 tempo-chainspec.workspace = true
-tempo-commonware-node-config.workspace = true
 tempo-contracts.workspace = true
 tempo-dkg-onchain-artifacts.workspace = true
 tempo-evm.workspace = true
@@ -26,6 +25,10 @@ commonware-cryptography.workspace = true
 commonware-utils.workspace = true
 const-hex.workspace = true
 eyre.workspace = true
+fqdn = { workspace = true, features = [
+  "domain-label-length-limited-to-63",
+  "domain-name-length-limited-to-255",
+] }
 indexmap.workspace = true
 itertools.workspace = true
 rand.workspace = true
@@ -46,3 +49,4 @@ alloy = { workspace = true, features = [
 rayon = "1.10"
 secp256k1 = "0.30.0"
 simple-tqdm = { version = "0.2.0", features = ["rayon"] }
+thiserror.workspace = true

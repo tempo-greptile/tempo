@@ -39,7 +39,7 @@ pub async fn run_consensus_stack(
     execution_node: TempoFullNode,
 ) -> eyre::Result<()> {
     let share = config
-        .share
+        .signing_share
         .as_ref()
         .map(|share| {
             read_from_file::<Share, _, _>(share).wrap_err_with(|| {
