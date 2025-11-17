@@ -98,7 +98,8 @@ pub fn extend_tempo_precompiles(precompiles: &mut PrecompilesMap, cfg: &CfgEnv<T
             Some(NoncePrecompile::create(chain_id, spec))
         } else if *address == VALIDATOR_CONFIG_ADDRESS {
             Some(ValidatorConfigPrecompile::create(chain_id, spec))
-        } else if *address == ACCOUNT_KEYCHAIN_ADDRESS {
+        } else if *address == ACCOUNT_KEYCHAIN_ADDRESS && spec.is_moderato() {
+            // AccountKeychain is only available after Moderato hardfork
             Some(AccountKeychainPrecompile::create(chain_id, spec))
         } else {
             None
