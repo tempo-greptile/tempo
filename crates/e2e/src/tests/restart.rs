@@ -59,7 +59,7 @@ fn run_restart_test(
 
         // Randomly select a validator to kill
         let idx = context.gen_range(0..nodes.len());
-        nodes[idx].stop();
+        nodes[idx].stop().await;
 
         debug!(public_key = %nodes[idx].public_key(), "stopped a random validator");
 
@@ -210,7 +210,7 @@ fn network_resumes_after_restart() {
             wait_for_height(&context, setup.how_many_signers, shutdown_height).await;
 
             let idx = context.gen_range(0..nodes.len());
-            nodes[idx].stop();
+            nodes[idx].stop().await;
             debug!(public_key = %nodes[idx].public_key(), "stopped a random validator");
 
             // wait a bit to let the network settle; some finalizations come in later
