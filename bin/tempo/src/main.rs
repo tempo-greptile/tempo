@@ -139,7 +139,7 @@ fn main() -> eyre::Result<()> {
                     args.consensus.metrics_address,
                 )
                 .fuse();
-                let consensus_stack = run_consensus_stack(&ctx, &args.consensus, node);
+                let consensus_stack = run_consensus_stack(&ctx, args.consensus, node);
                 tokio::pin!(consensus_stack);
                 loop {
                     tokio::select!(

@@ -23,9 +23,7 @@ use commonware_cryptography::{
 use commonware_p2p::authenticated::lookup;
 use commonware_runtime::Metrics as _;
 use eyre::{OptionExt, WrapErr as _, eyre};
-use reth_chainspec::EthChainSpec;
 use tempo_node::TempoFullNode;
-use tracing::info;
 
 use crate::config::{
     BOUNDARY_CERT_CHANNEL_IDENT, BOUNDARY_CERT_LIMIT, BROADCASTER_CHANNEL_IDENT, BROADCASTER_LIMIT,
@@ -38,7 +36,7 @@ pub use args::Args;
 
 pub async fn run_consensus_stack(
     context: &commonware_runtime::tokio::Context,
-    config: &Args,
+    config: Args,
     execution_node: TempoFullNode,
 ) -> eyre::Result<()> {
     let share = config
@@ -54,12 +52,16 @@ pub async fn run_consensus_stack(
         })
         .transpose()?;
 
-    let signing_key =
-        read_from_file::<PrivateKey, _, _>(&config.signing_key).wrap_err_with(|| {
-            format!(
-                "failed reading private ed25519 signing key share from file `{}`",
-                config.signing_key.display()
-            )
+    let signing_key = config
+        .signing_key
+        .ok_or_eyre("required option `consensus.signing_key` not set")
+        .and_then(|signing_key| {
+            read_from_file::<PrivateKey, _, _>(&signing_key).wrap_err_with(|| {
+                format!(
+                    "failed reading private ed25519 signing key share from file `{}`",
+                    signing_key.display()
+                )
+            })
         })?;
 
     let (mut network, oracle) = instantiate_network(
@@ -92,7 +94,7 @@ pub async fn run_consensus_stack(
 
     let fee_recipient = config
         .fee_recipient
-        .ok_or_eyre("requried argument fee-recipient not set")?;
+        .ok_or_eyre("requried option `consensus.fee-recipient` not set")?;
 
     let consensus_engine = crate::consensus::engine::Builder {
         context: context.with_label("engine"),
