@@ -657,7 +657,7 @@ async fn join_all(
         .map(|receipt| async {
             debug!("Waiting for pending transaction");
             let result = receipt.await;
-            match &result {
+            match result {
                 Ok(pending) => {
                     debug!("Getting receipt for transaction");
                     let receipt_result = pending.get_receipt().await;
@@ -665,11 +665,11 @@ async fn join_all(
                         Ok(r) => debug!("Received receipt, status: {}", r.status()),
                         Err(e) => warn!("Failed to get receipt: {}", e),
                     }
-                    receipt_result
+                    receipt_result.map_err(|e| eyre::eyre!("Failed to get receipt: {}", e))
                 }
                 Err(e) => {
                     warn!("Transaction send failed: {}", e);
-                    Err(e.clone().into())
+                    Err(eyre::eyre!("Transaction send failed: {}", e))
                 }
             }
         })
