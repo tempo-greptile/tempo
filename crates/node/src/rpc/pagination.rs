@@ -38,6 +38,33 @@ pub struct FilterRange<T> {
     pub max: Option<T>,
 }
 
+/// A wrapper type with an optional cursor to the next page in a paginated response.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WithCursor<T> {
+    #[serde(flatten)]
+    inner: T,
+    next_cursor: Option<String>,
+}
+
+impl<T> WithCursor<T> {
+    pub fn new(inner: T, next_cursor: Option<String>) -> Self {
+        Self { inner, next_cursor }
+    }
+
+    pub fn inner(&self) -> &T {
+        &self.inner
+    }
+
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+
+    pub fn next_cursor(&self) -> Option<&String> {
+        self.next_cursor.as_ref()
+    }
+}
+
 impl<T: PartialOrd> FilterRange<T> {
     /// Checks if a value is within this range (inclusive)
     pub fn in_range(&self, value: T) -> bool {

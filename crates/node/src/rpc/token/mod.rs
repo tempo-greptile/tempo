@@ -1,5 +1,5 @@
 use crate::rpc::{
-    pagination::PaginationParams,
+    pagination::{PaginationParams, WithCursor},
     token::{
         role_history::{RoleHistoryFilters, RoleHistoryResponse},
         tokens::{TokensFilters, TokensResponse},
@@ -25,13 +25,16 @@ pub trait TempoTokenApi {
     async fn role_history(
         &self,
         params: PaginationParams<RoleHistoryFilters>,
-    ) -> RpcResult<RoleHistoryResponse>;
+    ) -> RpcResult<WithCursor<RoleHistoryResponse>>;
 
     /// Gets paginated TIP-20 tokens on Tempo.
     ///
     /// Uses cursor-based pagination for stable iteration through tokens.
     #[method(name = "getTokens")]
-    async fn tokens(&self, params: PaginationParams<TokensFilters>) -> RpcResult<TokensResponse>;
+    async fn tokens(
+        &self,
+        params: PaginationParams<TokensFilters>,
+    ) -> RpcResult<WithCursor<TokensResponse>>;
 
     /// Gets paginated TIP-20 tokens associated with an account address on Tempo.
     ///
@@ -42,7 +45,7 @@ pub trait TempoTokenApi {
     async fn tokens_by_address(
         &self,
         params: TokensByAddressParams,
-    ) -> RpcResult<TokensByAddressResponse>;
+    ) -> RpcResult<WithCursor<TokensByAddressResponse>>;
 }
 
 /// The JSON-RPC handlers for the `token_` namespace.
@@ -62,18 +65,21 @@ impl<EthApi: RpcNodeCore> TempoTokenApiServer for TempoToken<EthApi> {
     async fn role_history(
         &self,
         _params: PaginationParams<RoleHistoryFilters>,
-    ) -> RpcResult<RoleHistoryResponse> {
+    ) -> RpcResult<WithCursor<RoleHistoryResponse>> {
         Err(internal_rpc_err("unimplemented"))
     }
 
-    async fn tokens(&self, _params: PaginationParams<TokensFilters>) -> RpcResult<TokensResponse> {
+    async fn tokens(
+        &self,
+        _params: PaginationParams<TokensFilters>,
+    ) -> RpcResult<WithCursor<TokensResponse>> {
         Err(internal_rpc_err("unimplemented"))
     }
 
     async fn tokens_by_address(
         &self,
         _params: TokensByAddressParams,
-    ) -> RpcResult<TokensByAddressResponse> {
+    ) -> RpcResult<WithCursor<TokensByAddressResponse>> {
         Err(internal_rpc_err("unimplemented"))
     }
 }

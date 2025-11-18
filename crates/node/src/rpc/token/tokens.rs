@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TokensResponse {
-    /// Cursor for next page, null if no more results
-    pub next_cursor: Option<String>,
     /// Array of items matching the input query
     pub tokens: Vec<Token>,
 }

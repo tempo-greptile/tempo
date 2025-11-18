@@ -1,6 +1,9 @@
 pub use addresses::{AddressesFilters, PolicyAddress};
 
-use crate::rpc::policy::addresses::{AddressesParams, AddressesResponse};
+use crate::rpc::{
+    pagination::WithCursor,
+    policy::addresses::{AddressesParams, AddressesResponse},
+};
 use jsonrpsee::{core::RpcResult, proc_macros::rpc};
 use reth_node_core::rpc::result::internal_rpc_err;
 use reth_rpc_eth_api::RpcNodeCore;
@@ -15,7 +18,7 @@ pub trait TempoPolicyApi {
     ///
     /// Uses cursor-based pagination for stable iteration through addresses.
     #[method(name = "getAddresses")]
-    async fn addresses(&self, params: AddressesParams) -> RpcResult<AddressesResponse>;
+    async fn addresses(&self, params: AddressesParams) -> RpcResult<WithCursor<AddressesResponse>>;
 }
 
 /// The JSON-RPC handlers for the `policy_` namespace.
@@ -32,7 +35,10 @@ impl<EthApi> TempoPolicy<EthApi> {
 
 #[async_trait::async_trait]
 impl<EthApi: RpcNodeCore> TempoPolicyApiServer for TempoPolicy<EthApi> {
-    async fn addresses(&self, _params: AddressesParams) -> RpcResult<AddressesResponse> {
+    async fn addresses(
+        &self,
+        _params: AddressesParams,
+    ) -> RpcResult<WithCursor<AddressesResponse>> {
         Err(internal_rpc_err("unimplemented"))
     }
 }

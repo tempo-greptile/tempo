@@ -70,7 +70,6 @@ impl RemainingFilterRange {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrdersResponse {
-    pub next_cursor: Option<String>,
     pub orders: Vec<Order>,
 }
 

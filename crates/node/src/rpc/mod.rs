@@ -12,7 +12,7 @@ pub use amm::{TempoAmm, TempoAmmApiServer};
 pub use dex::{TempoDex, api::TempoDexApiServer};
 pub use eth_ext::{TempoEthExt, TempoEthExtApiServer};
 use futures::future::Either;
-pub use pagination::{FilterRange, PaginationParams};
+pub use pagination::{FilterRange, PaginationParams, WithCursor};
 pub use policy::{TempoPolicy, TempoPolicyApiServer};
 use reth_errors::RethError;
 use reth_primitives_traits::{Recovered, TransactionMeta, WithEncoded, transaction::TxHashRef};
