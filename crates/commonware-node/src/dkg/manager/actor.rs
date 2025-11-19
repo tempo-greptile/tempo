@@ -468,7 +468,6 @@ where
         // So for E = 100, the boundary heights would be 99, 199, 299, ...
         if utils::is_last_block_in_epoch(self.config.epoch_length, block.height()).is_some() {
             self.update_current_epoch_state().await;
-            self.report_current_epoch_state().await;
 
             maybe_ceremony.replace(
                 self.start_ceremony_for_current_epoch_state(ceremony_mux)
@@ -484,7 +483,7 @@ where
         //
         // So for E = 100, the first heights are 0, 100, 200, ...
         if is_first_block_in_epoch(self.config.epoch_length, block.height()).is_some() {
-            self.report_current_epoch_entered().await;
+            self.enter_current_epoch_and_register_peers().await;
 
             // Similar for the validators: we only need to track the current
             // and last two epochs.
@@ -731,7 +730,7 @@ where
     }
 
     /// Reports that a new epoch was entered, that the previous epoch can be ended.
-    async fn report_current_epoch_entered(&mut self) {
+    async fn enter_current_epoch_and_register_peers(&mut self) {
         let old_epoch_state = self
             .epoch_metadata
             .remove(&PREVIOUS_EPOCH_KEY.into())
@@ -817,6 +816,8 @@ where
             .put_sync(epoch.into(), new_validator_state)
             .await
             .expect("must always be able to persist validator metadata");
+
+        self.report_current_epoch_state().await;
     }
 
     fn current_epoch_state(&self) -> &EpochState {
