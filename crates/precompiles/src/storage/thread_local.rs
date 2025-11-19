@@ -197,61 +197,57 @@ impl<T> MethodCtx for &mut T {
     type Allowed = ReadWrite;
 }
 
-/// Builder for cross-contract calls with compile-time context enforcement
+/// Contract instance wrapper that enforces address stack correctness via borrow checker
 ///
-/// Generic over the contract type `T` and call context `Ctx`, leveraging
-/// the type system to only allow mutable operations in mutable contexts.
-pub struct CallBuilder<T, CTX: CallCtx> {
-    address: Address,
-    _ctx: PhantomData<(T, CTX)>,
+/// This type wraps a contract instance along with an `AddressGuard`, ensuring that:
+/// - the contract address is pushed onto the address stack when created
+/// - the address is automatically popped when the instance is dropped
+/// - the parent context is borrowed for the lifetime of this instance
+pub struct ContractInstance<'ctx, CTX: CallCtx, T> {
+    contract: T,
+    _guard: AddressGuard,
+    _ctx: PhantomData<&'ctx mut CTX>,
 }
 
-impl<T, CTX: CallCtx> CallBuilder<T, CTX> {
-    pub fn new(address: Address) -> Self {
-        Self {
-            address,
-            _ctx: PhantomData,
-        }
+/// Allow calling immutable methods on the wrapped contract
+impl<'ctx, CTX: CallCtx, T> std::ops::Deref for ContractInstance<'ctx, CTX, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.contract
     }
 }
 
-/// Read-only context: closure receives immutable reference
-impl<T: ContractCall> CallBuilder<T, ReadOnly> {
-    pub fn staticcall<F, R>(self, f: F) -> Result<R, TempoPrecompileError>
-    where
-        F: FnOnce(&T) -> Result<R, TempoPrecompileError>,
-    {
-        let _guard = AddressGuard::new(self.address)?;
-        let instance = T::_new();
-        f(&instance)
+/// Allow calling mutable methods only in mutable contexts
+impl<'ctx, CTX: MutableCtx, T> std::ops::DerefMut for ContractInstance<'ctx, CTX, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.contract
     }
 }
 
-/// Read-write context: closure receives mutable reference
-impl<T: ContractCall> CallBuilder<T, ReadWrite> {
-    pub fn call<F, R>(self, f: F) -> Result<R, TempoPrecompileError>
-    where
-        F: FnOnce(&mut T) -> Result<R, TempoPrecompileError>,
-    {
-        let _guard = AddressGuard::new(self.address)?;
-        let mut instance = T::_new();
-        f(&mut instance)
-    }
-}
-
-/// Trait for contracts that support the builder-based cross-contract call pattern
+/// Trait for contracts that support cross-contract calls with compile-time context enforcement
 ///
 /// This is typically implemented by the macro-generated code for each contract.
 pub trait ContractCall: Sized {
     /// Create a new instance of the contract (macro-generated)
     fn _new() -> Self;
 
-    /// Create a call builder with context inferred from method receiver
-    fn new<M>(_ctx: M, address: Address) -> CallBuilder<Self, M::Allowed>
+    /// Create a contract instance with context inferred from method receiver
+    ///
+    /// The lifetime ensures that the parent can't be used while the child instance is alive.
+    fn new<'ctx, M>(
+        _ctx: M,
+        address: Address,
+    ) -> Result<ContractInstance<'ctx, M::Allowed, Self>, TempoPrecompileError>
     where
         M: MethodCtx,
     {
-        CallBuilder::new(address)
+        let guard = AddressGuard::new(address)?;
+        Ok(ContractInstance {
+            contract: Self::_new(),
+            _guard: guard,
+            _ctx: PhantomData,
+        })
     }
 }
 

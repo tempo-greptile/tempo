@@ -64,8 +64,11 @@ impl ThreadLocalToken {
     ) -> Result<()> {
         self.transfer(from, to, amount)?;
 
-        ThreadLocalRewards::new(self, REWARDS_ADDRESS)
-            .call(|rewards| rewards.distribute(amount))?;
+        let mut rewards = ThreadLocalRewards::new(self, REWARDS_ADDRESS)?;
+        rewards.distribute(amount)?;
+
+        // can't call `self` without dropping `rewards` first
+        // self.set_total_supply(U256::MAX)?;
 
         Ok(())
     }
@@ -116,19 +119,19 @@ mod tests {
         let mut ctx = ();
 
         // For top-level test entry points, pass `&mut ctx` to get `ReadWrite` context
-        ThreadLocalToken::new(&mut ctx, token_address).call(|token| {
-            // mint
-            token.mint(alice, U256::from(1000))?;
-            assert_eq!(token.balance_of(alice)?, U256::from(1000));
-            assert_eq!(token.total_supply()?, U256::from(1000));
+        let mut token = ThreadLocalToken::new(&mut ctx, token_address)?;
 
-            // transfer
-            token.transfer(alice, bob, U256::from(100))?;
-            assert_eq!(token.balance_of(alice)?, U256::from(900));
-            assert_eq!(token.balance_of(bob)?, U256::from(100));
+        // mint
+        token.mint(alice, U256::from(1000))?;
+        assert_eq!(token.balance_of(alice)?, U256::from(1000));
+        assert_eq!(token.total_supply()?, U256::from(1000));
 
-            Ok(())
-        })
+        // transfer
+        token.transfer(alice, bob, U256::from(100))?;
+        assert_eq!(token.balance_of(alice)?, U256::from(900));
+        assert_eq!(token.balance_of(bob)?, U256::from(100));
+
+        Ok(())
     }
 
     #[test]
@@ -141,23 +144,20 @@ mod tests {
         let bob = Address::new([0xB0; 20]);
         let mut ctx = ();
 
-        ThreadLocalToken::new(&mut ctx, token_address).call(|token| {
-            token.mint(alice, U256::from(1000))?;
+        let mut token = ThreadLocalToken::new(&mut ctx, token_address)?;
+        token.mint(alice, U256::from(1000))?;
 
-            // transfer with rewards - demonstrates scoped cross-contract call
-            token.transfer_with_rewards(alice, bob, U256::from(100))?;
-            assert_eq!(token.balance_of(alice)?, U256::from(900));
-            assert_eq!(token.balance_of(bob)?, U256::from(100));
-
-            Ok(())
-        })?;
+        // transfer with rewards - demonstrates scoped cross-contract call
+        token.transfer_with_rewards(alice, bob, U256::from(100))?;
+        assert_eq!(token.balance_of(alice)?, U256::from(900));
+        assert_eq!(token.balance_of(bob)?, U256::from(100));
 
         // verify rewards were distributed (read-only context)
-        ThreadLocalRewards::new(&ctx, REWARDS_ADDRESS).staticcall(|rewards| {
-            let pool = rewards.get_pool()?;
-            assert_eq!(pool, U256::from(1));
-            Ok(())
-        })
+        let rewards = ThreadLocalRewards::new(&ctx, REWARDS_ADDRESS)?;
+        let pool = rewards.get_pool()?;
+        assert_eq!(pool, U256::from(1));
+
+        Ok(())
     }
 
     #[test]
@@ -173,23 +173,28 @@ mod tests {
         let ctx = ();
 
         // demonstrate nested contract calls with automatic address stack management
-        ThreadLocalToken::new(&ctx, addr1).staticcall(|token1| {
-            assert_eq!(context::call_depth(), 1);
+        let token1 = ThreadLocalToken::new(&ctx, addr1)?;
+        assert_eq!(context::call_depth(), 1);
 
-            ThreadLocalToken::new(token1, addr2).staticcall(|token2| {
-                assert_eq!(context::call_depth(), 2);
+        let token2 = ThreadLocalToken::new(&token1, addr2)?;
+        assert_eq!(context::call_depth(), 2);
 
-                ThreadLocalToken::new(token2, addr3).staticcall(|_token3| {
-                    assert_eq!(context::call_depth(), 3);
-                    Ok(())
-                })?;
+        // can't call `token1` until `token2` is dropped
 
-                assert_eq!(context::call_depth(), 2);
-                Ok(())
-            })?;
+        let token3 = ThreadLocalToken::new(&token2, addr3)?;
+        assert_eq!(context::call_depth(), 3);
 
-            assert_eq!(context::call_depth(), 1);
-            Ok(())
-        })
+        // can't call `token2` until `token3` is dropped
+
+        std::mem::drop(token3);
+        assert_eq!(context::call_depth(), 2);
+
+        std::mem::drop(token2);
+        assert_eq!(context::call_depth(), 1);
+
+        std::mem::drop(token1);
+        assert_eq!(context::call_depth(), 0);
+
+        Ok(())
     }
 }
