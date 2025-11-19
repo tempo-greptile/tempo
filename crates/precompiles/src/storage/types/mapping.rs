@@ -3,12 +3,13 @@
 use alloy::primitives::{U256, keccak256};
 use std::marker::PhantomData;
 
-use crate::{
-    error::Result,
-    storage::{Layout, Storable, StorableType, StorageKey, StorageOps},
-};
+use crate::storage::{Layout, Slot, Storable, StorableType, StorageKey};
 
-/// Type-safe wrapper for EVM storage mappings (hash-based key-value storage).
+/// Type-safe access wrapper for EVM storage mappings (hash-based key-value storage).
+///
+/// This struct does not store data itself. Instead, it provides a zero-cost abstraction
+/// for accessing mapping storage slots using Solidity's hash-based layout. It wraps a
+/// base slot number and provides methods to compute the actual storage slots for keys.
 ///
 /// # Type Parameters
 ///
@@ -18,15 +19,26 @@ use crate::{
 /// # Storage Layout
 ///
 /// Mappings use Solidity's storage layout:
-/// - Base slot: stored in `base_slot` field
+/// - Base slot: stored in `base_slot` field (never accessed directly)
 /// - Actual slot for key `k`: `keccak256(k || base_slot)`
 ///
-/// # Example
+/// # Usage Pattern
 ///
-/// ```ignore
-/// let balances = Mapping::<Address, U256>::new(slots::BALANCES);
-/// balances.write(&mut contract, user_address, U256::from(100))?;
-/// ```
+/// The typical usage follows a composable pattern:
+/// 1. Create a `Mapping<K, V>` with a base slot (usually from generated constants)
+/// 2. Call `.at(key)` to compute and obtain a `Slot<V>` for that key
+/// 3. Use `.read()`, `.write()`, or `.delete()` on the resulting slot
+///
+/// # Accessing Mapping Fields Within Structs
+///
+/// When a mapping is a field within a struct stored in another mapping, use the static
+/// `at_offset` method to compute the slot without creating a `Mapping` instance:
+///
+/// # Relationship with `Slot<V>`
+///
+/// `Mapping<K, V>` is essentially a slot computation helper. The `.at(key)` method
+/// performs the keccak256 hash to compute the actual storage slot and returns a
+/// `Slot<V>` that can be used for read/write operations.
 #[derive(Debug, Clone, Copy)]
 pub struct Mapping<K, V> {
     base_slot: U256,
@@ -51,529 +63,116 @@ impl<K, V> Mapping<K, V> {
         self.base_slot
     }
 
-    /// Reads a value from the mapping at the given key.
+    /// Returns a `Slot<V>` for the given key.
     ///
-    /// This method:
-    /// 1. Computes the storage slot via keccak256(key || base_slot)
-    /// 2. Delegates to `Storable::load`, which reads `N` consecutive slots
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let balances = Mapping::<Address, U256>::new(slots::BALANCES);
-    /// let balance = balances.read(&mut contract, user_address)?;
-    /// ```
-    #[inline]
-    pub fn read<S: StorageOps, const N: usize>(&self, storage: &mut S, key: K) -> Result<V>
+    /// This enables the composable pattern: `mapping.at(key).read(storage)`
+    /// where the mapping slot computation happens once, and the resulting slot
+    /// can be used for multiple operations.
+    pub fn at<const N: usize>(&self, key: K) -> Slot<V>
     where
         K: StorageKey,
         V: Storable<N>,
     {
-        let slot = mapping_slot(key.as_storage_bytes(), self.base_slot);
-        V::load(storage, slot, crate::storage::types::LayoutCtx::Full)
+        Slot::new(mapping_slot(key.as_storage_bytes(), self.base_slot))
     }
 
-    /// Writes a value to the mapping at the given key.
-    ///
-    /// This method:
-    /// 1. Computes the storage slot via keccak256(key || base_slot)
-    /// 2. Delegates to `Storable::store`, which writes to `N` consecutive slots
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let balances = Mapping::<Address, U256>::new(slots::BALANCES);
-    /// balances.write(&mut contract, user_address, U256::from(100))?;
-    /// ```
-    #[inline]
-    pub fn write<S: StorageOps, const N: usize>(
-        &self,
-        storage: &mut S,
-        key: K,
-        value: V,
-    ) -> Result<()>
-    where
-        K: StorageKey,
-        V: Storable<N>,
-    {
-        let slot = mapping_slot(key.as_storage_bytes(), self.base_slot);
-        value.store(storage, slot, crate::storage::types::LayoutCtx::Full)
-    }
-
-    /// Deletes the value from the mapping at the given key (sets all slots to zero).
-    ///
-    /// This method:
-    /// 1. Computes the storage slot via keccak256(key || base_slot)
-    /// 2. Delegates to `Storable::delete`, which sets `N` consecutive slots to zero
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let balances = Mapping::<Address, U256>::new(slots::BALANCES);
-    /// balances.delete(&mut contract, user_address)?;
-    /// ```
-    #[inline]
-    pub fn delete<S: StorageOps, const N: usize>(&self, storage: &mut S, key: K) -> Result<()>
-    where
-        K: StorageKey,
-        V: Storable<N>,
-    {
-        let slot = mapping_slot(key.as_storage_bytes(), self.base_slot);
-        V::delete(storage, slot, crate::storage::types::LayoutCtx::Full)
-    }
-
-    /// Reads a value from a mapping field within a struct at a given base slot.
+    /// Returns a `Slot<V>` for a mapping field within a struct at a given base slot.
     ///
     /// This method enables accessing mapping fields within structs when you have
     /// the struct's base slot at runtime and know the field's offset.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // For: mapping(bytes32 => Orderbook) books, where Orderbook.bids is at field offset 1
-    /// let orderbook_base = mapping_slot(pair_key, BooksSlot::SLOT);
-    /// let bid = Mapping::<i16, TickLevel, DummySlot>::read_at_offset(
-    ///     &mut contract,
-    ///     orderbook_base,
-    ///     1,  // field offset
-    ///     tick
-    /// )?;
-    /// ```
     #[inline]
-    pub fn read_at_offset<S: StorageOps, const N: usize>(
-        storage: &mut S,
+    pub fn at_offset<const N: usize>(
         struct_base_slot: U256,
         field_offset_slots: usize,
         key: K,
-    ) -> Result<V>
+    ) -> Slot<V>
     where
         K: StorageKey,
         V: Storable<N>,
     {
         let field_slot = struct_base_slot + U256::from(field_offset_slots);
-        let slot = mapping_slot(key.as_storage_bytes(), field_slot);
-        V::load(storage, slot, crate::storage::types::LayoutCtx::Full)
-    }
-
-    /// Reads a packed field from within a value stored in a mapping field at a given base slot.
-    ///
-    /// Use this when you have a mapping field within a struct, and the VALUES in that mapping
-    /// are themselves structs with packed fields. This method computes the mapping slot and reads
-    /// a specific packed field from the mapped value.
-    #[inline]
-    pub fn read_at_offset_packed<S: StorageOps>(
-        &self,
-        storage: &mut S,
-        location: crate::storage::FieldLocation,
-        key: K,
-    ) -> Result<V>
-    where
-        K: StorageKey,
-        V: Storable<1>,
-    {
-        let mapped_value_slot = mapping_slot(key.as_storage_bytes(), self.base_slot);
-        crate::storage::packing::read_packed_at(storage, mapped_value_slot, location)
-    }
-
-    /// Writes a value to a mapping field within a struct at a given base slot.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let orderbook_base = mapping_slot(pair_key, BooksSlot::SLOT);
-    /// Mapping::<i16, TickLevel, DummySlot>::write_at_offset(
-    ///     &mut contract,
-    ///     orderbook_base,
-    ///     1,  // field offset
-    ///     tick,
-    ///     tick_level
-    /// )?;
-    /// ```
-    #[inline]
-    pub fn write_at_offset<S: StorageOps, const N: usize>(
-        storage: &mut S,
-        struct_base_slot: U256,
-        field_offset_slots: usize,
-        key: K,
-        value: V,
-    ) -> Result<()>
-    where
-        K: StorageKey,
-        V: Storable<N>,
-    {
-        let field_slot = struct_base_slot + U256::from(field_offset_slots);
-        let slot = mapping_slot(key.as_storage_bytes(), field_slot);
-        value.store(storage, slot, crate::storage::types::LayoutCtx::Full)
-    }
-
-    /// Writes a packed field within a value stored in a mapping.
-    ///
-    /// Use this when you have a mapping and the VALUES in that mapping are structs with packed fields.
-    /// This method computes the mapping slot and writes a specific packed field, preserving other
-    /// fields in the same slot.
-    #[inline]
-    pub fn write_at_offset_packed<S: StorageOps>(
-        &self,
-        storage: &mut S,
-        location: crate::storage::FieldLocation,
-        key: K,
-        value: V,
-    ) -> Result<()>
-    where
-        K: StorageKey,
-        V: Storable<1>,
-    {
-        let mapped_value_slot = mapping_slot(key.as_storage_bytes(), self.base_slot);
-        crate::storage::packing::write_packed_at(storage, mapped_value_slot, location, &value)
-    }
-
-    /// Deletes a packed field within a value stored in a mapping (sets bytes to zero).
-    ///
-    /// Use this when you have a mapping and the VALUES in that mapping are structs with packed fields.
-    /// This method computes the mapping slot and clears a specific packed field, preserving other
-    /// fields in the same slot.
-    #[inline]
-    pub fn delete_at_offset_packed<S: StorageOps>(
-        &self,
-        storage: &mut S,
-        location: crate::storage::FieldLocation,
-        key: K,
-    ) -> Result<()>
-    where
-        K: StorageKey,
-        V: Storable<1>,
-    {
-        let mapped_value_slot = mapping_slot(key.as_storage_bytes(), self.base_slot);
-        crate::storage::packing::clear_packed_at(storage, mapped_value_slot, location)
-    }
-
-    /// Deletes a value from a mapping field within a struct at a given base slot.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let orderbook_base = mapping_slot(pair_key, BooksSlot::SLOT);
-    /// Mapping::<i16, TickLevel, DummySlot>::delete_at_offset(
-    ///     &mut contract,
-    ///     orderbook_base,
-    ///     1,  // field offset
-    ///     tick
-    /// )?;
-    /// ```
-    #[inline]
-    pub fn delete_at_offset<S: StorageOps, const N: usize>(
-        storage: &mut S,
-        struct_base_slot: U256,
-        field_offset_slots: usize,
-        key: K,
-    ) -> Result<()>
-    where
-        K: StorageKey,
-        V: Storable<N>,
-    {
-        let field_slot = struct_base_slot + U256::from(field_offset_slots);
-        let slot = mapping_slot(key.as_storage_bytes(), field_slot);
-        V::delete(storage, slot, crate::storage::types::LayoutCtx::Full)
+        Slot::new(mapping_slot(key.as_storage_bytes(), field_slot))
     }
 }
 
-impl<K1, K2, V> Mapping<K1, Mapping<K2, V>> {
-    /// Reads a value from a nested mapping at the given keys.
+/// Type-safe access wrapper for nested EVM storage mappings (two-level hash-based storage).
+///
+/// Like `Mapping<K, V>`, this struct does not store data. It provides a zero-cost abstraction
+/// for accessing nested mapping storage using Solidity's double-hash layout. It wraps a base
+/// slot and provides methods to navigate through two levels of key lookups.
+///
+/// # Type Parameters
+///
+/// - `K1`: First-level key type (must implement `StorageKey`)
+/// - `K2`: Second-level key type (must implement `StorageKey`)
+/// - `V`: Value type (must implement `Storable<N>`)
+///
+/// # Storage Layout
+///
+/// Nested mappings use a two-step hashing process:
+/// - Base slot: stored in the inner mapping's `base_slot`
+/// - Intermediate slot for `k1`: `keccak256(k1 || base_slot)`
+/// - Final slot for `k1, k2`: `keccak256(k2 || intermediate_slot)`
+///
+/// # Usage Pattern
+///
+/// The typical usage follows a two-step composable pattern:
+/// 1. Create a `NestedMapping<K1, K2, V>` with a base slot
+/// 2. Call `.at(key1)` to get an intermediate `Mapping<K2, V>`
+/// 3. Call `.at(key2)` on the intermediate mapping to get a `Slot<V>`
+/// 4. Use `.read()`, `.write()`, or `.delete()` on the resulting slot
+///
+/// # Accessing Nested Mapping Fields Within Structs
+///
+/// When a nested mapping is a field within a struct, you can manually compute the field's
+/// slot by adding the offset to the struct's base slot, then create a new `NestedMapping`:
+///
+/// # Relationship with `Mapping<K, V>` and `Slot<V>`
+///
+/// `NestedMapping<K1, K2, V>` internally wraps `Mapping<K1, Mapping<K2, V>>`. The first
+/// `.at(k1)` call performs the first hash to compute an intermediate slot and returns a
+/// `Mapping<K2, V>`. The second `.at(k2)` call on that mapping performs the second hash
+/// and returns a `Slot<V>` for read/write operations.
+#[derive(Debug, Clone, Copy)]
+pub struct NestedMapping<K1, K2, V> {
+    _inner: Mapping<K1, Mapping<K2, V>>,
+}
+
+impl<K1, K2, V> NestedMapping<K1, K2, V> {
+    /// Creates a new `NestedMapping` with the given base slot number.
     ///
-    /// This method:
-    /// 1. Computes the storage slot using: `keccak256(k2 || keccak256(k1 || base_slot))`
-    /// 2. Delegates to `Storable::load`, which may read one or more consecutive slots
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let allowances = Mapping::<Address, Mapping<Address, U256>>::new(slots::ALLOWANCES);
-    /// let allowance = allowances.read_nested(
-    ///     &mut contract,
-    ///     owner_address,
-    ///     spender_address
-    /// )?;
-    /// ```
+    /// This is typically called with slot constants generated by the `#[contract]` macro.
     #[inline]
-    pub fn read_nested<S: StorageOps, const N: usize>(
-        &self,
-        storage: &mut S,
-        key1: K1,
-        key2: K2,
-    ) -> Result<V>
-    where
-        K1: StorageKey,
-        K2: StorageKey,
-        V: Storable<N>,
-    {
-        let slot = double_mapping_slot(
-            key1.as_storage_bytes(),
-            key2.as_storage_bytes(),
-            self.base_slot,
-        );
-        V::load(storage, slot, crate::storage::types::LayoutCtx::Full)
+    pub const fn new(base_slot: U256) -> Self {
+        Self {
+            _inner: Mapping::new(base_slot),
+        }
     }
 
-    /// Writes a value to a nested mapping at the given keys.
-    ///
-    /// This method:
-    /// 1. Computes the storage slot using: `keccak256(k2 || keccak256(k1 || base_slot))`
-    /// 2. Delegates to `Storable::store`, which may write one or more consecutive slots
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let allowances = Mapping::<Address, Mapping<Address, U256>>::new(slots::ALLOWANCES);
-    /// allowances.write_nested(
-    ///     &mut contract,
-    ///     owner_address,
-    ///     spender_address,
-    ///     U256::from(1000)
-    /// )?;
-    /// ```
+    /// Returns the U256 base storage slot number for this nested mapping.
     #[inline]
-    pub fn write_nested<S: StorageOps, const N: usize>(
-        &self,
-        storage: &mut S,
-        key1: K1,
-        key2: K2,
-        value: V,
-    ) -> Result<()>
-    where
-        K1: StorageKey,
-        K2: StorageKey,
-        V: Storable<N>,
-    {
-        let slot = double_mapping_slot(
-            key1.as_storage_bytes(),
-            key2.as_storage_bytes(),
-            self.base_slot,
-        );
-        value.store(storage, slot, crate::storage::types::LayoutCtx::Full)
+    pub const fn slot(&self) -> U256 {
+        self._inner.slot()
     }
 
-    /// Deletes a value from a nested mapping at the given keys (sets all slots to zero).
-    ///
-    /// This method:
-    /// 1. Computes the storage slot using: `keccak256(k2 || keccak256(k1 || base_slot))`
-    /// 2. Delegates to `Storable::delete`, which sets `N` consecutive slots to zero
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let allowances = Mapping::<Address, Mapping<Address, U256>>::new(slots::ALLOWANCES);
-    /// allowances.delete_nested(
-    ///     &mut contract,
-    ///     owner_address,
-    ///     spender_address
-    /// )?;
-    /// ```
+    /// Returns a `Mapping<K2, V>` for the given first-level key.
     #[inline]
-    pub fn delete_nested<S: StorageOps, const N: usize>(
-        &self,
-        storage: &mut S,
-        key1: K1,
-        key2: K2,
-    ) -> Result<()>
+    pub fn at(&self, key1: K1) -> Mapping<K2, V>
     where
         K1: StorageKey,
-        K2: StorageKey,
-        V: Storable<N>,
     {
-        let slot = double_mapping_slot(
-            key1.as_storage_bytes(),
-            key2.as_storage_bytes(),
-            self.base_slot,
-        );
-        V::delete(storage, slot, crate::storage::types::LayoutCtx::Full)
-    }
-
-    /// Reads a value from a nested mapping field within a struct at a runtime base slot.
-    ///
-    /// This enables accessing nested mapping fields within structs when you have
-    /// the struct's base slot at runtime and know the field's offset.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // For a struct with nested mapping at field offset 3
-    /// let struct_base = mapping_slot(key, StructSlot::SLOT);
-    /// let value = Mapping::<Address, Mapping<Address, U256>>::read_nested_at_offset(
-    ///     &mut storage,
-    ///     struct_base,
-    ///     3,  // field offset
-    ///     owner,
-    ///     spender
-    /// )?;
-    /// ```
-    #[inline]
-    pub fn read_nested_at_offset<S: StorageOps, const N: usize>(
-        storage: &mut S,
-        struct_base_slot: U256,
-        field_offset_slots: usize,
-        key1: K1,
-        key2: K2,
-    ) -> Result<V>
-    where
-        K1: StorageKey,
-        K2: StorageKey,
-        V: Storable<N>,
-    {
-        let field_slot = struct_base_slot + U256::from(field_offset_slots);
-        let slot =
-            double_mapping_slot(key1.as_storage_bytes(), key2.as_storage_bytes(), field_slot);
-        V::load(storage, slot, crate::storage::types::LayoutCtx::Full)
-    }
-
-    /// Writes a value to a nested mapping field within a struct at a runtime base slot.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let struct_base = mapping_slot(key, StructSlot::SLOT);
-    /// Mapping::<Address, Mapping<Address, U256>>::write_nested_at_offset(
-    ///     &mut storage,
-    ///     struct_base,
-    ///     3,  // field offset
-    ///     owner,
-    ///     spender,
-    ///     allowance
-    /// )?;
-    /// ```
-    #[inline]
-    pub fn write_nested_at_offset<S: StorageOps, const N: usize>(
-        storage: &mut S,
-        struct_base_slot: U256,
-        field_offset_slots: usize,
-        key1: K1,
-        key2: K2,
-        value: V,
-    ) -> Result<()>
-    where
-        K1: StorageKey,
-        K2: StorageKey,
-        V: Storable<N>,
-    {
-        let field_slot = struct_base_slot + U256::from(field_offset_slots);
-        let slot =
-            double_mapping_slot(key1.as_storage_bytes(), key2.as_storage_bytes(), field_slot);
-        value.store(storage, slot, crate::storage::types::LayoutCtx::Full)
-    }
-
-    /// Deletes a value from a nested mapping field within a struct at a runtime base slot.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let struct_base = mapping_slot(key, StructSlot::SLOT);
-    /// Mapping::<Address, Mapping<Address, U256>>::delete_nested_at_offset(
-    ///     &mut storage,
-    ///     struct_base,
-    ///     3,  // field offset
-    ///     owner,
-    ///     spender
-    /// )?;
-    /// ```
-    #[inline]
-    pub fn delete_nested_at_offset<S: StorageOps, const N: usize>(
-        storage: &mut S,
-        struct_base_slot: U256,
-        field_offset_slots: usize,
-        key1: K1,
-        key2: K2,
-    ) -> Result<()>
-    where
-        K1: StorageKey,
-        K2: StorageKey,
-        V: Storable<N>,
-    {
-        let field_slot = struct_base_slot + U256::from(field_offset_slots);
-        let slot =
-            double_mapping_slot(key1.as_storage_bytes(), key2.as_storage_bytes(), field_slot);
-        V::delete(storage, slot, crate::storage::types::LayoutCtx::Full)
-    }
-
-    /// Reads a packed field from within a value stored in a nested mapping.
-    ///
-    /// Use this when you have a nested mapping and the VALUES in that mapping are structs
-    /// with packed fields. This method computes the double mapping slot and reads a specific
-    /// packed field from the mapped value.
-    #[inline]
-    pub fn read_nested_at_offset_packed<S: StorageOps>(
-        &self,
-        storage: &mut S,
-        location: crate::storage::FieldLocation,
-        key1: K1,
-        key2: K2,
-    ) -> Result<V>
-    where
-        K1: StorageKey,
-        K2: StorageKey,
-        V: Storable<1>,
-    {
-        let mapped_value_slot = double_mapping_slot(
-            key1.as_storage_bytes(),
-            key2.as_storage_bytes(),
-            self.base_slot,
-        );
-        crate::storage::packing::read_packed_at(storage, mapped_value_slot, location)
-    }
-
-    /// Writes a packed field within a value stored in a nested mapping.
-    ///
-    /// Use this when you have a nested mapping and the VALUES in that mapping are structs
-    /// with packed fields. This method computes the double mapping slot and writes a specific
-    /// packed field, preserving other fields in the same slot.
-    #[inline]
-    pub fn write_nested_at_offset_packed<S: StorageOps>(
-        &self,
-        storage: &mut S,
-        location: crate::storage::FieldLocation,
-        key1: K1,
-        key2: K2,
-        value: V,
-    ) -> Result<()>
-    where
-        K1: StorageKey,
-        K2: StorageKey,
-        V: Storable<1>,
-    {
-        let mapped_value_slot = double_mapping_slot(
-            key1.as_storage_bytes(),
-            key2.as_storage_bytes(),
-            self.base_slot,
-        );
-        crate::storage::packing::write_packed_at(storage, mapped_value_slot, location, &value)
-    }
-
-    /// Deletes a packed field within a value stored in a nested mapping (sets bytes to zero).
-    ///
-    /// Use this when you have a nested mapping and the VALUES in that mapping are structs
-    /// with packed fields. This method computes the double mapping slot and clears a specific
-    /// packed field, preserving other fields in the same slot.
-    #[inline]
-    pub fn delete_nested_at_offset_packed<S: StorageOps>(
-        &self,
-        storage: &mut S,
-        location: crate::storage::FieldLocation,
-        key1: K1,
-        key2: K2,
-    ) -> Result<()>
-    where
-        K1: StorageKey,
-        K2: StorageKey,
-        V: Storable<1>,
-    {
-        let mapped_value_slot = double_mapping_slot(
-            key1.as_storage_bytes(),
-            key2.as_storage_bytes(),
-            self.base_slot,
-        );
-        crate::storage::packing::clear_packed_at(storage, mapped_value_slot, location)
+        let intermediate_slot = mapping_slot(key1.as_storage_bytes(), self._inner.base_slot);
+        Mapping::new(intermediate_slot)
     }
 }
 
 impl<K, V> Default for Mapping<K, V> {
+    fn default() -> Self {
+        Self::new(U256::ZERO)
+    }
+}
+
+impl<K1, K2, V> Default for NestedMapping<K1, K2, V> {
     fn default() -> Self {
         Self::new(U256::ZERO)
     }
@@ -584,6 +183,14 @@ impl<K, V> Default for Mapping<K, V> {
 //
 // **NOTE:** Necessary to allow it to participate in struct layout calculations.
 impl<K, V> StorableType for Mapping<K, V> {
+    const LAYOUT: Layout = Layout::Slots(1);
+}
+
+// Nested mappings occupy a full 32-byte slot in the layout (used as a base for hashing),
+// even though they don't store data in that slot directly.
+//
+// **NOTE:** Necessary to allow it to participate in struct layout calculations.
+impl<K1, K2, V> StorableType for NestedMapping<K1, K2, V> {
     const LAYOUT: Layout = Layout::Slots(1);
 }
 
@@ -604,24 +211,13 @@ pub fn mapping_slot<T: AsRef<[u8]>>(key: T, mapping_slot: U256) -> U256 {
     U256::from_be_bytes(keccak256(buf).0)
 }
 
-/// Compute storage slot for a double mapping (mapping\[key1\]\[key2\])
-#[inline]
-pub fn double_mapping_slot<T: AsRef<[u8]>, U: AsRef<[u8]>>(
-    key1: T,
-    key2: U,
-    base_slot: U256,
-) -> U256 {
-    let intermediate_slot = mapping_slot(key1, base_slot);
-    let mut buf = [0u8; 64];
-    buf[..32].copy_from_slice(&left_pad_to_32(key2.as_ref()));
-    buf[32..].copy_from_slice(&intermediate_slot.to_be_bytes::<32>());
-    U256::from_be_bytes(keccak256(buf).0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{PrecompileStorageProvider, hashmap::HashMapStorageProvider};
+    use crate::{
+        error::Result,
+        storage::{PrecompileStorageProvider, StorageOps, hashmap::HashMapStorageProvider},
+    };
     use alloy::primitives::{Address, B256, address};
     use proptest::prelude::*;
 
@@ -708,12 +304,13 @@ mod tests {
         let alice = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
         let tip_fee_mgr = address!("0xfeec000000000000000000000000000000000000");
 
-        let allowance_slot = double_mapping_slot(alice, tip_fee_mgr, U256::from(11));
+        let allowances = NestedMapping::<Address, Address, U256>::new(U256::from(11));
+        let allowance_slot = allowances.at(alice).at(tip_fee_mgr).slot();
 
         println!("Alice->TipFeeManager allowance slot: 0x{allowance_slot:064x}");
 
         // Just verify it's calculated consistently
-        let allowance_slot2 = double_mapping_slot(alice, tip_fee_mgr, U256::from(11));
+        let allowance_slot2 = allowances.at(alice).at(tip_fee_mgr).slot();
         assert_eq!(allowance_slot, allowance_slot2);
     }
 
@@ -723,8 +320,9 @@ mod tests {
         let bob = address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
         let spender = address!("0xfeec000000000000000000000000000000000000");
 
-        let alice_allowance = double_mapping_slot(alice, spender, U256::from(11));
-        let bob_allowance = double_mapping_slot(bob, spender, U256::from(11));
+        let allowances = NestedMapping::<Address, Address, U256>::new(U256::from(11));
+        let alice_allowance = allowances.at(alice).at(spender).slot();
+        let bob_allowance = allowances.at(bob).at(spender).slot();
 
         assert_ne!(alice_allowance, bob_allowance);
     }
@@ -765,15 +363,16 @@ mod tests {
         let role: B256 = U256::ONE.into();
         let base_slot = U256::ONE;
 
-        let slot = double_mapping_slot(account, role, base_slot);
+        let roles = NestedMapping::<Address, B256, U256>::new(base_slot);
+        let slot = roles.at(account).at(role).slot();
 
         // Verify deterministic
-        let slot2 = double_mapping_slot(account, role, base_slot);
+        let slot2 = roles.at(account).at(role).slot();
         assert_eq!(slot, slot2);
 
         // Verify different role yields different slot
         let different_role: B256 = U256::from(2).into();
-        let different_slot = double_mapping_slot(account, different_role, base_slot);
+        let different_slot = roles.at(account).at(different_role).slot();
         assert_ne!(slot, different_slot);
     }
 
@@ -819,8 +418,8 @@ mod tests {
         let zero_mapping = Mapping::<Address, U256>::new(U256::ZERO);
         let value = U256::from(1000u64);
 
-        _ = zero_mapping.write(&mut contract, user, value);
-        let loaded = zero_mapping.read(&mut contract, user).unwrap();
+        _ = zero_mapping.at(user).write(&mut contract, value);
+        let loaded = zero_mapping.at(user).read(&mut contract).unwrap();
         assert_eq!(loaded, value);
     }
 
@@ -835,8 +434,8 @@ mod tests {
         let user = Address::random();
 
         let value = U256::from(999u64);
-        _ = max_mapping.write(&mut contract, user, value);
-        let loaded = max_mapping.read(&mut contract, user).unwrap();
+        _ = max_mapping.at(user).write(&mut contract, value);
+        let loaded = max_mapping.at(user).read(&mut contract).unwrap();
         assert_eq!(loaded, value);
     }
 
@@ -853,12 +452,12 @@ mod tests {
         let balance2 = U256::from(2000u64);
 
         // Write balances
-        _ = named_mapping.write(&mut contract, user1, balance1);
-        _ = named_mapping.write(&mut contract, user2, balance2);
+        _ = named_mapping.at(user1).write(&mut contract, balance1);
+        _ = named_mapping.at(user2).write(&mut contract, balance2);
 
         // Read balances
-        let loaded1 = named_mapping.read(&mut contract, user1).unwrap();
-        let loaded2 = named_mapping.read(&mut contract, user2).unwrap();
+        let loaded1 = named_mapping.at(user1).read(&mut contract).unwrap();
+        let loaded2 = named_mapping.at(user2).read(&mut contract).unwrap();
 
         assert_eq!(loaded1, balance1);
         assert_eq!(loaded2, balance2);
@@ -873,7 +472,7 @@ mod tests {
         let named_mapping = Mapping::<Address, U256>::new(TEST_SLOT_1);
 
         // Reading uninitialized mapping slot should return zero
-        let balance = named_mapping.read(&mut contract, user).unwrap();
+        let balance = named_mapping.at(user).read(&mut contract).unwrap();
         assert_eq!(balance, U256::ZERO);
     }
 
@@ -886,12 +485,18 @@ mod tests {
         let named_mapping = Mapping::<Address, U256>::new(TEST_SLOT_1);
 
         // Write initial balance
-        _ = named_mapping.write(&mut contract, user, U256::from(100));
-        assert_eq!(named_mapping.read(&mut contract, user), Ok(U256::from(100)));
+        _ = named_mapping.at(user).write(&mut contract, U256::from(100));
+        assert_eq!(
+            named_mapping.at(user).read(&mut contract),
+            Ok(U256::from(100))
+        );
 
         // Overwrite with new balance
-        _ = named_mapping.write(&mut contract, user, U256::from(200));
-        assert_eq!(named_mapping.read(&mut contract, user), Ok(U256::from(200)));
+        _ = named_mapping.at(user).write(&mut contract, U256::from(200));
+        assert_eq!(
+            named_mapping.at(user).read(&mut contract),
+            Ok(U256::from(200))
+        );
     }
 
     #[test]
@@ -903,21 +508,31 @@ mod tests {
         let spender2 = Address::random();
 
         // Nested mapping: outer slot is 11, inner slot is dummy (unused)
-        let nested_mapping = Mapping::<Address, Mapping<Address, U256>>::new(TEST_SLOT_1);
+        let nested_mapping = NestedMapping::<Address, Address, U256>::new(TEST_SLOT_1);
 
         let allowance1 = U256::from(500u64);
         let allowance2 = U256::from(1500u64);
 
         // Write allowances using nested API
-        _ = nested_mapping.write_nested(&mut contract, owner, spender1, allowance1);
-        _ = nested_mapping.write_nested(&mut contract, owner, spender2, allowance2);
+        _ = nested_mapping
+            .at(owner)
+            .at(spender1)
+            .write(&mut contract, allowance1);
+        _ = nested_mapping
+            .at(owner)
+            .at(spender2)
+            .write(&mut contract, allowance2);
 
         // Read allowances using nested API
         let loaded1 = nested_mapping
-            .read_nested(&mut contract, owner, spender1)
+            .at(owner)
+            .at(spender1)
+            .read(&mut contract)
             .unwrap();
         let loaded2 = nested_mapping
-            .read_nested(&mut contract, owner, spender2)
+            .at(owner)
+            .at(spender2)
+            .read(&mut contract)
             .unwrap();
 
         assert_eq!(loaded1, allowance1);
@@ -931,11 +546,13 @@ mod tests {
         let owner = Address::random();
         let spender = Address::random();
 
-        let nested_mapping = Mapping::<Address, Mapping<Address, U256>>::new(TEST_SLOT_1);
+        let nested_mapping = NestedMapping::<Address, Address, U256>::new(TEST_SLOT_1);
 
         // Reading uninitialized nested mapping should return zero
         let allowance = nested_mapping
-            .read_nested(&mut contract, owner, spender)
+            .at(owner)
+            .at(spender)
+            .read(&mut contract)
             .unwrap();
         assert_eq!(allowance, U256::ZERO);
     }
@@ -948,20 +565,27 @@ mod tests {
         let owner2 = Address::random();
         let spender = Address::random();
 
-        let nested_mapping = Mapping::<Address, Mapping<Address, U256>>::new(TEST_SLOT_1);
+        let nested_mapping = NestedMapping::<Address, Address, U256>::new(TEST_SLOT_1);
 
         // Set allowance for owner1 -> spender
-        _ = nested_mapping.write_nested(&mut contract, owner1, spender, U256::from(100));
+        _ = nested_mapping
+            .at(owner1)
+            .at(spender)
+            .write(&mut contract, U256::from(100));
 
         // Verify owner2 -> spender is still zero (independent slot)
         let allowance2 = nested_mapping
-            .read_nested(&mut contract, owner2, spender)
+            .at(owner2)
+            .at(spender)
+            .read(&mut contract)
             .unwrap();
         assert_eq!(allowance2, U256::ZERO);
 
         // Verify owner1 -> spender is unchanged
         let allowance1 = nested_mapping
-            .read_nested(&mut contract, owner1, spender)
+            .at(owner1)
+            .at(spender)
+            .read(&mut contract)
             .unwrap();
         assert_eq!(allowance1, U256::from(100));
     }
@@ -976,14 +600,14 @@ mod tests {
         let user = Address::random();
         let nonce = U256::from(42);
 
-        _ = nonces_mapping.write(&mut contract, user, nonce);
-        let loaded_nonce = nonces_mapping.read(&mut contract, user).unwrap();
+        _ = nonces_mapping.at(user).write(&mut contract, nonce);
+        let loaded_nonce = nonces_mapping.at(user).read(&mut contract).unwrap();
         assert_eq!(loaded_nonce, nonce);
 
         // Mapping with bool value
         let flags_mapping = Mapping::<Address, bool>::new(TEST_SLOT_MAX);
-        _ = flags_mapping.write(&mut contract, user, true);
-        let loaded_flag = flags_mapping.read(&mut contract, user).unwrap();
+        _ = flags_mapping.at(user).write(&mut contract, true);
+        let loaded_flag = flags_mapping.at(user).read(&mut contract).unwrap();
         assert!(loaded_flag);
     }
 
@@ -1002,13 +626,13 @@ mod tests {
         let test_mapping = Mapping::<Address, U256>::new(TEST_SLOT_0);
 
             // Write and read back
-            test_mapping.write(&mut contract, key, value)?;
-            let loaded = test_mapping.read(&mut contract, key)?;
+            test_mapping.at(key).write(&mut contract, value)?;
+            let loaded = test_mapping.at(key).read(&mut contract)?;
             prop_assert_eq!(loaded, value, "roundtrip failed");
 
             // Delete and verify
-            test_mapping.delete(&mut contract, key)?;
-            let after_delete = test_mapping.read(&mut contract, key)?;
+            test_mapping.at(key).delete(&mut contract)?;
+            let after_delete = test_mapping.at(key).read(&mut contract)?;
             prop_assert_eq!(after_delete, U256::ZERO, "not zero after delete");
         }
 
@@ -1028,20 +652,20 @@ mod tests {
         let test_mapping = Mapping::<Address, U256>::new(TEST_SLOT_0);
 
             // Write different values to different keys
-            test_mapping.write(&mut contract, key1, value1)?;
-            test_mapping.write(&mut contract, key2, value2)?;
+            test_mapping.at(key1).write(&mut contract, value1)?;
+            test_mapping.at(key2).write(&mut contract, value2)?;
 
             // Verify both keys retain their independent values
-            let loaded1 = test_mapping.read(&mut contract, key1)?;
-            let loaded2 = test_mapping.read(&mut contract, key2)?;
+            let loaded1 = test_mapping.at(key1).read(&mut contract)?;
+            let loaded2 = test_mapping.at(key2).read(&mut contract)?;
 
             prop_assert_eq!(loaded1, value1, "key1 value changed");
             prop_assert_eq!(loaded2, value2, "key2 value changed");
 
             // Delete key1, verify key2 unaffected
-            test_mapping.delete(&mut contract, key1)?;
-            let after_delete1 = test_mapping.read(&mut contract, key1)?;
-            let after_delete2 = test_mapping.read(&mut contract, key2)?;
+            test_mapping.at(key1).delete(&mut contract)?;
+            let after_delete1 = test_mapping.at(key1).read(&mut contract)?;
+            let after_delete2 = test_mapping.at(key2).read(&mut contract)?;
 
             prop_assert_eq!(after_delete1, U256::ZERO, "key1 not deleted");
             prop_assert_eq!(after_delete2, value2, "key2 affected by key1 delete");
@@ -1061,23 +685,23 @@ mod tests {
             let mut storage = HashMapStorageProvider::new(1);
             let mut contract = setup_test_contract(&mut storage);
 
-        let nested_mapping = Mapping::<Address, Mapping<Address, U256>>::new(TEST_SLOT_1);
+        let nested_mapping = NestedMapping::<Address, Address, U256>::new(TEST_SLOT_1);
 
             // Write different allowances for different owners
-            nested_mapping.write_nested(&mut contract, owner1, spender, allowance1)?;
-            nested_mapping.write_nested(&mut contract, owner2, spender, allowance2)?;
+            nested_mapping.at(owner1).at(spender).write(&mut contract, allowance1)?;
+            nested_mapping.at(owner2).at(spender).write(&mut contract, allowance2)?;
 
             // Verify both owners' allowances are independent
-            let loaded1 = nested_mapping.read_nested(&mut contract, owner1, spender)?;
-            let loaded2 = nested_mapping.read_nested(&mut contract, owner2, spender)?;
+            let loaded1 = nested_mapping.at(owner1).at(spender).read(&mut contract)?;
+            let loaded2 = nested_mapping.at(owner2).at(spender).read(&mut contract)?;
 
             prop_assert_eq!(loaded1, allowance1, "owner1 allowance changed");
             prop_assert_eq!(loaded2, allowance2, "owner2 allowance changed");
 
             // Delete owner1's allowance, verify owner2 unaffected
-            nested_mapping.delete_nested(&mut contract, owner1, spender)?;
-            let after_delete1 = nested_mapping.read_nested(&mut contract, owner1, spender)?;
-            let after_delete2 = nested_mapping.read_nested(&mut contract, owner2, spender)?;
+            nested_mapping.at(owner1).at(spender).delete(&mut contract)?;
+            let after_delete1 = nested_mapping.at(owner1).at(spender).read(&mut contract)?;
+            let after_delete2 = nested_mapping.at(owner2).at(spender).read(&mut contract)?;
 
             prop_assert_eq!(after_delete1, U256::ZERO, "owner1 allowance not deleted");
             prop_assert_eq!(after_delete2, allowance2, "owner2 allowance affected");
@@ -1101,25 +725,24 @@ mod tests {
         let bid_value = U256::from(500);
 
         // Write to orderbook.bids[tick]
-        Mapping::<i16, U256>::write_at_offset(
-            &mut contract,
+        Mapping::<i16, U256>::at_offset(
             orderbook_base_slot,
             1, // bids field is at offset 1 in Orderbook
             tick,
-            bid_value,
-        )?;
+        )
+        .write(&mut contract, bid_value)?;
 
         // Read from orderbook.bids[tick]
         let read_value =
-            Mapping::<i16, U256>::read_at_offset(&mut contract, orderbook_base_slot, 1, tick)?;
+            Mapping::<i16, U256>::at_offset(orderbook_base_slot, 1, tick).read(&mut contract)?;
 
         assert_eq!(read_value, bid_value);
 
         // Delete orderbook.bids[tick]
-        Mapping::<i16, U256>::delete_at_offset(&mut contract, orderbook_base_slot, 1, tick)?;
+        Mapping::<i16, U256>::at_offset(orderbook_base_slot, 1, tick).delete(&mut contract)?;
 
         let deleted_value =
-            Mapping::<i16, U256>::read_at_offset(&mut contract, orderbook_base_slot, 1, tick)?;
+            Mapping::<i16, U256>::at_offset(orderbook_base_slot, 1, tick).read(&mut contract)?;
 
         assert_eq!(deleted_value, U256::ZERO);
 
@@ -1140,113 +763,25 @@ mod tests {
         let allowance = U256::from(1000);
 
         // Write to nested_mapping[owner][spender]
-        Mapping::<Address, Mapping<Address, U256>>::write_nested_at_offset(
-            &mut contract,
-            struct_base_slot,
-            3, // nested mapping at field offset 3
-            owner,
-            spender,
-            allowance,
-        )?;
+        let field_slot = struct_base_slot + U256::from(3); // nested mapping at field offset 3
+        let nested_mapping = NestedMapping::<Address, Address, U256>::new(field_slot);
+        nested_mapping
+            .at(owner)
+            .at(spender)
+            .write(&mut contract, allowance)?;
 
         // Read back
-        let read_allowance = Mapping::<Address, Mapping<Address, U256>>::read_nested_at_offset(
-            &mut contract,
-            struct_base_slot,
-            3,
-            owner,
-            spender,
-        )?;
+        let read_allowance = nested_mapping.at(owner).at(spender).read(&mut contract)?;
 
         assert_eq!(read_allowance, allowance);
 
         // Delete
-        Mapping::<Address, Mapping<Address, U256>>::delete_nested_at_offset(
-            &mut contract,
-            struct_base_slot,
-            3,
-            owner,
-            spender,
-        )?;
+        nested_mapping.at(owner).at(spender).delete(&mut contract)?;
 
-        let deleted = Mapping::<Address, Mapping<Address, U256>>::read_nested_at_offset(
-            &mut contract,
-            struct_base_slot,
-            3,
-            owner,
-            spender,
-        )?;
+        let deleted = nested_mapping.at(owner).at(spender).read(&mut contract)?;
 
         assert_eq!(deleted, U256::ZERO);
 
-        Ok(())
-    }
-
-    #[test]
-    fn test_write_nested_at_offset_packed() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
-        let mut contract = setup_test_contract(&mut storage);
-
-        let key1 = Address::random();
-        let key2 = Address::random();
-        let value = U256::from(0xabcd);
-
-        // Write packed field in nested mapping value
-        let mapping = Mapping::<Address, Mapping<Address, U256>>::new(TEST_SLOT_1);
-        mapping.write_nested_at_offset_packed(
-            &mut contract,
-            crate::storage::FieldLocation::new(0, 0, 2), // offset_slots, offset_bytes, size_bytes
-            key1,
-            key2,
-            value,
-        )?;
-
-        // Read back using read_nested_at_offset_packed
-        let read_value = mapping.read_nested_at_offset_packed(
-            &mut contract,
-            crate::storage::FieldLocation::new(0, 0, 2),
-            key1,
-            key2,
-        )?;
-
-        assert_eq!(read_value, value);
-        Ok(())
-    }
-
-    #[test]
-    fn test_delete_nested_at_offset_packed() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
-        let mut contract = setup_test_contract(&mut storage);
-
-        let key1 = Address::random();
-        let key2 = Address::random();
-        let value = U256::from(0x1234);
-
-        // Write then delete packed field
-        let mapping = Mapping::<Address, Mapping<Address, U256>>::new(TEST_SLOT_2);
-        mapping.write_nested_at_offset_packed(
-            &mut contract,
-            crate::storage::FieldLocation::new(0, 0, 2),
-            key1,
-            key2,
-            value,
-        )?;
-
-        mapping.delete_nested_at_offset_packed(
-            &mut contract,
-            crate::storage::FieldLocation::new(0, 0, 2),
-            key1,
-            key2,
-        )?;
-
-        let deleted = mapping.read_nested_at_offset_packed(
-            &mut contract,
-            crate::storage::FieldLocation::new(0, 0, 2),
-            key1,
-            key2,
-        )?;
-
-        assert_eq!(deleted, U256::ZERO);
         Ok(())
     }
 
@@ -1262,31 +797,26 @@ mod tests {
         // bids at offset 1
         let tick1: i16 = 50;
         let bid1 = U256::from(100);
-        Mapping::<i16, U256>::write_at_offset(&mut contract, orderbook_base, 1, tick1, bid1)?;
+        Mapping::<i16, U256>::at_offset(orderbook_base, 1, tick1).write(&mut contract, bid1)?;
 
         // asks at offset 2
         let tick2: i16 = -25;
         let ask1 = U256::from(200);
-        Mapping::<i16, U256>::write_at_offset(&mut contract, orderbook_base, 2, tick2, ask1)?;
+        Mapping::<i16, U256>::at_offset(orderbook_base, 2, tick2).write(&mut contract, ask1)?;
 
         // bidBitmap at offset 3
         let bitmap_key: i16 = 10;
         let bitmap_value = U256::from(0xff);
-        Mapping::<i16, U256>::write_at_offset(
-            &mut contract,
-            orderbook_base,
-            3,
-            bitmap_key,
-            bitmap_value,
-        )?;
+        Mapping::<i16, U256>::at_offset(orderbook_base, 3, bitmap_key)
+            .write(&mut contract, bitmap_value)?;
 
         // Verify all fields are independent
         let read_bid =
-            Mapping::<i16, U256>::read_at_offset(&mut contract, orderbook_base, 1, tick1)?;
+            Mapping::<i16, U256>::at_offset(orderbook_base, 1, tick1).read(&mut contract)?;
         let read_ask =
-            Mapping::<i16, U256>::read_at_offset(&mut contract, orderbook_base, 2, tick2)?;
+            Mapping::<i16, U256>::at_offset(orderbook_base, 2, tick2).read(&mut contract)?;
         let read_bitmap =
-            Mapping::<i16, U256>::read_at_offset(&mut contract, orderbook_base, 3, bitmap_key)?;
+            Mapping::<i16, U256>::at_offset(orderbook_base, 3, bitmap_key).read(&mut contract)?;
 
         assert_eq!(read_bid, bid1);
         assert_eq!(read_ask, ask1);

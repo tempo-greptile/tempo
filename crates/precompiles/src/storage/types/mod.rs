@@ -69,15 +69,27 @@ impl Layout {
 
 /// Describes the context in which a `Storable` value is being loaded or stored.
 ///
-/// This determines whether the value occupies an entire storage slot or is packed
+/// Determines whether the value occupies an entire storage slot or is packed
 /// with other values at a specific byte offset within a slot.
+///
+/// **NOTE:** This type is not an enum to minimize its memory size, but its
+/// implementation is equivalent to:
+/// ```rs
+/// enum LayoutCtx {
+///    Full,
+///    Packed(usize)
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LayoutCtx {
+#[repr(transparent)]
+pub struct LayoutCtx(usize);
+
+impl LayoutCtx {
     /// Load/store the entire value at `base_slot`.
     ///
     /// For writes, this directly overwrites the entire slot without needing SLOAD.
     /// All `Storable` types support this context.
-    Full,
+    pub const FULL: Self = Self(usize::MAX);
 
     /// Load/store a packed primitive at the given byte offset within a slot.
     ///
@@ -86,7 +98,20 @@ pub enum LayoutCtx {
     /// packed fields in the same slot.
     ///
     /// Only primitive types with `Layout::Bytes(n)` where `n < 32` support this context.
-    Packed(usize),
+    pub const fn packed(offset: usize) -> Self {
+        debug_assert!(offset < 32);
+        Self(offset)
+    }
+
+    /// Get the packed offset, returns `None` for `Full`
+    #[inline]
+    pub const fn packed_offset(&self) -> Option<usize> {
+        if self.0 == usize::MAX {
+            None
+        } else {
+            Some(self.0)
+        }
+    }
 }
 
 /// Helper trait to access storage layout information without requiring const generic parameter.
@@ -146,8 +171,8 @@ pub trait Storable<const SLOTS: usize>: Sized + StorableType {
     ///
     /// # Context
     ///
-    /// - `LayoutCtx::Full`: Load the entire value from `base_slot` (and subsequent slots if multi-slot)
-    /// - `LayoutCtx::Packed(offset)`: Load a packed primitive from byte `offset` within `base_slot`
+    /// - `LayoutCtx::FULL`: Load the entire value from `base_slot` (and subsequent slots if multi-slot)
+    /// - `LayoutCtx::packed(offset)`: Load a packed primitive from byte `offset` within `base_slot`
     ///
     /// # Errors
     ///
@@ -163,8 +188,8 @@ pub trait Storable<const SLOTS: usize>: Sized + StorableType {
     ///
     /// # Context
     ///
-    /// - `LayoutCtx::Full`: Write the entire value to `base_slot` (overwrites full slot)
-    /// - `LayoutCtx::Packed(offset)`: Write a packed primitive at byte `offset` (read-modify-write)
+    /// - `LayoutCtx::FULL`: Write the entire value to `base_slot` (overwrites full slot)
+    /// - `LayoutCtx::packed(offset)`: Write a packed primitive at byte `offset` (read-modify-write)
     ///
     /// # Errors
     ///
@@ -179,8 +204,8 @@ pub trait Storable<const SLOTS: usize>: Sized + StorableType {
     ///
     /// # Context
     ///
-    /// - `LayoutCtx::Full`: Clear entire slot(s) by writing zero
-    /// - `LayoutCtx::Packed(offset)`: Clear only the bytes at the offset (read-modify-write)
+    /// - `LayoutCtx::FULL`: Clear entire slot(s) by writing zero
+    /// - `LayoutCtx::packed(offset)`: Clear only the bytes at the offset (read-modify-write)
     ///
     /// The default implementation handles both contexts appropriately.
     ///
@@ -190,14 +215,14 @@ pub trait Storable<const SLOTS: usize>: Sized + StorableType {
     /// - Storage write fails
     /// - Context is invalid for this type
     fn delete<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
-        match ctx {
-            LayoutCtx::Full => {
+        match ctx.packed_offset() {
+            None => {
                 for offset in 0..SLOTS {
                     storage.sstore(base_slot + U256::from(offset), U256::ZERO)?;
                 }
                 Ok(())
             }
-            LayoutCtx::Packed(offset) => {
+            Some(offset) => {
                 // For packed context, we need to preserve other fields in the slot
                 let bytes = Self::BYTES;
                 let current = storage.sload(base_slot)?;

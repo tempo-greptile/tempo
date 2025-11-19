@@ -179,53 +179,6 @@ pub const fn calc_packed_slot_count(n: usize, elem_bytes: usize) -> usize {
     (n * elem_bytes).div_ceil(32)
 }
 
-/// Read a packed field from a struct at a given base slot.
-pub fn read_packed_at<T, S>(
-    storage: &mut S,
-    struct_base_slot: U256,
-    location: FieldLocation,
-) -> Result<T>
-where
-    S: crate::storage::StorageOps,
-    T: Storable<1>,
-{
-    let slot = struct_base_slot + U256::from(location.offset_slots);
-    let slot_value = storage.sload(slot)?;
-    extract_packed_value::<1, T>(slot_value, location.offset_bytes, location.size)
-}
-
-/// Write a packed field to a struct at a given base slot.
-pub fn write_packed_at<T, S>(
-    storage: &mut S,
-    struct_base_slot: U256,
-    location: FieldLocation,
-    value: &T,
-) -> Result<()>
-where
-    S: crate::storage::StorageOps,
-    T: Storable<1>,
-{
-    let slot = struct_base_slot + U256::from(location.offset_slots);
-    let current = storage.sload(slot)?;
-    let new_value = insert_packed_value(current, value, location.offset_bytes, location.size)?;
-    storage.sstore(slot, new_value)
-}
-
-/// Clear a packed field in a struct at a given base slot (set to zero).
-pub fn clear_packed_at<S>(
-    storage: &mut S,
-    struct_base_slot: U256,
-    location: FieldLocation,
-) -> Result<()>
-where
-    S: crate::storage::StorageOps,
-{
-    let slot = struct_base_slot + U256::from(location.offset_slots);
-    let current = storage.sload(slot)?;
-    let cleared = zero_packed_value(current, location.offset_bytes, location.size)?;
-    storage.sstore(slot, cleared)
-}
-
 /// Extract a field value from a storage slot for testing purposes.
 ///
 /// This is a convenience wrapper around `extract_packed_value` that's more
@@ -836,29 +789,28 @@ mod tests {
     }
 
     // -- SLOT PACKED FIELD TESTS ------------------------------------------
-    use crate::storage::hashmap::HashMapStorageProvider;
 
-    /// Test contract struct for packed field tests
+    use crate::storage::{
+        PrecompileStorageProvider, StorageOps, hashmap::HashMapStorageProvider, types::Slot,
+    };
+
+    /// Test helper that implements StorageOps for integration tests
     struct TestContract<'a, S> {
         address: Address,
         storage: &'a mut S,
     }
 
-    impl<'a, S: crate::storage::PrecompileStorageProvider> crate::storage::ContractStorage
-        for TestContract<'a, S>
-    {
-        type Storage = S;
-
-        fn address(&self) -> Address {
-            self.address
+    impl<'a, S: PrecompileStorageProvider> StorageOps for TestContract<'a, S> {
+        fn sstore(&mut self, slot: U256, value: U256) -> Result<()> {
+            self.storage.sstore(self.address, slot, value)
         }
 
-        fn storage(&mut self) -> &mut S {
-            self.storage
+        fn sload(&mut self, slot: U256) -> Result<U256> {
+            self.storage.sload(self.address, slot)
         }
     }
 
-    /// Helper to create a test contract with fresh storage.
+    /// Helper to create a test contract with fresh storage
     fn setup_test_contract<'a>(
         storage: &'a mut HashMapStorageProvider,
     ) -> TestContract<'a, HashMapStorageProvider> {
@@ -869,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn test_packed_at_multiple_types() -> eyre::Result<()> {
+    fn test_packed_at_multiple_types() -> Result<()> {
         let mut storage = HashMapStorageProvider::new(1);
         let mut contract = setup_test_contract(&mut storage);
         let struct_base = U256::from(0x2000);
@@ -879,47 +831,35 @@ mod tests {
         let timestamp: u64 = 1234567890;
         let amount: u128 = 999888777666;
 
-        write_packed_at(
-            &mut contract,
-            struct_base,
-            FieldLocation::new(0, 0, 1),
-            &flag,
-        )?;
-        write_packed_at(
-            &mut contract,
-            struct_base,
-            FieldLocation::new(0, 1, 8),
-            &timestamp,
-        )?;
-        write_packed_at(
-            &mut contract,
-            struct_base,
-            FieldLocation::new(0, 9, 16),
-            &amount,
-        )?;
+        Slot::<bool>::new_at_loc(struct_base, FieldLocation::new(0, 0, 1))
+            .write(&mut contract, flag)?;
+        Slot::<u64>::new_at_loc(struct_base, FieldLocation::new(0, 1, 8))
+            .write(&mut contract, timestamp)?;
+        Slot::<u128>::new_at_loc(struct_base, FieldLocation::new(0, 9, 16))
+            .write(&mut contract, amount)?;
 
         // Verify all packed correctly
-        let read_flag =
-            read_packed_at::<bool, _>(&mut contract, struct_base, FieldLocation::new(0, 0, 1))?;
-        let read_time =
-            read_packed_at::<u64, _>(&mut contract, struct_base, FieldLocation::new(0, 1, 8))?;
-        let read_amount =
-            read_packed_at::<u128, _>(&mut contract, struct_base, FieldLocation::new(0, 9, 16))?;
+        let read_flag = Slot::<bool>::new_at_loc(struct_base, FieldLocation::new(0, 0, 1))
+            .read(&mut contract)?;
+        let read_time = Slot::<u64>::new_at_loc(struct_base, FieldLocation::new(0, 1, 8))
+            .read(&mut contract)?;
+        let read_amount = Slot::<u128>::new_at_loc(struct_base, FieldLocation::new(0, 9, 16))
+            .read(&mut contract)?;
 
         assert_eq!(read_flag, flag);
         assert_eq!(read_time, timestamp);
         assert_eq!(read_amount, amount);
 
         // Clear the middle one
-        clear_packed_at(&mut contract, struct_base, FieldLocation::new(0, 1, 8))?;
+        Slot::<u64>::new_at_loc(struct_base, FieldLocation::new(0, 1, 8)).delete(&mut contract)?;
 
         // Verify
-        let read_flag =
-            read_packed_at::<bool, _>(&mut contract, struct_base, FieldLocation::new(0, 0, 1))?;
-        let read_time =
-            read_packed_at::<u64, _>(&mut contract, struct_base, FieldLocation::new(0, 1, 8))?;
-        let read_amount =
-            read_packed_at::<u128, _>(&mut contract, struct_base, FieldLocation::new(0, 9, 16))?;
+        let read_flag = Slot::<bool>::new_at_loc(struct_base, FieldLocation::new(0, 0, 1))
+            .read(&mut contract)?;
+        let read_time = Slot::<u64>::new_at_loc(struct_base, FieldLocation::new(0, 1, 8))
+            .read(&mut contract)?;
+        let read_amount = Slot::<u128>::new_at_loc(struct_base, FieldLocation::new(0, 9, 16))
+            .read(&mut contract)?;
 
         assert_eq!(read_flag, flag);
         assert_eq!(read_time, 0);
@@ -929,53 +869,40 @@ mod tests {
     }
 
     #[test]
-    fn test_packed_at_different_slots() -> eyre::Result<()> {
+    fn test_packed_at_different_slots() -> Result<()> {
         let mut storage = HashMapStorageProvider::new(1);
         let mut contract = setup_test_contract(&mut storage);
         let struct_base = U256::from(0x4000);
 
-        // Field in slot 0
-        let addr = Address::random();
-        write_packed_at(
-            &mut contract,
-            struct_base,
-            FieldLocation::new(0, 0, 20),
-            &addr,
-        )?;
-
-        // Field in slot 1
-        let value = U256::from(0xdeadbeefu32);
-        write_packed_at(
-            &mut contract,
-            struct_base,
-            FieldLocation::new(1, 0, 32),
-            &value,
-        )?;
-
-        // Field in slot 2
+        // Field in slot 0 (bool is 1 byte, packable)
         let flag = false;
-        write_packed_at(
-            &mut contract,
-            struct_base,
-            FieldLocation::new(2, 0, 1),
-            &flag,
-        )?;
+        Slot::<bool>::new_at_loc(struct_base, FieldLocation::new(0, 0, 1))
+            .write(&mut contract, flag)?;
+
+        // Field in slot 1 (u128 is 16 bytes, packable)
+        let amount: u128 = 0xdeadbeef;
+        Slot::<u128>::new_at_loc(struct_base, FieldLocation::new(1, 0, 16))
+            .write(&mut contract, amount)?;
+
+        // Field in slot 2 (u64 is 8 bytes, packable)
+        let value: u64 = 123456789;
+        Slot::<u64>::new_at_loc(struct_base, FieldLocation::new(2, 0, 8))
+            .write(&mut contract, value)?;
 
         // Verify all independent
-        let read_addr =
-            read_packed_at::<Address, _>(&mut contract, struct_base, FieldLocation::new(0, 0, 20))?;
-        let read_val =
-            read_packed_at::<U256, _>(&mut contract, struct_base, FieldLocation::new(1, 0, 32))?;
-        let read_flag =
-            read_packed_at::<bool, _>(&mut contract, struct_base, FieldLocation::new(2, 0, 1))?;
+        let read_flag = Slot::<bool>::new_at_loc(struct_base, FieldLocation::new(0, 0, 1))
+            .read(&mut contract)?;
+        let read_amount = Slot::<u128>::new_at_loc(struct_base, FieldLocation::new(1, 0, 16))
+            .read(&mut contract)?;
+        let read_val = Slot::<u64>::new_at_loc(struct_base, FieldLocation::new(2, 0, 8))
+            .read(&mut contract)?;
 
-        assert_eq!(read_addr, addr);
-        assert_eq!(read_val, value);
         assert_eq!(read_flag, flag);
+        assert_eq!(read_amount, amount);
+        assert_eq!(read_val, value);
 
         Ok(())
     }
-
     // -- PROPERTY TESTS -----------------------------------------------------------
 
     use proptest::prelude::*;
@@ -1183,10 +1110,6 @@ mod tests {
                 prop_assert_eq!(extracted, expected_flag, "Flag at offset {} mismatch", i);
             }
         }
-    }
-
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(500))]
 
         #[test]
         fn proptest_element_slot_offset_consistency_u8(

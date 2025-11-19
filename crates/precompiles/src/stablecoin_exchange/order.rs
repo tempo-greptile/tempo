@@ -158,12 +158,8 @@ impl Order {
         new_remaining: u128,
     ) -> Result<(), TempoPrecompileError> {
         let order_base_slot = mapping_slot(order_id.to_be_bytes(), super::slots::ORDERS);
-        OrderAmount::write_at_offset_packed(
-            storage,
-            order_base_slot,
-            __packing_order::REMAINING_LOC,
-            new_remaining,
-        )?;
+        OrderAmount::new_at_loc(order_base_slot, __packing_order::REMAINING_LOC)
+            .write(storage, new_remaining)?;
         Ok(())
     }
 
@@ -173,12 +169,7 @@ impl Order {
         new_next: u128,
     ) -> Result<(), TempoPrecompileError> {
         let order_base_slot = mapping_slot(order_id.to_be_bytes(), super::slots::ORDERS);
-        OrderId::write_at_offset_packed(
-            storage,
-            order_base_slot,
-            __packing_order::NEXT_LOC,
-            new_next,
-        )?;
+        OrderId::new_at_loc(order_base_slot, __packing_order::NEXT_LOC).write(storage, new_next)?;
         Ok(())
     }
 
@@ -188,12 +179,7 @@ impl Order {
         new_prev: u128,
     ) -> Result<(), TempoPrecompileError> {
         let order_base_slot = mapping_slot(order_id.to_be_bytes(), super::slots::ORDERS);
-        OrderId::write_at_offset_packed(
-            storage,
-            order_base_slot,
-            __packing_order::PREV_LOC,
-            new_prev,
-        )?;
+        OrderId::new_at_loc(order_base_slot, __packing_order::PREV_LOC).write(storage, new_prev)?;
         Ok(())
     }
 

@@ -377,7 +377,7 @@ fn test_packed_two_slot_contents() {
     };
 
     value
-        .store(&mut storage, base_slot, LayoutCtx::Full)
+        .store(&mut storage, base_slot, LayoutCtx::FULL)
         .unwrap();
 
     // PackedTwo should occupy 1 slot with addr (20 bytes) + count (8 bytes)
@@ -404,7 +404,7 @@ fn test_packed_three_slot_contents() {
     };
 
     value
-        .store(&mut storage, base_slot, LayoutCtx::Full)
+        .store(&mut storage, base_slot, LayoutCtx::FULL)
         .unwrap();
 
     // PackedThree should occupy exactly 1 slot with three u64s (24 bytes total)
@@ -436,7 +436,7 @@ fn test_rule2_slot_contents() {
     };
 
     value
-        .store(&mut storage, base_slot, LayoutCtx::Full)
+        .store(&mut storage, base_slot, LayoutCtx::FULL)
         .unwrap();
 
     // Rule2Test packs all fields into slot 0 (15 bytes total)
@@ -470,7 +470,7 @@ fn test_partially_packed_slot_contents() {
     };
 
     value
-        .store(&mut storage, base_slot, LayoutCtx::Full)
+        .store(&mut storage, base_slot, LayoutCtx::FULL)
         .unwrap();
 
     // PartiallyPacked layout:
@@ -519,7 +519,7 @@ fn test_partial_update_preserves_adjacent_fields() {
         c: 0x3333333333333333,
     };
     initial
-        .store(&mut storage, base_slot, LayoutCtx::Full)
+        .store(&mut storage, base_slot, LayoutCtx::FULL)
         .unwrap();
 
     // Update only field b
@@ -529,7 +529,7 @@ fn test_partial_update_preserves_adjacent_fields() {
         c: 0x3333333333333333,
     };
     updated
-        .store(&mut storage, base_slot, LayoutCtx::Full)
+        .store(&mut storage, base_slot, LayoutCtx::FULL)
         .unwrap();
 
     // Verify that fields a and c are unchanged
@@ -559,7 +559,7 @@ fn test_delete_zeros_all_slots() {
 
     // Store the value (uses 3 slots)
     value
-        .store(&mut storage, base_slot, LayoutCtx::Full)
+        .store(&mut storage, base_slot, LayoutCtx::FULL)
         .unwrap();
 
     // Verify slots are non-zero
@@ -591,7 +591,7 @@ fn test_delete_zeros_all_slots() {
     );
 
     // Delete the value
-    PartiallyPacked::delete(&mut storage, base_slot, LayoutCtx::Full).unwrap();
+    PartiallyPacked::delete(&mut storage, base_slot, LayoutCtx::FULL).unwrap();
 
     // Verify all slots are now zero
     let slot0_after = storage.storage().sload(addr, base_slot).unwrap();
@@ -620,7 +620,7 @@ fn test_slot_boundary_at_32_bytes() {
     };
 
     value
-        .store(&mut storage, base_slot, LayoutCtx::Full)
+        .store(&mut storage, base_slot, LayoutCtx::FULL)
         .unwrap();
 
     // Slot 0: data (32 bytes) - fills entire slot

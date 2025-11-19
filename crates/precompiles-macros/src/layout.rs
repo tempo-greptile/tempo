@@ -69,15 +69,14 @@ pub(crate) fn gen_getters_and_setters(
     let getter_name = format_ident!("sload_{}", field_name);
     let setter_name = format_ident!("sstore_{}", field_name);
     let cleaner_name = format_ident!("clear_{}", field_name);
-    let slot_const = PackingConstants::new(field_name).slot();
+
+    let consts = PackingConstants::new(field_name);
+    let slot_const = consts.slot();
+    let offset_const = consts.offset();
 
     match &allocated.kind {
         FieldKind::Slot(ty) => {
             // Generate `LayoutCtx` expression using shared helper
-            let consts = PackingConstants::new(field_name);
-            let slot_const = consts.slot();
-            let offset_const = consts.offset();
-
             let prev_slot_const_ref = prev_field.map(|prev| {
                 let prev_slot = PackingConstants::new(prev.name).slot();
                 quote! { slots::#prev_slot }
@@ -130,23 +129,17 @@ pub(crate) fn gen_getters_and_setters(
                 impl<'a, S: crate::storage::PrecompileStorageProvider> #struct_name<'a, S> {
                     #[inline]
                     fn #getter_name(&mut self, key: #key_ty) -> crate::error::Result<#value_ty> {
-                        crate::storage::Mapping::<#key_ty, #value_ty>::new(slots::#slot_const).read(
-                            self, key,
-                        )
+                        crate::storage::Mapping::<#key_ty, #value_ty>::new(slots::#slot_const).at(key).read(self)
                     }
 
                     #[inline]
                     fn #cleaner_name(&mut self, key: #key_ty) -> crate::error::Result<()> {
-                        crate::storage::Mapping::<#key_ty, #value_ty>::new(slots::#slot_const).delete(
-                            self, key,
-                        )
+                        crate::storage::Mapping::<#key_ty, #value_ty>::new(slots::#slot_const).at(key).delete(self)
                     }
 
                     #[inline]
                     fn #setter_name(&mut self, key: #key_ty, value: #value_ty) -> crate::error::Result<()> {
-                        crate::storage::Mapping::<#key_ty, #value_ty>::new(slots::#slot_const).write(
-                            self, key, value,
-                        )
+                        crate::storage::Mapping::<#key_ty, #value_ty>::new(slots::#slot_const).at(key).write(self, value)
                     }
                 }
             }
@@ -160,23 +153,17 @@ pub(crate) fn gen_getters_and_setters(
                 impl<'a, S: crate::storage::PrecompileStorageProvider> #struct_name<'a, S> {
                     #[inline]
                     fn #getter_name(&mut self, key1: #key1_ty, key2: #key2_ty) -> crate::error::Result<#value_ty> {
-                        crate::storage::Mapping::<#key1_ty, crate::storage::Mapping<#key2_ty, #value_ty>>::new(slots::#slot_const).read_nested(
-                            self, key1, key2,
-                        )
+                        crate::storage::NestedMapping::<#key1_ty, #key2_ty, #value_ty>::new(slots::#slot_const).at(key1).at(key2).read(self)
                     }
 
                     #[inline]
                     fn #cleaner_name(&mut self, key1: #key1_ty, key2: #key2_ty) -> crate::error::Result<()> {
-                        crate::storage::Mapping::<#key1_ty, crate::storage::Mapping<#key2_ty, #value_ty>>::new(slots::#slot_const).delete_nested(
-                            self, key1, key2,
-                        )
+                        crate::storage::NestedMapping::<#key1_ty, #key2_ty, #value_ty>::new(slots::#slot_const).at(key1).at(key2).delete(self)
                     }
 
                     #[inline]
                     fn #setter_name(&mut self, key1: #key1_ty, key2: #key2_ty, value: #value_ty) -> crate::error::Result<()> {
-                        crate::storage::Mapping::<#key1_ty, crate::storage::Mapping<#key2_ty, #value_ty>>::new(slots::#slot_const).write_nested(
-                            self, key1, key2, value,
-                        )
+                        crate::storage::NestedMapping::<#key1_ty, #key2_ty, #value_ty>::new(slots::#slot_const).at(key1).at(key2).write(self, value)
                     }
                 }
             }

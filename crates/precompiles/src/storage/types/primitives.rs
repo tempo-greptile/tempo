@@ -29,9 +29,9 @@ impl StorableType for bool {
 impl Storable<1> for bool {
     #[inline]
     fn load<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<Self> {
-        match ctx {
-            LayoutCtx::Full => storage.sload(base_slot).map(|val| !val.is_zero()),
-            LayoutCtx::Packed(offset) => {
+        match ctx.packed_offset() {
+            None => storage.sload(base_slot).map(|val| !val.is_zero()),
+            Some(offset) => {
                 let slot = storage.sload(base_slot)?;
                 crate::storage::packing::extract_packed_value(slot, offset, 1)
             }
@@ -41,9 +41,9 @@ impl Storable<1> for bool {
     #[inline]
     fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
         let value = if *self { U256::ONE } else { U256::ZERO };
-        match ctx {
-            LayoutCtx::Full => storage.sstore(base_slot, value),
-            LayoutCtx::Packed(offset) => {
+        match ctx.packed_offset() {
+            None => storage.sstore(base_slot, value),
+            Some(offset) => {
                 let current = storage.sload(base_slot)?;
                 let updated =
                     crate::storage::packing::insert_packed_value(current, &value, offset, 1)?;
@@ -70,9 +70,9 @@ impl StorableType for Address {
 impl Storable<1> for Address {
     #[inline]
     fn load<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<Self> {
-        match ctx {
-            LayoutCtx::Full => storage.sload(base_slot).map(|val| val.into_address()),
-            LayoutCtx::Packed(offset) => {
+        match ctx.packed_offset() {
+            None => storage.sload(base_slot).map(|val| val.into_address()),
+            Some(offset) => {
                 let slot = storage.sload(base_slot)?;
                 crate::storage::packing::extract_packed_value(slot, offset, 20)
             }
@@ -81,9 +81,9 @@ impl Storable<1> for Address {
 
     #[inline]
     fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
-        match ctx {
-            LayoutCtx::Full => storage.sstore(base_slot, self.into_u256()),
-            LayoutCtx::Packed(offset) => {
+        match ctx.packed_offset() {
+            None => storage.sstore(base_slot, self.into_u256()),
+            Some(offset) => {
                 let current = storage.sload(base_slot)?;
                 let value = self.into_u256();
                 let updated =
@@ -176,13 +176,13 @@ mod tests {
             let mut contract = setup_test_contract();
 
             // Verify store → load roundtrip
-            addr.store(&mut contract, base_slot, LayoutCtx::Full)?;
-            let loaded = Address::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            addr.store(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let loaded = Address::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(addr, loaded, "Address roundtrip failed");
 
             // Verify delete works
-            Address::delete(&mut contract, base_slot, LayoutCtx::Full)?;
-            let after_delete = Address::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            Address::delete(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let after_delete = Address::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(after_delete, Address::ZERO, "Address not zero after delete");
 
             // EVM words roundtrip
@@ -196,13 +196,13 @@ mod tests {
             let mut contract = setup_test_contract();
 
             // Verify store → load roundtrip
-            b.store(&mut contract, base_slot, LayoutCtx::Full)?;
-            let loaded = bool::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            b.store(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let loaded = bool::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(b, loaded, "Bool roundtrip failed for value: {b}");
 
             // Verify delete works
-            bool::delete(&mut contract, base_slot, LayoutCtx::Full)?;
-            let after_delete = bool::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            bool::delete(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let after_delete = bool::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert!(!after_delete, "Bool not false after delete");
 
             // EVM words roundtrip
@@ -490,14 +490,14 @@ mod tests {
 
         // U256 should always fill entire slot (offset must be 0)
         let val = U256::from(0x123456789ABCDEFu64);
-        val.store(&mut contract, base_slot, LayoutCtx::Full)
+        val.store(&mut contract, base_slot, LayoutCtx::FULL)
             .unwrap();
 
         let loaded_slot = contract.sload(base_slot).unwrap();
         assert_eq!(loaded_slot, val, "U256 should match slot contents exactly");
 
         // Verify it's stored as-is (no packing)
-        let recovered = U256::load(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+        let recovered = U256::load(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         assert_eq!(recovered, val, "U256 load failed");
     }
 
@@ -508,7 +508,7 @@ mod tests {
 
         // Store a u64 value
         let val: u64 = 0x123456789ABCDEF0;
-        val.store(&mut contract, base_slot, LayoutCtx::Full)
+        val.store(&mut contract, base_slot, LayoutCtx::FULL)
             .unwrap();
 
         // Verify slot is non-zero
@@ -520,14 +520,14 @@ mod tests {
         );
 
         // Delete the value
-        u64::delete(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+        u64::delete(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
 
         // Verify slot is now zero
         let slot_after = contract.sload(base_slot).unwrap();
         assert_eq!(slot_after, U256::ZERO, "Slot should be zero after delete");
 
         // Verify loading returns zero
-        let loaded = u64::load(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+        let loaded = u64::load(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         assert_eq!(loaded, 0u64, "Loaded value should be 0 after delete");
     }
 
@@ -549,9 +549,9 @@ mod tests {
         assert_eq!(<[u8; 32] as StorableType>::LAYOUT, Layout::Slots(1));
 
         // Store and load
-        data.store(&mut contract, base_slot, LayoutCtx::Full)
+        data.store(&mut contract, base_slot, LayoutCtx::FULL)
             .unwrap();
-        let loaded: [u8; 32] = Storable::load(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+        let loaded: [u8; 32] = Storable::load(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         assert_eq!(loaded, data, "[u8; 32] roundtrip failed");
 
         // Verify to_evm_words / from_evm_words
@@ -561,7 +561,7 @@ mod tests {
         assert_eq!(recovered, data, "[u8; 32] EVM words roundtrip failed");
 
         // Verify delete
-        <[u8; 32]>::delete(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+        <[u8; 32]>::delete(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         let slot_value = contract.sload(base_slot).unwrap();
         assert_eq!(slot_value, U256::ZERO, "Slot not cleared after delete");
     }
@@ -579,9 +579,9 @@ mod tests {
         assert_eq!(<[u64; 5] as StorableType>::LAYOUT, Layout::Slots(2));
 
         // Store and load
-        data.store(&mut contract, base_slot, LayoutCtx::Full)
+        data.store(&mut contract, base_slot, LayoutCtx::FULL)
             .unwrap();
-        let loaded: [u64; 5] = Storable::load(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+        let loaded: [u64; 5] = Storable::load(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         assert_eq!(loaded, data, "[u64; 5] roundtrip failed");
 
         // Verify both slots are used
@@ -591,7 +591,7 @@ mod tests {
         assert_ne!(slot1, U256::ZERO, "Slot 1 should be non-zero");
 
         // Verify delete clears both slots
-        <[u64; 5]>::delete(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+        <[u64; 5]>::delete(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         let slot0_after = contract.sload(base_slot).unwrap();
         let slot1_after = contract.sload(base_slot + U256::ONE).unwrap();
         assert_eq!(slot0_after, U256::ZERO, "Slot 0 not cleared");
@@ -611,9 +611,9 @@ mod tests {
         assert_eq!(<[u16; 16] as StorableType>::LAYOUT, Layout::Slots(1));
 
         // Store and load
-        data.store(&mut contract, base_slot, LayoutCtx::Full)
+        data.store(&mut contract, base_slot, LayoutCtx::FULL)
             .unwrap();
-        let loaded: [u16; 16] = Storable::load(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+        let loaded: [u16; 16] = Storable::load(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         assert_eq!(loaded, data, "[u16; 16] roundtrip failed");
     }
 
@@ -630,9 +630,9 @@ mod tests {
         assert_eq!(<[U256; 3] as StorableType>::LAYOUT, Layout::Slots(3));
 
         // Store and load
-        data.store(&mut contract, base_slot, LayoutCtx::Full)
+        data.store(&mut contract, base_slot, LayoutCtx::FULL)
             .unwrap();
-        let loaded: [U256; 3] = Storable::load(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+        let loaded: [U256; 3] = Storable::load(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         assert_eq!(loaded, data, "[U256; 3] roundtrip failed");
 
         // Verify each element is in its own slot
@@ -659,10 +659,10 @@ mod tests {
         assert_eq!(<[Address; 3] as StorableType>::LAYOUT, Layout::Slots(3));
 
         // Store and load
-        data.store(&mut contract, base_slot, LayoutCtx::Full)
+        data.store(&mut contract, base_slot, LayoutCtx::FULL)
             .unwrap();
         let loaded: [Address; 3] =
-            Storable::load(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+            Storable::load(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         assert_eq!(loaded, data, "[Address; 3] roundtrip failed");
     }
 
@@ -679,9 +679,9 @@ mod tests {
         assert_eq!(<[u8; 1] as StorableType>::LAYOUT, Layout::Slots(1));
 
         // Store and load
-        data.store(&mut contract, base_slot, LayoutCtx::Full)
+        data.store(&mut contract, base_slot, LayoutCtx::FULL)
             .unwrap();
-        let loaded: [u8; 1] = Storable::load(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+        let loaded: [u8; 1] = Storable::load(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         assert_eq!(loaded, data, "[u8; 1] roundtrip failed");
     }
 
@@ -709,10 +709,10 @@ mod tests {
         assert_eq!(<[[u8; 4]; 8] as StorableType>::LAYOUT, Layout::Slots(8));
 
         // Store and load
-        data.store(&mut contract, base_slot, LayoutCtx::Full)
+        data.store(&mut contract, base_slot, LayoutCtx::FULL)
             .unwrap();
         let loaded: [[u8; 4]; 8] =
-            Storable::load(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+            Storable::load(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         assert_eq!(loaded, data, "[[u8; 4]; 8] roundtrip failed");
 
         // Verify to_evm_words / from_evm_words
@@ -722,7 +722,7 @@ mod tests {
         assert_eq!(recovered, data, "[[u8; 4]; 8] EVM words roundtrip failed");
 
         // Verify delete clears all 8 slots
-        <[[u8; 4]; 8]>::delete(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+        <[[u8; 4]; 8]>::delete(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         for i in 0..8 {
             let slot_value = contract.sload(base_slot + U256::from(i)).unwrap();
             assert_eq!(slot_value, U256::ZERO, "Slot {i} not cleared after delete");
@@ -754,10 +754,10 @@ mod tests {
         assert_eq!(<[[u16; 2]; 8] as StorableType>::LAYOUT, Layout::Slots(8));
 
         // Store and load
-        data.store(&mut contract, base_slot, LayoutCtx::Full)
+        data.store(&mut contract, base_slot, LayoutCtx::FULL)
             .unwrap();
         let loaded: [[u16; 2]; 8] =
-            Storable::load(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+            Storable::load(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         assert_eq!(loaded, data, "[[u16; 2]; 8] roundtrip failed");
 
         // Verify to_evm_words / from_evm_words
@@ -767,7 +767,7 @@ mod tests {
         assert_eq!(recovered, data, "[[u16; 2]; 8] EVM words roundtrip failed");
 
         // Verify delete clears all 8 slots
-        <[[u16; 2]; 8]>::delete(&mut contract, base_slot, LayoutCtx::Full).unwrap();
+        <[[u16; 2]; 8]>::delete(&mut contract, base_slot, LayoutCtx::FULL).unwrap();
         for i in 0..8 {
             let slot_value = contract.sload(base_slot + U256::from(i)).unwrap();
             assert_eq!(slot_value, U256::ZERO, "Slot {i} not cleared after delete");
@@ -785,8 +785,8 @@ mod tests {
             let mut contract = setup_test_contract();
 
             // Store and load
-            data.store(&mut contract, base_slot, LayoutCtx::Full)?;
-            let loaded: [u8; 32] = Storable::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            data.store(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let loaded: [u8; 32] = Storable::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             prop_assert_eq!(&loaded, &data, "[u8; 32] roundtrip failed");
 
             // EVM words roundtrip
@@ -795,7 +795,7 @@ mod tests {
             prop_assert_eq!(&recovered, &data, "[u8; 32] EVM words roundtrip failed");
 
             // Delete
-            <[u8; 32]>::delete(&mut contract, base_slot, LayoutCtx::Full)?;
+            <[u8; 32]>::delete(&mut contract, base_slot, LayoutCtx::FULL)?;
             let slot_value = contract.sload(base_slot)?;
             prop_assert_eq!(slot_value, U256::ZERO, "Slot not cleared after delete");
         }
@@ -808,8 +808,8 @@ mod tests {
             let mut contract = setup_test_contract();
 
             // Store and load
-            data.store(&mut contract, base_slot, LayoutCtx::Full)?;
-            let loaded: [u16; 16] = Storable::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            data.store(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let loaded: [u16; 16] = Storable::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             prop_assert_eq!(&loaded, &data, "[u16; 16] roundtrip failed");
 
             // EVM words roundtrip
@@ -826,8 +826,8 @@ mod tests {
             let mut contract = setup_test_contract();
 
             // Store and load
-            data.store(&mut contract, base_slot, LayoutCtx::Full)?;
-            let loaded: [U256; 5] = Storable::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            data.store(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let loaded: [U256; 5] = Storable::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             prop_assert_eq!(&loaded, &data, "[U256; 5] roundtrip failed");
 
             // Verify each element is in its own slot
@@ -842,7 +842,7 @@ mod tests {
             prop_assert_eq!(&recovered, &data, "[U256; 5] EVM words roundtrip failed");
 
             // Delete
-            <[U256; 5]>::delete(&mut contract, base_slot, LayoutCtx::Full)?;
+            <[U256; 5]>::delete(&mut contract, base_slot, LayoutCtx::FULL)?;
             for i in 0..5 {
                 let slot_value = contract.sload(base_slot + U256::from(i))?;
                 prop_assert_eq!(slot_value, U256::ZERO, "Slot {} not cleared", i);

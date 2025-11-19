@@ -77,8 +77,8 @@ where
     T: Storable<N> + PartialEq + std::fmt::Debug,
     S: ContractStorage,
 {
-    original.store(storage, base_slot, LayoutCtx::Full)?;
-    let loaded = T::load(storage, base_slot, LayoutCtx::Full)?;
+    original.store(storage, base_slot, LayoutCtx::FULL)?;
+    let loaded = T::load(storage, base_slot, LayoutCtx::FULL)?;
     assert_eq!(&loaded, original, "Store/load roundtrip failed");
     Ok(())
 }
@@ -94,12 +94,12 @@ where
     T: Storable<N> + PartialEq + std::fmt::Debug,
     S: ContractStorage,
 {
-    initial.store(storage, base_slot, LayoutCtx::Full)?;
-    let loaded1 = T::load(storage, base_slot, LayoutCtx::Full)?;
+    initial.store(storage, base_slot, LayoutCtx::FULL)?;
+    let loaded1 = T::load(storage, base_slot, LayoutCtx::FULL)?;
     assert_eq!(&loaded1, initial, "Initial store/load failed");
 
-    updated.store(storage, base_slot, LayoutCtx::Full)?;
-    let loaded2 = T::load(storage, base_slot, LayoutCtx::Full)?;
+    updated.store(storage, base_slot, LayoutCtx::FULL)?;
+    let loaded2 = T::load(storage, base_slot, LayoutCtx::FULL)?;
     assert_eq!(&loaded2, updated, "Update failed");
     Ok(())
 }
@@ -114,12 +114,12 @@ where
     T: Storable<N> + PartialEq + std::fmt::Debug + Default,
     S: ContractStorage,
 {
-    data.store(storage, base_slot, LayoutCtx::Full)?;
-    let loaded = T::load(storage, base_slot, LayoutCtx::Full)?;
+    data.store(storage, base_slot, LayoutCtx::FULL)?;
+    let loaded = T::load(storage, base_slot, LayoutCtx::FULL)?;
     assert_eq!(&loaded, data, "Initial store/load failed");
 
-    T::delete(storage, base_slot, LayoutCtx::Full)?;
-    let after_delete = T::load(storage, base_slot, LayoutCtx::Full)?;
+    T::delete(storage, base_slot, LayoutCtx::FULL)?;
+    let after_delete = T::load(storage, base_slot, LayoutCtx::FULL)?;
     let expected_zero = T::default();
     assert_eq!(&after_delete, &expected_zero, "Delete did not zero values");
     Ok(())

@@ -25,19 +25,19 @@ impl StorableType for Bytes {
 impl Storable<1> for Bytes {
     #[inline]
     fn load<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<Self> {
-        debug_assert_eq!(ctx, LayoutCtx::Full, "Bytes cannot be packed");
+        debug_assert_eq!(ctx, LayoutCtx::FULL, "Bytes cannot be packed");
         load_bytes_like(storage, base_slot, |data| Ok(Self::from(data)))
     }
 
     #[inline]
     fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
-        debug_assert_eq!(ctx, LayoutCtx::Full, "Bytes cannot be packed");
+        debug_assert_eq!(ctx, LayoutCtx::FULL, "Bytes cannot be packed");
         store_bytes_like(self.as_ref(), storage, base_slot)
     }
 
     #[inline]
     fn delete<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
-        debug_assert_eq!(ctx, LayoutCtx::Full, "Bytes cannot be packed");
+        debug_assert_eq!(ctx, LayoutCtx::FULL, "Bytes cannot be packed");
         delete_bytes_like(storage, base_slot)
     }
 
@@ -59,7 +59,7 @@ impl StorableType for String {
 impl Storable<1> for String {
     #[inline]
     fn load<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<Self> {
-        debug_assert_eq!(ctx, LayoutCtx::Full, "String cannot be packed");
+        debug_assert_eq!(ctx, LayoutCtx::FULL, "String cannot be packed");
         load_bytes_like(storage, base_slot, |data| {
             Self::from_utf8(data).map_err(|e| {
                 TempoPrecompileError::Fatal(format!("Invalid UTF-8 in stored string: {e}"))
@@ -69,13 +69,13 @@ impl Storable<1> for String {
 
     #[inline]
     fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
-        debug_assert_eq!(ctx, LayoutCtx::Full, "String cannot be packed");
+        debug_assert_eq!(ctx, LayoutCtx::FULL, "String cannot be packed");
         store_bytes_like(self.as_bytes(), storage, base_slot)
     }
 
     #[inline]
     fn delete<S: StorageOps>(storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
-        debug_assert_eq!(ctx, LayoutCtx::Full, "String cannot be packed");
+        debug_assert_eq!(ctx, LayoutCtx::FULL, "String cannot be packed");
         delete_bytes_like(storage, base_slot)
     }
 
@@ -381,13 +381,13 @@ mod tests {
             let mut contract = setup_test_contract();
 
             // Verify store → load roundtrip
-            s.store(&mut contract, base_slot, LayoutCtx::Full)?;
-            let loaded = String::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            s.store(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let loaded = String::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(s, loaded, "Short string roundtrip failed for: {s:?}");
 
             // Verify delete works
-            String::delete(&mut contract, base_slot, LayoutCtx::Full)?;
-            let after_delete = String::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            String::delete(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let after_delete = String::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(after_delete, String::new(), "Short string not empty after delete");
 
             // EVM words roundtrip (only works for short strings ≤31 bytes)
@@ -404,13 +404,13 @@ mod tests {
             assert_eq!(s.len(), 32, "Generated string should be exactly 32 bytes");
 
             // Verify store → load roundtrip
-            s.store(&mut contract, base_slot, LayoutCtx::Full)?;
-            let loaded = String::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            s.store(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let loaded = String::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(s, loaded, "32-byte string roundtrip failed");
 
             // Verify delete works
-            String::delete(&mut contract, base_slot, LayoutCtx::Full)?;
-            let after_delete = String::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            String::delete(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let after_delete = String::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(after_delete, String::new(), "32-byte string not empty after delete");
 
             // Note: 32-byte strings use long storage format and cannot be
@@ -425,16 +425,16 @@ mod tests {
             let mut contract = setup_test_contract();
 
             // Verify store → load roundtrip
-            s.store(&mut contract, base_slot, LayoutCtx::Full)?;
-            let loaded = String::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            s.store(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let loaded = String::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(s, loaded, "Long string roundtrip failed for length: {}", s.len());
 
             // Calculate how many data slots were used
             let chunks = calc_chunks(s.len());
 
             // Verify delete works (clears both main slot and keccak256-addressed data)
-            String::delete(&mut contract, base_slot, LayoutCtx::Full)?;
-            let after_delete = String::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            String::delete(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let after_delete = String::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(after_delete, String::new(), "Long string not empty after delete");
 
             // Verify all keccak256-addressed data slots are actually zero
@@ -464,13 +464,13 @@ mod tests {
             let mut contract = setup_test_contract();
 
             // Verify store → load roundtrip
-            b.store(&mut contract, base_slot, LayoutCtx::Full)?;
-            let loaded = Bytes::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            b.store(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let loaded = Bytes::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(b, loaded, "Short bytes roundtrip failed for length: {}", b.len());
 
             // Verify delete works
-            Bytes::delete(&mut contract, base_slot, LayoutCtx::Full)?;
-            let after_delete = Bytes::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            Bytes::delete(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let after_delete = Bytes::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(after_delete, Bytes::new(), "Short bytes not empty after delete");
 
             // EVM words roundtrip (only works for short bytes ≤31 bytes)
@@ -487,13 +487,13 @@ mod tests {
             assert_eq!(b.len(), 32, "Generated bytes should be exactly 32 bytes");
 
             // Verify store → load roundtrip
-            b.store(&mut contract, base_slot, LayoutCtx::Full)?;
-            let loaded = Bytes::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            b.store(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let loaded = Bytes::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(b, loaded, "32-byte bytes roundtrip failed");
 
             // Verify delete works
-            Bytes::delete(&mut contract, base_slot, LayoutCtx::Full)?;
-            let after_delete = Bytes::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            Bytes::delete(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let after_delete = Bytes::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(after_delete, Bytes::new(), "32-byte bytes not empty after delete");
 
             // Note: 32-byte Bytes use long storage format and cannot be
@@ -508,16 +508,16 @@ mod tests {
             let mut contract = setup_test_contract();
 
             // Verify store → load roundtrip
-            b.store(&mut contract, base_slot, LayoutCtx::Full)?;
-            let loaded = Bytes::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            b.store(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let loaded = Bytes::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(b, loaded, "Long bytes roundtrip failed for length: {}", b.len());
 
             // Calculate how many data slots were used
             let chunks = calc_chunks(b.len());
 
             // Verify delete works (clears both main slot and keccak256-addressed data)
-            Bytes::delete(&mut contract, base_slot, LayoutCtx::Full)?;
-            let after_delete = Bytes::load(&mut contract, base_slot, LayoutCtx::Full)?;
+            Bytes::delete(&mut contract, base_slot, LayoutCtx::FULL)?;
+            let after_delete = Bytes::load(&mut contract, base_slot, LayoutCtx::FULL)?;
             assert_eq!(after_delete, Bytes::new(), "Long bytes not empty after delete");
 
             // Verify all keccak256-addressed data slots are actually zero

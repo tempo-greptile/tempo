@@ -272,8 +272,8 @@ pub(crate) fn gen_slot_packing_logic(
 
 /// Generate a `LayoutCtx` expression for accessing a field.
 ///
-/// This helper unifies the logic for choosing between `LayoutCtx::Full` and
-/// `LayoutCtx::Packed` based on compile-time slot comparison with neighboring fields.
+/// This helper unifies the logic for choosing between `LayoutCtx::FULL` and
+/// `LayoutCtx::packed` based on compile-time slot comparison with neighboring fields.
 ///
 /// A field uses `Packed` if it shares a slot with any neighboring field.
 pub(crate) fn gen_layout_ctx_expr(
@@ -299,14 +299,14 @@ pub(crate) fn gen_layout_ctx_expr(
         quote! {
             {
                 if #shares_slot_check && <#ty as crate::storage::StorableType>::IS_PACKABLE {
-                    crate::storage::LayoutCtx::Packed(#offset_const_ref)
+                    crate::storage::LayoutCtx::packed(#offset_const_ref)
                 } else {
-                    crate::storage::LayoutCtx::Full
+                    crate::storage::LayoutCtx::FULL
                 }
             }
         }
     } else {
-        quote! { crate::storage::LayoutCtx::Full }
+        quote! { crate::storage::LayoutCtx::FULL }
     }
 }
 
@@ -328,13 +328,13 @@ pub(crate) fn gen_layout_ctx_expr_inefficient(
     if !is_manual_slot {
         quote! {
             if <#ty as crate::storage::StorableType>::IS_PACKABLE {
-                crate::storage::LayoutCtx::Packed(#offset_const_ref)
+                crate::storage::LayoutCtx::packed(#offset_const_ref)
             } else {
-                crate::storage::LayoutCtx::Full
+                crate::storage::LayoutCtx::FULL
             }
         }
     } else {
-        quote! { crate::storage::LayoutCtx::Full }
+        quote! { crate::storage::LayoutCtx::FULL }
     }
 }
 

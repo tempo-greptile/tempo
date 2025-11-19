@@ -103,7 +103,7 @@ pub(crate) fn derive_impl(input: DeriveInput) -> syn::Result<TokenStream> {
                 storage: &mut S, base_slot: ::alloy::primitives::U256, ctx: crate::storage::LayoutCtx
             ) -> crate::error::Result<Self> {
                 use crate::storage::Storable;
-                debug_assert_eq!(ctx, crate::storage::LayoutCtx::Full, "Struct types can only be loaded with LayoutCtx::Full");
+                debug_assert_eq!(ctx, crate::storage::LayoutCtx::FULL, "Struct types can only be loaded with LayoutCtx::FULL");
 
                 #load_impl
 
@@ -117,7 +117,7 @@ pub(crate) fn derive_impl(input: DeriveInput) -> syn::Result<TokenStream> {
                 &self, storage: &mut S, base_slot: ::alloy::primitives::U256, ctx: crate::storage::LayoutCtx
             ) -> crate::error::Result<()> {
                 use crate::storage::Storable;
-                debug_assert_eq!(ctx, crate::storage::LayoutCtx::Full, "Struct types can only be stored with LayoutCtx::Full");
+                debug_assert_eq!(ctx, crate::storage::LayoutCtx::FULL, "Struct types can only be stored with LayoutCtx::FULL");
 
                 #store_impl
 
