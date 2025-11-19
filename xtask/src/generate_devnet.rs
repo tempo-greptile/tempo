@@ -149,6 +149,7 @@ impl GenerateDevnet {
         let dst = output.join("genesis.json");
         std::fs::write(&dst, &genesis_ser)
             .wrap_err_with(|| format!("failed writing genesis to `{}`", dst.display()))?;
+        println!("wrote genesis to `{}`", dst.display());
         Ok(())
     }
 }
