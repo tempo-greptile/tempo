@@ -49,12 +49,12 @@ pub(super) async fn setup(
     let user_tokens = [*base1.address(), *base2.address()];
     let base = [base1.clone(), base2.clone()];
 
-    let quote = ITIP20Instance::new(token_id_to_address(0), provider.clone());
+    let quote_address = token_id_to_address(0);
 
     let mint_amount = U256::from(1000000000000000u128);
     let first_order_amount = 1000000000000u128;
 
-    let tokens = [&base1, &base2, &quote];
+    let tokens = [&base1, &base2];
     let mut futures = Vec::new();
     let nonce = provider.get_transaction_count(wallet.address()).await?;
 
@@ -102,7 +102,7 @@ pub(super) async fn setup(
 
     for signer in signers {
         let nonce = provider.get_transaction_count(signer.address()).await?;
-        let quote = ITIP20::new(*quote.address(), provider.clone());
+        let quote = ITIP20::new(quote_address, provider.clone());
         let tokens = base.clone().into_iter().chain(std::iter::once(quote));
         let tokens_count = base.len() as u64 + 1;
 
@@ -162,7 +162,7 @@ pub(super) async fn setup(
 
     Ok((
         exchange,
-        *quote.address(),
+        quote_address,
         base.into_iter().map(|base| *base.address()).collect(),
     ))
 }
