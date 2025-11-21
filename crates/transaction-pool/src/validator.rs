@@ -13,6 +13,16 @@ use reth_transaction_pool::{
 use tempo_precompiles::{ACCOUNT_KEYCHAIN_ADDRESS, AuthorizedKey, compute_keys_slot};
 use tempo_revm::TempoStateAccess;
 
+/// Result of keychain validation check
+enum ValidationResult {
+    /// Need to validate keychain authorization with the given user address and access key
+    ValidateKeychain(Address, Address),
+    /// Skip validation (not a keychain signature, or same-tx auth is valid)
+    Skip,
+    /// Reject the transaction with the given reason
+    Reject(String),
+}
+
 /// Validator for Tempo transactions.
 #[derive(Debug)]
 pub struct TempoTransactionValidator<Client> {
@@ -73,6 +83,93 @@ where
         Ok(())
     }
 
+    /// Check if a transaction requires keychain validation
+    ///
+    /// Returns the validation result indicating what action to take:
+    /// - ValidateKeychain: Need to validate the keychain authorization
+    /// - Skip: No validation needed (not a keychain signature, or same-tx auth is valid)
+    /// - Reject: Transaction should be rejected with the given reason
+    fn check_keychain_validation(
+        &self,
+        transaction: &TempoPooledTransaction,
+    ) -> ValidationResult {
+        let aa_signed = match transaction.inner().as_ref() {
+            tempo_primitives::TempoTxEnvelope::AA(aa) => aa,
+            _ => return ValidationResult::Skip,
+        };
+
+        if !aa_signed.signature().is_keychain() {
+            return ValidationResult::Skip;
+        }
+
+        let sender = transaction.sender();
+        let sig_hash = aa_signed.signature_hash();
+
+        // Recover and validate the access key ID
+        let access_key_addr = match aa_signed.signature().key_id(&sig_hash).ok().flatten() {
+            Some(addr) => addr,
+            None => return ValidationResult::Skip,
+        };
+
+        // Sanity check: user_address should match transaction sender
+        if let tempo_primitives::AASignature::Keychain(keychain_sig) = aa_signed.signature() {
+            if keychain_sig.user_address != sender {
+                return ValidationResult::Reject(
+                    "Keychain signature user_address does not match sender".to_string(),
+                );
+            }
+        }
+
+        // Check if this is same-tx auth+use (transaction includes KeyAuthorization for this key)
+        let is_same_tx_auth_use = aa_signed
+            .tx()
+            .key_authorization
+            .as_ref()
+            .map(|key_auth| key_auth.key_id == access_key_addr)
+            .unwrap_or(false);
+
+        if is_same_tx_auth_use {
+            // Same-tx auth+use: Validate the KeyAuthorization signature (not the keychain state)
+            // The KeyAuthorization MUST be signed by the root account
+            if let Some(key_auth) = aa_signed.tx().key_authorization.as_ref() {
+                // Compute the message hash for the KeyAuthorization
+                let auth_message_hash =
+                    tempo_primitives::transaction::KeyAuthorization::authorization_message_hash(
+                        key_auth.key_type.clone(),
+                        key_auth.key_id,
+                        key_auth.expiry,
+                        &key_auth.limits,
+                    );
+
+                // Recover the signer of the KeyAuthorization
+                match key_auth.signature.recover_signer(&auth_message_hash) {
+                    Ok(auth_signer) => {
+                        // Verify it's signed by the root account (sender)
+                        if auth_signer != sender {
+                            // KeyAuthorization must be signed by root account, not by the access key
+                            return ValidationResult::Reject(format!(
+                                "Invalid KeyAuthorization signature: signed by {}, expected root account {}",
+                                auth_signer, sender
+                            ));
+                        }
+                        // KeyAuthorization is valid - skip keychain storage check (key will be authorized during execution)
+                        return ValidationResult::Skip;
+                    }
+                    Err(e) => {
+                        // KeyAuthorization signature is invalid
+                        return ValidationResult::Reject(format!(
+                            "Invalid KeyAuthorization signature: failed to recover signer: {}",
+                            e
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Not same-tx auth+use - validate keychain authorization
+        ValidationResult::ValidateKeychain(sender, access_key_addr)
+    }
+
     fn validate_one(
         &self,
         origin: TransactionOrigin,
@@ -88,89 +185,7 @@ where
         }
 
         // For AA transactions with Keychain signatures, validate authorization
-        enum ValidationResult {
-            ValidateKeychain(Address, Address),
-            Skip,
-            Reject(String),
-        }
-
-        match (|| -> ValidationResult {
-            let aa_signed = match transaction.inner().as_ref() {
-                tempo_primitives::TempoTxEnvelope::AA(aa) => aa,
-                _ => return ValidationResult::Skip,
-            };
-
-            if !aa_signed.signature().is_keychain() {
-                return ValidationResult::Skip;
-            }
-
-            let sender = transaction.sender();
-            let sig_hash = aa_signed.signature_hash();
-
-            // Recover and validate the access key ID
-            let access_key_addr = match aa_signed.signature().key_id(&sig_hash).ok().flatten() {
-                Some(addr) => addr,
-                None => return ValidationResult::Skip,
-            };
-
-            // Sanity check: user_address should match transaction sender
-            if let tempo_primitives::AASignature::Keychain(keychain_sig) = aa_signed.signature() {
-                if keychain_sig.user_address != sender {
-                    return ValidationResult::Reject(
-                        "Keychain signature user_address does not match sender".to_string(),
-                    );
-                }
-            }
-
-            // Check if this is same-tx auth+use (transaction includes KeyAuthorization for this key)
-            let is_same_tx_auth_use = aa_signed
-                .tx()
-                .key_authorization
-                .as_ref()
-                .map(|key_auth| key_auth.key_id == access_key_addr)
-                .unwrap_or(false);
-
-            if is_same_tx_auth_use {
-                // Same-tx auth+use: Validate the KeyAuthorization signature (not the keychain state)
-                // The KeyAuthorization MUST be signed by the root account
-                if let Some(key_auth) = aa_signed.tx().key_authorization.as_ref() {
-                    // Compute the message hash for the KeyAuthorization
-                    let auth_message_hash =
-                        tempo_primitives::transaction::KeyAuthorization::authorization_message_hash(
-                            key_auth.key_type.clone(),
-                            key_auth.key_id,
-                            key_auth.expiry,
-                            &key_auth.limits,
-                        );
-
-                    // Recover the signer of the KeyAuthorization
-                    match key_auth.signature.recover_signer(&auth_message_hash) {
-                        Ok(auth_signer) => {
-                            // Verify it's signed by the root account (sender)
-                            if auth_signer != sender {
-                                // KeyAuthorization must be signed by root account, not by the access key
-                                return ValidationResult::Reject(format!(
-                                    "Invalid KeyAuthorization signature: signed by {}, expected root account {}",
-                                    auth_signer, sender
-                                ));
-                            }
-                            // KeyAuthorization is valid - skip keychain storage check (key will be authorized during execution)
-                            return ValidationResult::Skip;
-                        }
-                        Err(e) => {
-                            // KeyAuthorization signature is invalid
-                            return ValidationResult::Reject(format!(
-                                "Invalid KeyAuthorization signature: failed to recover signer: {}",
-                                e
-                            ));
-                        }
-                    }
-                }
-            }
-
-            // Not same-tx auth+use - validate keychain authorization
-            ValidationResult::ValidateKeychain(sender, access_key_addr)
-        })() {
+        match self.check_keychain_validation(&transaction) {
             ValidationResult::ValidateKeychain(user_address, access_key_addr) => {
                 // Validate keychain authorization in precompile storage
                 if let Err(e) = self.validate_keychain_authorization(

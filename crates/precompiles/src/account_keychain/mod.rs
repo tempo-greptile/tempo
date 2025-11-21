@@ -25,9 +25,12 @@ use tempo_precompiles_macros::{Storable, contract};
 /// - byte 9: is_active (bool)
 #[derive(Debug, Clone, Default, PartialEq, Eq, Storable)]
 pub struct AuthorizedKey {
-    pub signature_type: u8, // 0: secp256k1, 1: P256, 2: WebAuthn
-    pub expiry: u64,        // Block timestamp when key expires
-    pub is_active: bool,    // Whether key is active
+    /// Signature type: 0 = secp256k1, 1 = P256, 2 = WebAuthn
+    pub signature_type: u8,
+    /// Block timestamp when key expires
+    pub expiry: u64,
+    /// Whether key is active
+    pub is_active: bool,
 }
 
 // TODO: Can we get some precompile macro utilities for this, which are compatible with read-only contexts?
