@@ -516,8 +516,8 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
 
     // Standard token functions
     pub fn approve(&mut self, msg_sender: Address, call: ITIP20::approveCall) -> Result<bool> {
-        // Only check access keys after Moderato hardfork
-        if self.storage.spec().is_moderato() {
+        // Only check access keys after Allegretto hardfork
+        if self.storage.spec().is_allegretto() {
             // Get the old allowance
             let old_allowance = self.get_allowance(msg_sender, call.spender)?;
 
@@ -548,8 +548,8 @@ impl<'a, S: PrecompileStorageProvider> TIP20Token<'a, S> {
         self.check_not_token_address(call.to)?;
         self.ensure_transfer_authorized(msg_sender, call.to)?;
 
-        // Only check access keys after Moderato hardfork
-        if self.storage.spec().is_moderato() {
+        // Only check access keys after Allegretto hardfork
+        if self.storage.spec().is_allegretto() {
             // Check and update spending limits for access keys
             let mut keychain = AccountKeychain::new(self.storage);
             keychain.authorize_transfer(msg_sender, self.address, call.amount)?;
