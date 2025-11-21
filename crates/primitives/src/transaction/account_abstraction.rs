@@ -3,6 +3,7 @@ use alloy_eips::{Typed2718, eip2930::AccessList, eip7702::SignedAuthorization};
 use alloy_primitives::{Address, B256, Bytes, ChainId, Signature, TxKind, U256, keccak256};
 use alloy_rlp::{Buf, BufMut, Decodable, EMPTY_STRING_CODE, Encodable};
 use core::mem;
+use reth_primitives_traits::InMemorySize;
 
 use crate::{
     subblock::{PartialValidatorKey, TEMPO_SUBBLOCK_NONCE_KEY_PREFIX},
@@ -250,16 +251,7 @@ impl TxAA {
         mem::size_of::<u64>() + // valid_before
         mem::size_of::<Option<u64>>() + // valid_after
         // key_authorization (optional)
-        if let Some(key_auth) = &self.key_authorization {
-            mem::size_of::<u64>() + // expiry
-            mem::size_of::<Address>() + // key_id
-            key_auth.signature.to_bytes().len() + // signature
-            key_auth.limits.iter().map(|_limit| {
-                mem::size_of::<Address>() + mem::size_of::<U256>()
-            }).sum::<usize>()
-        } else {
-            mem::size_of::<Option<KeyAuthorization>>()
-        } +
+        self.key_authorization.as_ref().map(|k| k.size()).unwrap_or(mem::size_of::<Option<KeyAuthorization>>()) +
         self.aa_authorization_list.iter().map(|auth| auth.size()).sum::<usize>() // authorization_list
     }
 

@@ -619,7 +619,7 @@ where
             // Check if this TX is using a Keychain signature (access key)
             // Access keys cannot authorize new keys UNLESS it's the same key being authorized (same-tx auth+use)
             if aa_tx_env.signature.is_keychain() {
-                // Get the access key address (recovered during pool validation and cached)
+                // Get the access key address (recovered during Tx->TxEnv conversion and cached)
                 let access_key_addr = aa_tx_env
                     .signature
                     .key_id(&aa_tx_env.signature_hash)
@@ -1377,7 +1377,6 @@ mod tests {
             aa_calls: vec![call],
             key_authorization: None,
             signature_hash: B256::ZERO,
-            access_key_id: None,
             ..Default::default()
         };
 
@@ -1442,7 +1441,6 @@ mod tests {
             aa_calls: calls.clone(),
             key_authorization: None,
             signature_hash: B256::ZERO,
-            access_key_id: None,
             ..Default::default()
         };
 
@@ -1499,7 +1497,6 @@ mod tests {
             aa_calls: vec![call],
             key_authorization: None,
             signature_hash: B256::ZERO,
-            access_key_id: None,
             ..Default::default()
         };
 
@@ -1545,7 +1542,6 @@ mod tests {
             aa_calls: vec![call],
             key_authorization: None,
             signature_hash: B256::ZERO,
-            access_key_id: None,
             ..Default::default()
         };
 
@@ -1589,7 +1585,6 @@ mod tests {
             aa_calls: vec![call],
             key_authorization: None,
             signature_hash: B256::ZERO,
-            access_key_id: None,
             ..Default::default()
         };
 
@@ -1629,7 +1624,6 @@ mod tests {
             aa_calls: vec![call],
             key_authorization: None,
             signature_hash: B256::ZERO,
-            access_key_id: None,
             ..Default::default()
         };
 
