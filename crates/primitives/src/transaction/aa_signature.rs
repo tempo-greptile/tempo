@@ -227,8 +227,8 @@ impl reth_codecs::Compact for AASignature {
     fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
         // Delegate to Bytes::from_compact which handles variable-length decoding
         let (bytes, rest) = Bytes::from_compact(buf, len);
-        let signature = Self::from_bytes(&bytes)
-            .expect("Failed to decode AASignature from compact encoding");
+        let signature =
+            Self::from_bytes(&bytes).expect("Failed to decode AASignature from compact encoding");
         (signature, rest)
     }
 }
