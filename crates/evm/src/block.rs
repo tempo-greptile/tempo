@@ -468,7 +468,7 @@ where
             // Load the keychain account (creates it if it doesn't exist)
             let mut keychain_account = journal
                 .load_account_with_code_mut(ACCOUNT_KEYCHAIN_ADDRESS)
-                .map_err(|e| BlockExecutionError::other(e))?;
+                .map_err(BlockExecutionError::other)?;
 
             // Only initialize if the account has no code
             if keychain_account.data.info.is_empty_code_hash() {

@@ -59,7 +59,7 @@ where
 
         // Read storage slot from state provider
         let slot_value = state_provider
-            .storage(ACCOUNT_KEYCHAIN_ADDRESS, storage_slot.into())
+            .storage(ACCOUNT_KEYCHAIN_ADDRESS, storage_slot)
             .map_err(|e| {
                 TempoPoolTransactionError::KeychainValidationFailed(format!(
                     "Failed to read keychain storage: {e:?}"
@@ -109,12 +109,12 @@ where
         };
 
         // Sanity check: user_address should match transaction sender
-        if let tempo_primitives::AASignature::Keychain(keychain_sig) = aa_signed.signature() {
-            if keychain_sig.user_address != sender {
-                return ValidationResult::Reject(
-                    "Keychain signature user_address does not match sender".to_string(),
-                );
-            }
+        if let tempo_primitives::AASignature::Keychain(keychain_sig) = aa_signed.signature()
+            && keychain_sig.user_address != sender
+        {
+            return ValidationResult::Reject(
+                "Keychain signature user_address does not match sender".to_string(),
+            );
         }
 
         // Check if this is same-tx auth+use (transaction includes KeyAuthorization for this key)
@@ -145,8 +145,7 @@ where
                         if auth_signer != sender {
                             // KeyAuthorization must be signed by root account, not by the access key
                             return ValidationResult::Reject(format!(
-                                "Invalid KeyAuthorization signature: signed by {}, expected root account {}",
-                                auth_signer, sender
+                                "Invalid KeyAuthorization signature: signed by {auth_signer}, expected root account {sender}"
                             ));
                         }
                         // KeyAuthorization is valid - skip keychain storage check (key will be authorized during execution)
@@ -155,8 +154,7 @@ where
                     Err(e) => {
                         // KeyAuthorization signature is invalid
                         return ValidationResult::Reject(format!(
-                            "Invalid KeyAuthorization signature: failed to recover signer: {}",
-                            e
+                            "Invalid KeyAuthorization signature: failed to recover signer: {e}"
                         ));
                     }
                 }
