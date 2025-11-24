@@ -97,11 +97,8 @@ impl reth_codecs::Compact for KeyAuthorization {
         B: alloy_rlp::BufMut + AsMut<[u8]>,
     {
         // Use RLP encoding for compact representation
-        let mut rlp_buf = Vec::new();
-        alloy_rlp::Encodable::encode(self, &mut rlp_buf);
-        let len = rlp_buf.len();
-        buf.put_slice(&rlp_buf);
-        len
+        self.encode(buf);
+        self.length()
     }
 
     fn from_compact(mut buf: &[u8], _len: usize) -> (Self, &[u8]) {

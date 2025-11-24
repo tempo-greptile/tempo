@@ -58,9 +58,9 @@ impl alloy_rlp::Decodable for SignatureType {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
         let byte: u8 = alloy_rlp::Decodable::decode(buf)?;
         match byte {
-            0 => Ok(SignatureType::Secp256k1),
-            1 => Ok(SignatureType::P256),
-            2 => Ok(SignatureType::WebAuthn),
+            0 => Ok(Self::Secp256k1),
+            1 => Ok(Self::P256),
+            2 => Ok(Self::WebAuthn),
             _ => Err(alloy_rlp::Error::Custom("Invalid signature type")),
         }
     }

@@ -305,7 +305,9 @@ impl FromRecoveredTx<AASigned> for TempoTxEnv {
 
         // Populate the key_id cache for Keychain signatures before cloning
         // This parallelizes recovery during Tx->TxEnv conversion, and the cache is preserved when cloned
-        let _ = signature.key_id(&aa_signed.signature_hash());
+        if let Some(keychain_sig) = signature.as_keychain() {
+            let _ = keychain_sig.key_id(&aa_signed.signature_hash());
+        }
 
         let TxAA {
             chain_id,

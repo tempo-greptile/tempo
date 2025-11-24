@@ -613,28 +613,20 @@ where
         {
             // Check if this TX is using a Keychain signature (access key)
             // Access keys cannot authorize new keys UNLESS it's the same key being authorized (same-tx auth+use)
-            if aa_tx_env.signature.is_keychain() {
+            if let Some(keychain_sig) = aa_tx_env.signature.as_keychain() {
                 // Get the access key address (recovered during Tx->TxEnv conversion and cached)
-                let access_key_addr = aa_tx_env
-                    .signature
-                    .key_id(&aa_tx_env.signature_hash)
-                    .map_err(|_| {
-                        EVMError::Transaction(
+                let access_key_addr =
+                    keychain_sig
+                        .key_id(&aa_tx_env.signature_hash)
+                        .map_err(|_| {
+                            EVMError::Transaction(
                             TempoInvalidTransaction::AccessKeyAuthorizationFailed {
                                 reason:
                                     "Failed to recover access key address from Keychain signature"
                                         .to_string(),
                             },
                         )
-                    })?
-                    .ok_or_else(|| {
-                        EVMError::Transaction(
-                            TempoInvalidTransaction::AccessKeyAuthorizationFailed {
-                                reason: "Expected Keychain signature but got different type"
-                                    .to_string(),
-                            },
-                        )
-                    })?;
+                        })?;
 
                 // Only allow if authorizing the same key that's being used (same-tx auth+use)
                 if access_key_addr != key_auth.key_id {
@@ -729,7 +721,7 @@ where
         // For Keychain signatures, validate that the keychain is authorized in the precompile
         // UNLESS this transaction also includes a KeyAuthorization (same-tx auth+use case)
         if let Some(aa_tx_env) = tx.aa_tx_env.as_ref()
-            && let tempo_primitives::AASignature::Keychain(keychain_sig) = &aa_tx_env.signature
+            && let Some(keychain_sig) = aa_tx_env.signature.as_keychain()
         {
             // The user_address is the root account this transaction is being executed for
             // This should match tx.caller (which comes from recover_signer on the outer signature)
@@ -748,23 +740,17 @@ where
             }
 
             // Get the access key address (recovered during pool validation and cached)
-            let access_key_addr = aa_tx_env
-                .signature
+            let access_key_addr = keychain_sig
                 .key_id(&aa_tx_env.signature_hash)
                 .map_err(|_| {
                     EVMError::Transaction(TempoInvalidTransaction::AccessKeyAuthorizationFailed {
                         reason: "Failed to recover access key address from inner signature"
                             .to_string(),
                     })
-                })?
-                .ok_or_else(|| {
-                    EVMError::Transaction(TempoInvalidTransaction::AccessKeyAuthorizationFailed {
-                        reason: "Expected Keychain signature but got different type".to_string(),
-                    })
                 })?;
 
             // Check if this transaction includes a KeyAuthorization for the same key
-            // If so, skip validation here - the key will be authorized during execution
+            // If so, skip validation here - the key was just validated and authorized
             let is_authorizing_this_key = aa_tx_env
                 .key_authorization
                 .as_ref()
@@ -1667,8 +1653,7 @@ mod tests {
         ];
 
         // Compute hash using the helper function
-        let hash1 =
-            KeyAuthorization::authorization_message_hash(key_type.clone(), key_id, expiry, &limits);
+        let hash1 = KeyAuthorization::authorization_message_hash(key_type, key_id, expiry, &limits);
 
         // Compute again to verify consistency
         let hash2 = KeyAuthorization::authorization_message_hash(key_type, key_id, expiry, &limits);

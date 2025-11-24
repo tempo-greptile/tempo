@@ -534,7 +534,7 @@ fn create_key_authorization(
     // Compute the authorization message hash using the helper function
     // Message format: keccak256(rlp([key_type, key_id, expiry, limits]))
     let auth_message_hash = KeyAuthorization::authorization_message_hash(
-        key_type.clone(),
+        key_type,
         access_key_addr,
         expiry,
         &spending_limits,

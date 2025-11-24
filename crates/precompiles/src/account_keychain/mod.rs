@@ -9,7 +9,11 @@ pub use tempo_contracts::precompiles::{
     },
 };
 
-use crate::{ACCOUNT_KEYCHAIN_ADDRESS, error::Result, storage::PrecompileStorageProvider};
+use crate::{
+    ACCOUNT_KEYCHAIN_ADDRESS,
+    error::Result,
+    storage::{PrecompileStorageProvider, Storable},
+};
 use alloy::primitives::{Address, B256, Bytes, IntoLogData, U256};
 use revm::{
     interpreter::instructions::utility::{IntoAddress, IntoU256},
@@ -40,20 +44,7 @@ impl AuthorizedKey {
     /// This is useful for read-only contexts (like pool validation) that don't have
     /// access to PrecompileStorageProvider but need to decode the packed struct.
     pub fn decode_from_slot(slot_value: U256) -> Self {
-        Self {
-            signature_type: slot_value.byte(0),
-            expiry: u64::from_le_bytes([
-                slot_value.byte(1),
-                slot_value.byte(2),
-                slot_value.byte(3),
-                slot_value.byte(4),
-                slot_value.byte(5),
-                slot_value.byte(6),
-                slot_value.byte(7),
-                slot_value.byte(8),
-            ]),
-            is_active: slot_value.byte(9) != 0,
-        }
+        Self::from_evm_words([slot_value]).unwrap()
     }
 }
 

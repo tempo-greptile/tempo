@@ -71,256 +71,6 @@ pub enum PrimitiveSignature {
     WebAuthn(WebAuthnSignature),
 }
 
-/// Keychain signature wrapping another signature with a user address
-/// This allows an access key to sign on behalf of a root account
-///
-/// Format: 0x03 || user_address (20 bytes) || inner_signature
-///
-/// The user_address is the root account this transaction is being executed for.
-/// The inner signature proves an authorized access key signed the transaction.
-/// The handler validates that user_address has authorized the access key in the KeyChain precompile.
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
-#[cfg_attr(
-    all(test, feature = "reth-codec"),
-    reth_codecs::add_arbitrary_tests(compact, rlp)
-)]
-pub struct KeychainSignature {
-    /// Root account address that this transaction is being executed for
-    pub user_address: Address,
-    /// The actual signature from the access key (can be Secp256k1, P256, or WebAuthn, but NOT another Keychain)
-    pub signature: PrimitiveSignature,
-    /// Cached access key ID recovered from the inner signature.
-    /// This is an implementation detail - use `key_id()` to access.
-    /// Uses OnceLock for thread-safe interior mutability.
-    /// Note: Excluded from PartialEq, Eq, Hash, and Compact as it's a cache.
-    #[cfg_attr(feature = "serde", serde(skip))]
-    cached_key_id: OnceLock<Address>,
-}
-
-// Manual implementations of PartialEq, Eq, and Hash that exclude cached_key_id
-// since it's just a cache and doesn't affect the logical equality of signatures
-impl PartialEq for KeychainSignature {
-    fn eq(&self, other: &Self) -> bool {
-        self.user_address == other.user_address && self.signature == other.signature
-    }
-}
-
-impl Eq for KeychainSignature {}
-
-impl core::hash::Hash for KeychainSignature {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.user_address.hash(state);
-        self.signature.hash(state);
-    }
-}
-
-impl KeychainSignature {
-    /// Create a new KeychainSignature
-    pub fn new(user_address: Address, signature: PrimitiveSignature) -> Self {
-        Self {
-            user_address,
-            signature,
-            cached_key_id: OnceLock::new(),
-        }
-    }
-}
-
-// Manual Compact implementation that excludes cached_key_id (cache field)
-#[cfg(feature = "reth-codec")]
-impl reth_codecs::Compact for KeychainSignature {
-    fn to_compact<B>(&self, buf: &mut B) -> usize
-    where
-        B: alloy_rlp::BufMut + AsMut<[u8]>,
-    {
-        // Only encode user_address and signature, skip cached_key_id
-        let mut written = 0;
-        written += self.user_address.to_compact(buf);
-        written += self.signature.to_compact(buf);
-        written
-    }
-
-    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
-        // Decode user_address and signature, initialize cached_key_id as empty
-        let (user_address, rest) = Address::from_compact(buf, len);
-        let remaining_len = len - (buf.len() - rest.len());
-        let (signature, rest) = PrimitiveSignature::from_compact(rest, remaining_len);
-
-        (
-            Self {
-                user_address,
-                signature,
-                cached_key_id: OnceLock::new(),
-            },
-            rest,
-        )
-    }
-}
-
-// Manual RLP implementations that exclude cached_key_id (cache field)
-impl alloy_rlp::Encodable for KeychainSignature {
-    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
-        // Encode as a list: [user_address, signature]
-        let payload_length = self.user_address.length() + self.signature.length();
-        alloy_rlp::Header {
-            list: true,
-            payload_length,
-        }
-        .encode(out);
-        self.user_address.encode(out);
-        self.signature.encode(out);
-    }
-
-    fn length(&self) -> usize {
-        let payload_length = self.user_address.length() + self.signature.length();
-        alloy_rlp::Header {
-            list: true,
-            payload_length,
-        }
-        .length_with_payload()
-    }
-}
-
-impl alloy_rlp::Decodable for KeychainSignature {
-    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let header = alloy_rlp::Header::decode(buf)?;
-        if !header.list {
-            return Err(alloy_rlp::Error::UnexpectedString);
-        }
-
-        let user_address = alloy_rlp::Decodable::decode(buf)?;
-        let signature = alloy_rlp::Decodable::decode(buf)?;
-
-        Ok(Self {
-            user_address,
-            signature,
-            cached_key_id: OnceLock::new(),
-        })
-    }
-}
-
-// Manual Arbitrary implementation that excludes cached_key_id (cache field)
-#[cfg(any(test, feature = "arbitrary"))]
-impl<'a> arbitrary::Arbitrary<'a> for KeychainSignature {
-    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(Self {
-            user_address: u.arbitrary()?,
-            signature: u.arbitrary()?,
-            cached_key_id: OnceLock::new(), // Always start with empty cache
-        })
-    }
-}
-
-/// AA transaction signature supporting multiple signature schemes
-///
-/// Note: Uses custom Compact implementation that delegates to `to_bytes()` / `from_bytes()`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(untagged, rename_all = "camelCase"))]
-#[cfg_attr(
-    all(test, feature = "reth-codec"),
-    reth_codecs::add_arbitrary_tests(compact, rlp)
-)]
-pub enum AASignature {
-    /// Primitive signature types: Secp256k1, P256, or WebAuthn
-    Primitive(PrimitiveSignature),
-
-    /// Keychain signature - wraps another signature with a key identifier
-    /// Format: key_id (20 bytes) + inner signature
-    /// IMP: The inner signature MUST NOT be another Keychain (validated at runtime)
-    /// Note: Recursion is prevented by KeychainSignature's custom Arbitrary impl
-    Keychain(KeychainSignature),
-}
-
-impl Default for AASignature {
-    fn default() -> Self {
-        Self::Primitive(PrimitiveSignature::default())
-    }
-}
-
-impl Default for PrimitiveSignature {
-    fn default() -> Self {
-        Self::Secp256k1(Signature::test_signature())
-    }
-}
-
-impl alloy_rlp::Encodable for AASignature {
-    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
-        let bytes = self.to_bytes();
-        alloy_rlp::Encodable::encode(&bytes, out);
-    }
-
-    fn length(&self) -> usize {
-        self.to_bytes().length()
-    }
-}
-
-impl alloy_rlp::Decodable for AASignature {
-    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let bytes: Bytes = alloy_rlp::Decodable::decode(buf)?;
-        Self::from_bytes(&bytes).map_err(alloy_rlp::Error::Custom)
-    }
-}
-
-#[cfg(feature = "reth-codec")]
-impl reth_codecs::Compact for AASignature {
-    fn to_compact<B>(&self, buf: &mut B) -> usize
-    where
-        B: alloy_rlp::BufMut + AsMut<[u8]>,
-    {
-        let bytes = self.to_bytes();
-        // Delegate to Bytes::to_compact which handles variable-length encoding
-        bytes.to_compact(buf)
-    }
-
-    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
-        // Delegate to Bytes::from_compact which handles variable-length decoding
-        let (bytes, rest) = Bytes::from_compact(buf, len);
-        let signature =
-            Self::from_bytes(&bytes).expect("Failed to decode AASignature from compact encoding");
-        (signature, rest)
-    }
-}
-
-impl alloy_rlp::Encodable for PrimitiveSignature {
-    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
-        let bytes = self.to_bytes();
-        alloy_rlp::Encodable::encode(&bytes, out);
-    }
-
-    fn length(&self) -> usize {
-        self.to_bytes().length()
-    }
-}
-
-impl alloy_rlp::Decodable for PrimitiveSignature {
-    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        let bytes: Bytes = alloy_rlp::Decodable::decode(buf)?;
-        Self::from_bytes(&bytes).map_err(alloy_rlp::Error::Custom)
-    }
-}
-
-#[cfg(feature = "reth-codec")]
-impl reth_codecs::Compact for PrimitiveSignature {
-    fn to_compact<B>(&self, buf: &mut B) -> usize
-    where
-        B: alloy_rlp::BufMut + AsMut<[u8]>,
-    {
-        let bytes = self.to_bytes();
-        // Delegate to Bytes::to_compact which handles variable-length encoding
-        bytes.to_compact(buf)
-    }
-
-    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
-        // Delegate to Bytes::from_compact which handles variable-length decoding
-        let (bytes, rest) = Bytes::from_compact(buf, len);
-        let signature = Self::from_bytes(&bytes)
-            .expect("Failed to decode PrimitiveSignature from compact encoding");
-        (signature, rest)
-    }
-}
-
 impl PrimitiveSignature {
     /// Parse signature from bytes with backward compatibility
     ///
@@ -517,6 +267,184 @@ impl PrimitiveSignature {
     }
 }
 
+impl Default for PrimitiveSignature {
+    fn default() -> Self {
+        Self::Secp256k1(Signature::test_signature())
+    }
+}
+
+impl alloy_rlp::Encodable for PrimitiveSignature {
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+        let bytes = self.to_bytes();
+        alloy_rlp::Encodable::encode(&bytes, out);
+    }
+
+    fn length(&self) -> usize {
+        self.to_bytes().length()
+    }
+}
+
+impl alloy_rlp::Decodable for PrimitiveSignature {
+    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        let bytes: Bytes = alloy_rlp::Decodable::decode(buf)?;
+        Self::from_bytes(&bytes).map_err(alloy_rlp::Error::Custom)
+    }
+}
+
+#[cfg(feature = "reth-codec")]
+impl reth_codecs::Compact for PrimitiveSignature {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: alloy_rlp::BufMut + AsMut<[u8]>,
+    {
+        let bytes = self.to_bytes();
+        // Delegate to Bytes::to_compact which handles variable-length encoding
+        bytes.to_compact(buf)
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        // Delegate to Bytes::from_compact which handles variable-length decoding
+        let (bytes, rest) = Bytes::from_compact(buf, len);
+        let signature = Self::from_bytes(&bytes)
+            .expect("Failed to decode PrimitiveSignature from compact encoding");
+        (signature, rest)
+    }
+}
+
+/// Keychain signature wrapping another signature with a user address
+/// This allows an access key to sign on behalf of a root account
+///
+/// Format: 0x03 || user_address (20 bytes) || inner_signature
+///
+/// The user_address is the root account this transaction is being executed for.
+/// The inner signature proves an authorized access key signed the transaction.
+/// The handler validates that user_address has authorized the access key in the KeyChain precompile.
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct KeychainSignature {
+    /// Root account address that this transaction is being executed for
+    pub user_address: Address,
+    /// The actual signature from the access key (can be Secp256k1, P256, or WebAuthn, but NOT another Keychain)
+    pub signature: PrimitiveSignature,
+    /// Cached access key ID recovered from the inner signature.
+    /// This is an implementation detail - use `key_id()` to access.
+    /// Uses OnceLock for thread-safe interior mutability.
+    /// Note: Excluded from PartialEq, Eq, Hash, and Compact as it's a cache.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    cached_key_id: OnceLock<Address>,
+}
+
+impl KeychainSignature {
+    /// Create a new KeychainSignature
+    pub fn new(user_address: Address, signature: PrimitiveSignature) -> Self {
+        Self {
+            user_address,
+            signature,
+            cached_key_id: OnceLock::new(),
+        }
+    }
+
+    /// Get the access key ID for Keychain signatures.
+    ///
+    /// For Keychain signatures, this returns the access key address that signed the transaction.
+    /// The key_id is recovered from the inner signature on first access and cached for
+    /// subsequent calls. Returns None for non-Keychain signatures.
+    ///
+    /// This follows the pattern used in alloy for lazy hash computation.
+    pub fn key_id(
+        &self,
+        sig_hash: &B256,
+    ) -> Result<Address, alloy_consensus::crypto::RecoveryError> {
+        // Check if already cached
+        if let Some(cached) = self.cached_key_id.get() {
+            return Ok(*cached);
+        }
+
+        // Not cached - recover and cache
+        let key_id = self.signature.recover_signer(sig_hash)?;
+        let _ = self.cached_key_id.set(key_id);
+        Ok(key_id)
+    }
+}
+
+// Manual implementations of PartialEq, Eq, and Hash that exclude cached_key_id
+// since it's just a cache and doesn't affect the logical equality of signatures
+impl PartialEq for KeychainSignature {
+    fn eq(&self, other: &Self) -> bool {
+        self.user_address == other.user_address && self.signature == other.signature
+    }
+}
+
+impl Eq for KeychainSignature {}
+
+impl core::hash::Hash for KeychainSignature {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.user_address.hash(state);
+        self.signature.hash(state);
+    }
+}
+
+// Manual Compact implementation that excludes cached_key_id (cache field)
+#[cfg(feature = "reth-codec")]
+impl reth_codecs::Compact for KeychainSignature {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: alloy_rlp::BufMut + AsMut<[u8]>,
+    {
+        // Only encode user_address and signature, skip cached_key_id
+        let mut written = 0;
+        written += self.user_address.to_compact(buf);
+        written += self.signature.to_compact(buf);
+        written
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        // Decode user_address and signature, initialize cached_key_id as empty
+        let (user_address, rest) = Address::from_compact(buf, len);
+        let remaining_len = len - (buf.len() - rest.len());
+        let (signature, rest) = PrimitiveSignature::from_compact(rest, remaining_len);
+
+        (
+            Self {
+                user_address,
+                signature,
+                cached_key_id: OnceLock::new(),
+            },
+            rest,
+        )
+    }
+}
+
+// Manual Arbitrary implementation that excludes cached_key_id (cache field)
+#[cfg(any(test, feature = "arbitrary"))]
+impl<'a> arbitrary::Arbitrary<'a> for KeychainSignature {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
+        Ok(Self {
+            user_address: u.arbitrary()?,
+            signature: u.arbitrary()?,
+            cached_key_id: OnceLock::new(), // Always start with empty cache
+        })
+    }
+}
+
+/// AA transaction signature supporting multiple signature schemes
+///
+/// Note: Uses custom Compact implementation that delegates to `to_bytes()` / `from_bytes()`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(untagged, rename_all = "camelCase"))]
+pub enum AASignature {
+    /// Primitive signature types: Secp256k1, P256, or WebAuthn
+    Primitive(PrimitiveSignature),
+
+    /// Keychain signature - wraps another signature with a key identifier
+    /// Format: key_id (20 bytes) + inner signature
+    /// IMP: The inner signature MUST NOT be another Keychain (validated at runtime)
+    /// Note: Recursion is prevented by KeychainSignature's custom Arbitrary impl
+    Keychain(KeychainSignature),
+}
+
 impl AASignature {
     /// Parse signature from bytes with backward compatibility
     ///
@@ -625,12 +553,8 @@ impl AASignature {
         match self {
             Self::Primitive(primitive_sig) => primitive_sig.recover_signer(sig_hash),
             Self::Keychain(keychain_sig) => {
-                // Validate the inner signature by recovering the access key address
-                // This ensures the signature is valid before the transaction enters the pool
-                let key_id = keychain_sig.signature.recover_signer(sig_hash)?;
-
-                // Cache the recovered key_id for later use in the EVM handler
-                let _ = keychain_sig.cached_key_id.set(key_id);
+                // Ensure validity of the keychain signature and cache the key id
+                keychain_sig.key_id(sig_hash)?;
 
                 // Return the user_address - the root account this transaction is for
                 Ok(keychain_sig.user_address)
@@ -643,31 +567,56 @@ impl AASignature {
         matches!(self, Self::Keychain(_))
     }
 
-    /// Get the access key ID for Keychain signatures.
-    ///
-    /// For Keychain signatures, this returns the access key address that signed the transaction.
-    /// The key_id is recovered from the inner signature on first access and cached for
-    /// subsequent calls. Returns None for non-Keychain signatures.
-    ///
-    /// This follows the pattern used in alloy for lazy hash computation.
-    pub fn key_id(
-        &self,
-        sig_hash: &B256,
-    ) -> Result<Option<Address>, alloy_consensus::crypto::RecoveryError> {
+    /// Get the Keychain signature if this is a Keychain signature
+    pub fn as_keychain(&self) -> Option<&KeychainSignature> {
         match self {
-            Self::Keychain(keychain_sig) => {
-                // Check if already cached
-                if let Some(cached) = keychain_sig.cached_key_id.get() {
-                    return Ok(Some(*cached));
-                }
-
-                // Not cached - recover and cache
-                let key_id = keychain_sig.signature.recover_signer(sig_hash)?;
-                let _ = keychain_sig.cached_key_id.set(key_id);
-                Ok(Some(key_id))
-            }
-            _ => Ok(None), // Non-Keychain signatures don't have a key_id
+            Self::Keychain(keychain_sig) => Some(keychain_sig),
+            _ => None,
         }
+    }
+}
+
+impl Default for AASignature {
+    fn default() -> Self {
+        Self::Primitive(PrimitiveSignature::default())
+    }
+}
+
+impl alloy_rlp::Encodable for AASignature {
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+        let bytes = self.to_bytes();
+        alloy_rlp::Encodable::encode(&bytes, out);
+    }
+
+    fn length(&self) -> usize {
+        self.to_bytes().length()
+    }
+}
+
+impl alloy_rlp::Decodable for AASignature {
+    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        let bytes: Bytes = alloy_rlp::Decodable::decode(buf)?;
+        Self::from_bytes(&bytes).map_err(alloy_rlp::Error::Custom)
+    }
+}
+
+#[cfg(feature = "reth-codec")]
+impl reth_codecs::Compact for AASignature {
+    fn to_compact<B>(&self, buf: &mut B) -> usize
+    where
+        B: alloy_rlp::BufMut + AsMut<[u8]>,
+    {
+        let bytes = self.to_bytes();
+        // Delegate to Bytes::to_compact which handles variable-length encoding
+        bytes.to_compact(buf)
+    }
+
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
+        // Delegate to Bytes::from_compact which handles variable-length decoding
+        let (bytes, rest) = Bytes::from_compact(buf, len);
+        let signature =
+            Self::from_bytes(&bytes).expect("Failed to decode AASignature from compact encoding");
+        (signature, rest)
     }
 }
 

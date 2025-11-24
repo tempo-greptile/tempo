@@ -90,52 +90,43 @@ where
     /// - Skip: No validation needed (not a keychain signature, or same-tx auth is valid)
     /// - Reject: Transaction should be rejected with the given reason
     fn check_keychain_validation(&self, transaction: &TempoPooledTransaction) -> ValidationResult {
-        let aa_signed = match transaction.inner().as_ref() {
-            tempo_primitives::TempoTxEnvelope::AA(aa) => aa,
-            _ => return ValidationResult::Skip,
+        let Some(tx) = transaction.inner().as_aa() else {
+            return ValidationResult::Skip;
         };
 
-        if !aa_signed.signature().is_keychain() {
+        let Some(sig) = tx.signature().as_keychain() else {
             return ValidationResult::Skip;
-        }
+        };
 
         let sender = transaction.sender();
-        let sig_hash = aa_signed.signature_hash();
+        let sig_hash = tx.signature_hash();
 
-        // Recover and validate the access key ID
-        let Ok(opt_addr) = aa_signed.signature().key_id(&sig_hash) else {
-            // Failed to recover signature - invalid signature
+        // This should never happen because we validate the signature validity in `recover_signer`.
+        let Ok(key_id) = sig.key_id(&sig_hash) else {
             return ValidationResult::Reject(
                 "Failed to recover access key ID from Keychain signature".to_string(),
             );
         };
 
-        let Some(access_key_addr) = opt_addr else {
-            // This shouldn't happen as we've already verified it's a Keychain signature
-            return ValidationResult::Skip;
-        };
-
-        // Sanity check: user_address should match transaction sender
-        if let tempo_primitives::AASignature::Keychain(keychain_sig) = aa_signed.signature()
-            && keychain_sig.user_address != sender
-        {
+        // This should never happen because we set sender based on the sig.
+        if sig.user_address != sender {
             return ValidationResult::Reject(
                 "Keychain signature user_address does not match sender".to_string(),
             );
         }
 
         // Check if this is same-tx auth+use (transaction includes KeyAuthorization for this key)
-        let is_same_tx_auth_use = aa_signed
+        let is_same_tx_auth_use = tx
             .tx()
             .key_authorization
             .as_ref()
-            .map(|key_auth| key_auth.key_id == access_key_addr)
+            .map(|key_auth| key_auth.key_id == key_id)
             .unwrap_or(false);
 
         if is_same_tx_auth_use {
             // Same-tx auth+use: Validate the KeyAuthorization signature (not the keychain state)
             // The KeyAuthorization MUST be signed by the root account
-            if let Some(key_auth) = aa_signed.tx().key_authorization.as_ref() {
+            if let Some(key_auth) = tx.tx().key_authorization.as_ref() {
                 // Compute the message hash for the KeyAuthorization
                 let auth_message_hash = key_auth.sig_hash();
 
@@ -161,7 +152,7 @@ where
         }
 
         // Not same-tx auth+use - validate keychain authorization
-        ValidationResult::ValidateKeychain(sender, access_key_addr)
+        ValidationResult::ValidateKeychain(sender, key_id)
     }
 
     fn validate_one(
