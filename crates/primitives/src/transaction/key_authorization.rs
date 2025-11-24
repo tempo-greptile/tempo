@@ -42,6 +42,15 @@ pub struct KeyAuthorization {
     /// Key identifier, is the address derived from the public key of the key type.
     pub key_id: Address,
 
+    /// Chain ID this authorization is valid for
+    pub chain_id: u64,
+
+    /// Nonce key for 2D nonce system (U256)
+    pub nonce_key: U256,
+
+    /// Nonce value for replay protection
+    pub nonce: u64,
+
     /// Signature authorizing this key (signed by root key)
     pub signature: AASignature,
 }
@@ -52,12 +61,20 @@ impl KeyAuthorization {
     /// This is a convenience method that calls [`Self::authorization_message_hash`]
     /// with this instance's fields.
     pub fn sig_hash(&self) -> B256 {
-        Self::authorization_message_hash(self.key_type, self.key_id, self.expiry, &self.limits)
+        Self::authorization_message_hash(
+            self.key_type,
+            self.key_id,
+            self.expiry,
+            &self.limits,
+            self.chain_id,
+            self.nonce_key,
+            self.nonce,
+        )
     }
 
     /// Computes the authorization message hash to be signed by the root key.
     ///
-    /// The message format is: `keccak256(rlp([key_type, key_id, expiry, limits]))`
+    /// The message format is: `keccak256(rlp([key_type, key_id, expiry, limits, chain_id, nonce_key, nonce]))`
     ///
     /// Note: The signature field is NOT included in this hash, as it signs this hash.
     pub fn authorization_message_hash(
@@ -65,13 +82,21 @@ impl KeyAuthorization {
         key_id: Address,
         expiry: u64,
         limits: &[TokenLimit],
+        chain_id: u64,
+        nonce_key: U256,
+        nonce: u64,
     ) -> B256 {
         let mut auth_message = Vec::new();
         let key_type_byte: u8 = key_type.into();
 
         // Calculate payload length
-        let payload_length =
-            key_type_byte.length() + key_id.length() + expiry.length() + list_length(limits);
+        let payload_length = key_type_byte.length()
+            + key_id.length()
+            + expiry.length()
+            + list_length(limits)
+            + chain_id.length()
+            + nonce_key.length()
+            + nonce.length();
 
         // Encode outer list header
         alloy_rlp::Header {
@@ -85,6 +110,9 @@ impl KeyAuthorization {
         key_id.encode(&mut auth_message);
         expiry.encode(&mut auth_message);
         encode_list(limits, &mut auth_message);
+        chain_id.encode(&mut auth_message);
+        nonce_key.encode(&mut auth_message);
+        nonce.encode(&mut auth_message);
 
         keccak256(&auth_message)
     }
@@ -113,6 +141,9 @@ impl reth_primitives_traits::InMemorySize for KeyAuthorization {
         mem::size_of::<u8>() + // key_type
         mem::size_of::<u64>() + // expiry
         mem::size_of::<Address>() + // key_id
+        mem::size_of::<u64>() + // chain_id
+        mem::size_of::<U256>() + // nonce_key
+        mem::size_of::<u64>() + // nonce
         self.signature.size() + // signature
         self.limits.iter().map(|_limit| {
             mem::size_of::<Address>() + mem::size_of::<U256>()
@@ -134,6 +165,9 @@ impl<'a> arbitrary::Arbitrary<'a> for KeyAuthorization {
             expiry: u.arbitrary()?,
             limits: u.arbitrary()?,
             key_id: u.arbitrary()?,
+            chain_id: u.arbitrary()?,
+            nonce_key: u.arbitrary()?,
+            nonce: u.arbitrary()?,
             signature,
         })
     }

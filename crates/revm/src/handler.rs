@@ -667,6 +667,63 @@ where
                 ));
             }
 
+            // Validate chain ID
+            let current_chain_id = cfg.chain_id();
+            if key_auth.chain_id != current_chain_id {
+                return Err(EVMError::Transaction(
+                    TempoInvalidTransaction::AccessKeyAuthorizationFailed {
+                        reason: format!(
+                            "KeyAuthorization chain_id {} does not match current chain_id {}",
+                            key_auth.chain_id, current_chain_id
+                        ),
+                    },
+                ));
+            }
+
+            // Validate nonce using the 2D nonce system
+            {
+                let internals = EvmInternals::new(journal, block);
+                let mut storage_provider = EvmPrecompileStorageProvider::new_max_gas(internals, cfg);
+                let mut nonce_manager = NonceManager::new(&mut storage_provider);
+
+                // Get the current nonce for this account and nonce_key
+                let current_nonce = nonce_manager
+                    .get_nonce(getNonceCall {
+                        account: *root_account,
+                        nonceKey: key_auth.nonce_key,
+                    })
+                    .map_err(|err| match err {
+                        TempoPrecompileError::Fatal(err) => EVMError::Custom(err),
+                        err => TempoInvalidTransaction::AccessKeyAuthorizationFailed {
+                            reason: format!("Failed to get nonce: {}", err),
+                        }
+                        .into(),
+                    })?;
+
+                // Verify the nonce matches
+                if key_auth.nonce != current_nonce {
+                    return Err(EVMError::Transaction(
+                        TempoInvalidTransaction::AccessKeyAuthorizationFailed {
+                            reason: format!(
+                                "KeyAuthorization nonce {} does not match current nonce {} for nonce_key {}",
+                                key_auth.nonce, current_nonce, key_auth.nonce_key
+                            ),
+                        },
+                    ));
+                }
+
+                // Increment the nonce after successful validation
+                nonce_manager
+                    .increment_nonce(*root_account, key_auth.nonce_key)
+                    .map_err(|err| match err {
+                        TempoPrecompileError::Fatal(err) => EVMError::Custom(err),
+                        err => TempoInvalidTransaction::AccessKeyAuthorizationFailed {
+                            reason: format!("Failed to increment nonce: {}", err),
+                        }
+                        .into(),
+                    })?;
+            } // storage_provider dropped here, releasing the borrow on journal
+
             // Now authorize the key in the precompile
             let internals = EvmInternals::new(journal, block);
             let mut storage_provider = EvmPrecompileStorageProvider::new_max_gas(internals, cfg);
@@ -1651,12 +1708,31 @@ mod tests {
                 limit: U256::from(200),
             },
         ];
+        let chain_id = 1u64;
+        let nonce_key = U256::from(5);
+        let nonce = 42u64;
 
         // Compute hash using the helper function
-        let hash1 = KeyAuthorization::authorization_message_hash(key_type, key_id, expiry, &limits);
+        let hash1 = KeyAuthorization::authorization_message_hash(
+            key_type,
+            key_id,
+            expiry,
+            &limits,
+            chain_id,
+            nonce_key,
+            nonce,
+        );
 
         // Compute again to verify consistency
-        let hash2 = KeyAuthorization::authorization_message_hash(key_type, key_id, expiry, &limits);
+        let hash2 = KeyAuthorization::authorization_message_hash(
+            key_type,
+            key_id,
+            expiry,
+            &limits,
+            chain_id,
+            nonce_key,
+            nonce,
+        );
 
         assert_eq!(hash1, hash2, "Hash computation should be deterministic");
     }

@@ -127,6 +127,18 @@ where
             // Same-tx auth+use: Validate the KeyAuthorization signature (not the keychain state)
             // The KeyAuthorization MUST be signed by the root account
             if let Some(key_auth) = tx.tx().key_authorization.as_ref() {
+                // Validate chain_id
+                let Some(tx_chain_id) = tx.tx().chain_id() else {
+                    return ValidationResult::Reject("Transaction missing chain_id".to_string());
+                };
+
+                if key_auth.chain_id != tx_chain_id {
+                    return ValidationResult::Reject(format!(
+                        "KeyAuthorization chain_id {} does not match transaction chain_id {}",
+                        key_auth.chain_id, tx_chain_id
+                    ));
+                }
+
                 // Compute the message hash for the KeyAuthorization
                 let auth_message_hash = key_auth.sig_hash();
 
@@ -145,6 +157,8 @@ where
                         "Invalid KeyAuthorization signature: signed by {auth_signer}, expected root account {sender}"
                     ));
                 }
+
+                // TODO: We need to add nonce validation here, once 2d nonce PR is merged.
 
                 // KeyAuthorization is valid - skip keychain storage check (key will be authorized during execution)
                 return ValidationResult::Skip;

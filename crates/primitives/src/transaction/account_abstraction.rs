@@ -1679,6 +1679,9 @@ mod tests {
                 limit: U256::from(10000),
             }],
             key_id: address!("0000000000000000000000000000000000000004"),
+            chain_id: 1,
+            nonce_key: U256::from(5),
+            nonce: 42,
             signature: AASignature::Primitive(PrimitiveSignature::Secp256k1(
                 Signature::test_signature(),
             )),

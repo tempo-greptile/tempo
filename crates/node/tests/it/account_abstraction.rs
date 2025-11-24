@@ -527,17 +527,23 @@ fn create_key_authorization(
     access_key_signature: AASignature,
     expiry: u64,
     spending_limits: Vec<tempo_primitives::transaction::TokenLimit>,
+    chain_id: u64,
+    nonce_key: U256,
+    nonce: u64,
 ) -> eyre::Result<KeyAuthorization> {
     // Infer key_type from the access key signature
     let key_type = access_key_signature.signature_type();
 
     // Compute the authorization message hash using the helper function
-    // Message format: keccak256(rlp([key_type, key_id, expiry, limits]))
+    // Message format: keccak256(rlp([key_type, key_id, expiry, limits, chain_id, nonce_key, nonce]))
     let auth_message_hash = KeyAuthorization::authorization_message_hash(
         key_type,
         access_key_addr,
         expiry,
         &spending_limits,
+        chain_id,
+        nonce_key,
+        nonce,
     );
 
     // Root key signs the authorization
@@ -548,6 +554,9 @@ fn create_key_authorization(
         expiry,
         limits: spending_limits,
         key_id: access_key_addr,
+        chain_id,
+        nonce_key,
+        nonce,
         signature: AASignature::Primitive(PrimitiveSignature::Secp256k1(root_auth_signature)),
     })
 }
@@ -2321,12 +2330,15 @@ async fn test_aa_access_key() -> eyre::Result<()> {
     let key_expiry = u64::MAX; // Never expires for this test
 
     // Compute the authorization message hash using the helper function
-    // Message format: keccak256(rlp([key_type, key_id, expiry, limits]))
+    // Message format: keccak256(rlp([key_type, key_id, expiry, limits, chain_id, nonce_key, nonce]))
     let auth_message_hash = KeyAuthorization::authorization_message_hash(
         tempo_primitives::transaction::SignatureType::P256,
         access_key_addr,
         key_expiry,
         &spending_limits,
+        chain_id,
+        U256::from(1),
+        0,
     );
 
     // Root key signs the authorization message
@@ -2338,6 +2350,9 @@ async fn test_aa_access_key() -> eyre::Result<()> {
         expiry: key_expiry,
         limits: spending_limits,
         key_id: access_key_addr, // Address derived from P256 public key
+        chain_id: chain_id,
+        nonce_key: U256::from(1),
+        nonce: 0,
         signature: AASignature::Primitive(PrimitiveSignature::Secp256k1(root_auth_signature)), // Root key signature (secp256k1)
     };
 
@@ -2767,6 +2782,9 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
             token: DEFAULT_FEE_TOKEN,
             limit: U256::from(10u64) * U256::from(10).pow(U256::from(18)),
         }],
+        chain_id,
+        U256::from(1),
+        0,
     )?;
 
     // First authorization should succeed
@@ -2890,6 +2908,9 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
             token: DEFAULT_FEE_TOKEN,
             limit: U256::from(10u64) * U256::from(10).pow(U256::from(18)),
         }],
+        chain_id,
+        U256::from(1),
+        0,
     )?;
 
     // Authorize access_key_1 with root key (should succeed)
@@ -2940,6 +2961,9 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
         mock_p256_sig_2,
         u64::MAX,
         vec![],
+        chain_id,
+        U256::from(1),
+        1,
     )?;
     let tx4 = TxAA {
         chain_id,
@@ -3032,6 +3056,9 @@ async fn test_transaction_key_authorization_and_spending_limits() -> eyre::Resul
             token: DEFAULT_FEE_TOKEN,
             limit: spending_limit,
         }],
+        chain_id,
+        U256::from(1),
+        0,
     )?;
 
     let mut nonce = provider.get_transaction_count(root_addr).await?;
@@ -3336,6 +3363,9 @@ async fn test_aa_keychain_rpc_validation() -> eyre::Result<()> {
         mock_p256_sig,
         u64::MAX,
         spending_limits.clone(),
+        chain_id,
+        U256::from(1),
+        0,
     )?;
 
     let recipient1 = Address::random();
@@ -3572,6 +3602,9 @@ async fn test_aa_keychain_rpc_validation() -> eyre::Result<()> {
         addr_3,
         u64::MAX,
         &spending_limits,
+        chain_id,
+        U256::from(1),
+        0,
     );
 
     // Sign with wrong key (should be root_key_signer)
@@ -3586,6 +3619,9 @@ async fn test_aa_keychain_rpc_validation() -> eyre::Result<()> {
         expiry: u64::MAX,
         limits: spending_limits.clone(),
         key_id: addr_3,
+        chain_id: chain_id,
+        nonce_key: U256::from(1),
+        nonce: 0,
         signature: AASignature::Primitive(PrimitiveSignature::P256(P256SignatureWithPreHash {
             r: B256::from_slice(&wrong_sig_bytes[0..32]),
             s: B256::from_slice(&wrong_sig_bytes[32..64]),
@@ -3652,6 +3688,95 @@ async fn test_aa_keychain_rpc_validation() -> eyre::Result<()> {
         error_msg.contains("Invalid KeyAuthorization signature"),
         "Error must mention 'Invalid KeyAuthorization signature'. Got: {error_msg}"
     );
+
+    // STEP 5: NEGATIVE TEST - Invalid KeyAuthorization with wrong chain_id
+    println!("\n=== STEP 5: NEGATIVE TEST - Invalid KeyAuthorization (wrong chain_id) ===");
+
+    let (another_key, pub_x_4, pub_y_4, addr_4) = generate_p256_access_key();
+
+    // Create KeyAuthorization with WRONG chain_id
+    let wrong_chain_id = 999u64; // Use an incorrect chain_id
+    let auth_message_hash_wrong_chain = KeyAuthorization::authorization_message_hash(
+        tempo_primitives::transaction::SignatureType::P256,
+        addr_4,
+        u64::MAX,
+        &spending_limits,
+        wrong_chain_id, // Wrong chain_id!
+        U256::from(1),
+        1,
+    );
+
+    // Sign with root key (signature is valid, but chain_id is wrong)
+    let root_sig_wrong_chain = root_key_signer.sign_hash_sync(&auth_message_hash_wrong_chain)?;
+
+    let wrong_chain_key_auth = KeyAuthorization {
+        key_type: tempo_primitives::transaction::SignatureType::P256,
+        expiry: u64::MAX,
+        limits: spending_limits.clone(),
+        key_id: addr_4,
+        chain_id: wrong_chain_id, // Wrong chain_id!
+        nonce_key: U256::from(1),
+        nonce: 1,
+        signature: AASignature::Primitive(PrimitiveSignature::Secp256k1(root_sig_wrong_chain)),
+    };
+
+    let wrong_chain_tx = TxAA {
+        chain_id,
+        max_priority_fee_per_gas: TEMPO_BASE_FEE as u128,
+        max_fee_per_gas: TEMPO_BASE_FEE as u128,
+        gas_limit: 500_000,
+        calls: vec![Call {
+            to: DEFAULT_FEE_TOKEN.into(),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        }],
+        nonce_key: U256::ZERO,
+        nonce: nonce + 1,
+        fee_token: None,
+        fee_payer_signature: None,
+        valid_before: Some(u64::MAX),
+        valid_after: None,
+        access_list: Default::default(),
+        key_authorization: Some(wrong_chain_key_auth),
+        aa_authorization_list: vec![],
+    };
+
+    // Sign the transaction with the new key
+    let wrong_chain_sig = sign_aa_tx_with_p256_access_key(
+        &wrong_chain_tx,
+        &another_key,
+        &pub_x_4,
+        &pub_y_4,
+        root_key_addr,
+    )?;
+
+    let signed_wrong_chain_tx = AASigned::new_unhashed(wrong_chain_tx, wrong_chain_sig);
+    let wrong_chain_envelope: TempoTxEnvelope = signed_wrong_chain_tx.into();
+    let mut wrong_chain_encoded = Vec::new();
+    wrong_chain_envelope.encode_2718(&mut wrong_chain_encoded);
+
+    println!("Attempting to inject transaction with wrong chain_id in KeyAuthorization...");
+
+    // This transaction has a KeyAuthorization with wrong chain_id
+    // This MUST be REJECTED at the RPC/pool level
+    let inject_result_wrong_chain = setup
+        .node
+        .rpc
+        .inject_tx(wrong_chain_encoded.into())
+        .await
+        .expect_err(
+            "Transaction with wrong chain_id in KeyAuthorization MUST be rejected at RPC/pool level"
+        );
+
+    let error_msg_chain = inject_result_wrong_chain.to_string();
+
+    // Verify the error message contains chain_id validation failure
+    assert!(
+        error_msg_chain.contains("chain_id") || error_msg_chain.contains("does not match"),
+        "Error must mention chain_id validation failure. Got: {error_msg_chain}"
+    );
+
+    println!("✓ Transaction with wrong chain_id correctly rejected at pool level");
 
     Ok(())
 }
