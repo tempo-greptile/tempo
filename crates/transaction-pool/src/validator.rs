@@ -133,25 +133,23 @@ where
                 let auth_message_hash = key_auth.sig_hash();
 
                 // Recover the signer of the KeyAuthorization
-                match key_auth.signature.recover_signer(&auth_message_hash) {
-                    Ok(auth_signer) => {
-                        // Verify it's signed by the root account (sender)
-                        if auth_signer != sender {
-                            // KeyAuthorization must be signed by root account, not by the access key
-                            return ValidationResult::Reject(format!(
-                                "Invalid KeyAuthorization signature: signed by {auth_signer}, expected root account {sender}"
-                            ));
-                        }
-                        // KeyAuthorization is valid - skip keychain storage check (key will be authorized during execution)
-                        return ValidationResult::Skip;
-                    }
-                    Err(e) => {
-                        // KeyAuthorization signature is invalid
-                        return ValidationResult::Reject(format!(
-                            "Invalid KeyAuthorization signature: failed to recover signer: {e}"
-                        ));
-                    }
+                let Ok(auth_signer) = key_auth.signature.recover_signer(&auth_message_hash) else {
+                    // KeyAuthorization signature is invalid
+                    return ValidationResult::Reject(
+                        "Invalid KeyAuthorization signature: failed to recover signer".to_string(),
+                    );
+                };
+
+                // Verify it's signed by the root account (sender)
+                if auth_signer != sender {
+                    // KeyAuthorization must be signed by root account, not by the access key
+                    return ValidationResult::Reject(format!(
+                        "Invalid KeyAuthorization signature: signed by {auth_signer}, expected root account {sender}"
+                    ));
                 }
+
+                // KeyAuthorization is valid - skip keychain storage check (key will be authorized during execution)
+                return ValidationResult::Skip;
             }
         }
 
