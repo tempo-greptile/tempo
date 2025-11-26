@@ -15,6 +15,9 @@ use sha2::{Digest, Sha256};
 pub const SIGNATURE_TYPE_P256: u8 = 0x01;
 pub const SIGNATURE_TYPE_WEBAUTHN: u8 = 0x02;
 
+// Minimum authenticatorData is 37 bytes (32 rpIdHash + 1 flags + 4 signCount)
+const MIN_AUTH_DATA_LEN: usize = 37;
+
 /// P256 signature with pre-hash flag
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -327,9 +330,6 @@ fn verify_webauthn_data_internal(
     webauthn_data: &[u8],
     tx_hash: &B256,
 ) -> Result<B256, &'static str> {
-    // Minimum authenticatorData is 37 bytes (32 rpIdHash + 1 flags + 4 signCount)
-    const MIN_AUTH_DATA_LEN: usize = 37;
-
     if webauthn_data.len() < MIN_AUTH_DATA_LEN {
         return Err("WebAuthn data too short");
     }
@@ -405,8 +405,6 @@ fn verify_webauthn_data_internal(
 /// - 37 bytes base (rpIdHash + flags + signCount)
 /// - CBOR-encoded extensions (variable length)
 fn parse_auth_data_length_with_ed(webauthn_data: &[u8]) -> Result<usize, &'static str> {
-    const MIN_AUTH_DATA_LEN: usize = 37;
-
     // Extensions must have at least 1 byte of CBOR data
     if webauthn_data.len() <= MIN_AUTH_DATA_LEN {
         return Err("AuthenticatorData too short for ED flag");
