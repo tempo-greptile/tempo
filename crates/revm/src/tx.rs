@@ -39,6 +39,12 @@ pub struct AATxEnv {
 
     /// Whether the transaction is a subblock transaction.
     pub subblock_transaction: bool,
+
+    /// Optional key authorization for provisioning access keys
+    pub key_authorization: Option<tempo_primitives::transaction::KeyAuthorization>,
+
+    /// Transaction signature hash (for signature verification)
+    pub signature_hash: B256,
 }
 /// Tempo transaction environment.
 #[derive(Debug, Clone, Default, derive_more::Deref, derive_more::DerefMut)]
@@ -80,6 +86,34 @@ impl TempoTxEnv {
         self.aa_tx_env
             .as_ref()
             .is_some_and(|aa| aa.subblock_transaction)
+    }
+
+    /// Returns the first top-level call in the transaction.
+    pub fn first_call(&self) -> Option<(&TxKind, &[u8])> {
+        if let Some(aa) = self.aa_tx_env.as_ref() {
+            aa.aa_calls
+                .first()
+                .map(|call| (&call.to, call.input.as_ref()))
+        } else {
+            Some((&self.inner.kind, &self.inner.data))
+        }
+    }
+
+    /// Invokes the given closure for each top-level call in the transaction and
+    /// returns true if all calls returned true.
+    pub fn calls(&self) -> impl Iterator<Item = (&TxKind, &[u8])> {
+        if let Some(aa) = self.aa_tx_env.as_ref() {
+            Either::Left(
+                aa.aa_calls
+                    .iter()
+                    .map(|call| (&call.to, call.input.as_ref())),
+            )
+        } else {
+            Either::Right(core::iter::once((
+                &self.inner.kind,
+                self.inner.input().as_ref(),
+            )))
+        }
     }
 }
 
@@ -269,6 +303,12 @@ impl FromRecoveredTx<AASigned> for TempoTxEnv {
         let tx = aa_signed.tx();
         let signature = aa_signed.signature();
 
+        // Populate the key_id cache for Keychain signatures before cloning
+        // This parallelizes recovery during Tx->TxEnv conversion, and the cache is preserved when cloned
+        if let Some(keychain_sig) = signature.as_keychain() {
+            let _ = keychain_sig.key_id(&aa_signed.signature_hash());
+        }
+
         let TxAA {
             chain_id,
             fee_token,
@@ -282,6 +322,7 @@ impl FromRecoveredTx<AASigned> for TempoTxEnv {
             fee_payer_signature,
             valid_before,
             valid_after,
+            key_authorization,
             aa_authorization_list,
         } = tx;
 
@@ -339,6 +380,8 @@ impl FromRecoveredTx<AASigned> for TempoTxEnv {
                 aa_authorization_list: aa_authorization_list.clone(),
                 nonce_key: *nonce_key,
                 subblock_transaction: aa_signed.tx().subblock_proposer().is_some(),
+                key_authorization: key_authorization.clone(),
+                signature_hash: aa_signed.signature_hash(),
             })),
         }
     }

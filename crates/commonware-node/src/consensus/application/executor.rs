@@ -7,24 +7,26 @@
 //! If the agent detects that the execution layer is missing blocks it attempts
 //! to backfill them from the consensus layer.
 
-use std::{sync::Arc, time::Duration};
+use std::{cmp::Ordering, sync::Arc, time::Duration};
 
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::ForkchoiceState;
-use commonware_consensus::{Block as _, marshal::ingress::mailbox::Identifier};
+use commonware_consensus::{
+    Block as _,
+    marshal::{Update, ingress::mailbox::Identifier},
+};
 
 use commonware_macros::select;
 use commonware_runtime::{ContextCell, FutureExt, Handle, Metrics, Pacer, Spawner, spawn_cell};
-use eyre::{WrapErr as _, bail, ensure, eyre};
-use futures::{
-    StreamExt as _,
-    channel::{mpsc, oneshot},
-};
-use reth_provider::BlockNumReader as _;
+use commonware_utils::{Acknowledgement, acknowledgement::Exact};
+use eyre::{OptionExt as _, WrapErr as _, ensure, eyre};
+use futures::{StreamExt as _, channel::mpsc};
+use reth_primitives_traits::SealedBlock;
+use reth_provider::{BlockNumReader as _, BlockReader as _};
 use tempo_node::{TempoExecutionData, TempoFullNode};
 use tracing::{Level, Span, debug, info, instrument, warn};
 
-use crate::consensus::{Digest, application::ingress::Finalized, block::Block};
+use crate::consensus::{Digest, block::Block};
 
 pub(super) struct Builder {
     /// A handle to the execution node layer. Used to forward finalized blocks
@@ -194,7 +196,7 @@ where
 
     #[instrument(skip_all, err)]
     async fn run_pre_event_loop_init(&mut self) -> eyre::Result<()> {
-        let (finalized_consensus_height, finalized_consensus_digest) = self
+        let (consensus_height, consensus_digest) = self
             .marshal
             .get_info(Identifier::Latest)
             .await
@@ -208,61 +210,80 @@ where
                 (0, self.genesis_block.digest())
             });
 
+        let execution_height = self.execution_node.provider.last_block_number().wrap_err(
+            "failed getting last block number from execution layer; cannot \
+                continue without it",
+        )?;
+
+        let block = Block::from_execution_block(SealedBlock::seal_slow(
+            self.execution_node
+                .provider
+                .block_by_number(execution_height)
+                .map_err(Into::<eyre::Report>::into)
+                .and_then(|maybe| maybe.ok_or_eyre("execution node returned no block"))
+                .wrap_err_with(|| {
+                    format!(
+                        "failed reading block at latest number `{execution_height}` \
+                    from execution layer, even though it just reported it"
+                    )
+                })?,
+        ));
+
         info!(
-            finalized_consensus_height,
-            %finalized_consensus_digest,
-            "consensus layer responded with what it thinks are the digest of \
-            the last finalized block that was forwarded to and acknowledged by \
-            the execution layer",
+            consensus_height,
+            %consensus_digest,
+            execution_height,
+            execution_digest = %block.digest(),
+            "read last finalized state from consensus and execution layers",
         );
 
+        let (finalized_height, finalized_digest, do_backfill) =
+            match execution_height.cmp(&consensus_height) {
+                Ordering::Less => {
+                    info!(
+                        "consensus layer finalized height exceeds execution layer \
+                        finalized height; setting forkchoice to consensus digest \
+                        and triggering backfill from consensus layer to execution \
+                        layer"
+                    );
+                    (consensus_height, consensus_digest, true)
+                }
+                Ordering::Equal => {
+                    info!(
+                        "consensus and execution layers agree on heights; no \
+                        backfill necessary"
+                    );
+                    (consensus_height, consensus_digest, false)
+                }
+                Ordering::Greater => {
+                    info!(
+                        "execution layer finalized height exceeds consensus layer \
+                        finalized height; setting forkchoice to execution digest; \
+                        the execution layer probably got into this state due to \
+                        pipeline sync; consensus will forward blocks to execution \
+                        layer, but they will probably be dropped"
+                    );
+                    (execution_height, block.digest(), false)
+                }
+            };
         self.canonicalize(
             Span::current(),
             HeadOrFinalized::Finalized,
-            finalized_consensus_height,
-            finalized_consensus_digest,
+            finalized_height,
+            finalized_digest,
         )
         .await
         .wrap_err("failed setting initial canonical state; can't go on like this")?;
 
-        let latest_execution_block_number =
-            self.execution_node.provider.last_block_number().wrap_err(
-                "failed getting last block number from execution layer; cannot \
-                continue without it",
-            )?;
-
-        if latest_execution_block_number == finalized_consensus_height {
-            info!(
-                finalized_consensus_height,
-                %finalized_consensus_digest,
-                "consensus and execution layers are at the same height; can \
-                enter event loop now",
-            );
-        } else if finalized_consensus_height > latest_execution_block_number {
-            info!(
-                latest_execution_block_number,
-                finalized_consensus_height,
-                %finalized_consensus_digest,
-                "consensus and execution layers reported different heights; \
-                catching up the execution layer",
-            );
-            self.backfill(
-                latest_execution_block_number.saturating_add(1),
-                finalized_consensus_height,
-            )
-            .await
-            .wrap_err(
-                "backfilling from consensus layer to execution layer \
+        if do_backfill {
+            self.backfill(execution_height.saturating_add(1), consensus_height)
+                .await
+                .wrap_err(
+                    "backfilling from consensus layer to execution layer \
                 failed; cannot recover from that",
-            )?;
-        } else {
-            bail!(
-                "execution layer is ahead of consensus layer; cannot deal \
-                with that; \
-                execution_height: `{latest_execution_block_number}`, \
-                consensus_height: `{finalized_consensus_height}`"
-            );
+                )?;
         }
+
         Ok(())
     }
 
@@ -275,8 +296,7 @@ where
                     .await;
             }
             Command::Finalize(finalized) => {
-                // let _ = self.forward_finalized(*update, response, cause).await;
-                let _ = self.finalize(cause, finalized).await;
+                let _ = self.finalize(cause, *finalized).await;
             }
         }
     }
@@ -349,15 +369,15 @@ where
     #[instrument(parent = &cause, skip_all)]
     /// Handles finalization events.
     async fn finalize(&mut self, cause: Span, finalized: super::ingress::Finalized) {
-        match finalized {
-            Finalized::Tip { height, digest } => {
+        match finalized.inner {
+            Update::Tip(height, digest) => {
                 let _: Result<_, _> = self
                     .canonicalize(Span::current(), HeadOrFinalized::Finalized, height, digest)
                     .await;
             }
-            Finalized::Block { block, response } => {
+            Update::Block(block, acknowledgment) => {
                 let _: Result<_, _> = self
-                    .forward_finalized(Span::current(), *block, response)
+                    .forward_finalized(Span::current(), block, acknowledgment)
                     .await;
             }
         }
@@ -396,7 +416,7 @@ where
         &mut self,
         cause: Span,
         block: Block,
-        response: oneshot::Sender<()>,
+        acknowledgment: Exact,
     ) -> eyre::Result<()> {
         if let Err(error) = self
             .canonicalize(
@@ -437,9 +457,7 @@ where
             neither valid nor syncing: `{payload_status}`"
         );
 
-        if let Err(()) = response.send(()) {
-            warn!("tried acknowledging finalization but channel was already closed");
-        }
+        acknowledgment.acknowledge();
 
         Ok(())
     }
@@ -532,7 +550,7 @@ impl ExecutorMailbox {
         self.inner
             .unbounded_send(Message {
                 cause: Span::current(),
-                command: Command::Finalize(finalized),
+                command: Command::Finalize(finalized.into()),
             })
             .wrap_err("failed sending finalization request to agent, this means it exited")
     }
@@ -549,5 +567,5 @@ enum Command {
     /// Requests the agent to set the head of the canonical chain to `digest`.
     CanonicalizeHead { height: u64, digest: Digest },
     /// Requests the agent to forward a finalization event to the execution layer.
-    Finalize(super::ingress::Finalized),
+    Finalize(Box<super::ingress::Finalized>),
 }

@@ -123,6 +123,28 @@ pub enum TempoInvalidTransaction {
     /// Invalid fee token.
     #[error("invalid fee token: {0}")]
     InvalidFeeToken(Address),
+
+    /// Value transfer not allowed.
+    #[error("value transfer not allowed")]
+    ValueTransferNotAllowed,
+
+    /// Value transfer in AA transaction not allowed.
+    #[error("value transfer in AA transaction not allowed")]
+    ValueTransferNotAllowedInAATx,
+
+    /// Access key authorization failed.
+    ///
+    /// This error occurs when attempting to authorize an access key with the AccountKeychain
+    /// precompile fails (e.g., key already exists, invalid parameters, unauthorized caller).
+    #[error("access key authorization failed: {reason}")]
+    AccessKeyAuthorizationFailed {
+        /// Specific reason for failure.
+        reason: String,
+    },
+
+    /// Keychain operations are only supported after Allegretto.
+    #[error("keychain operations are only supported after Allegretto")]
+    KeychainOpBeforeAllegretto,
 }
 
 impl InvalidTxError for TempoInvalidTransaction {

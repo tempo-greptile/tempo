@@ -44,7 +44,6 @@ sol! {
         error OnlySystemContract();
         error InvalidToken();
         error PoolDoesNotExist();
-        error InsufficientLiquidity();
         error InsufficientFeeTokenBalance();
         error InternalError();
         error CannotChangeWithinBlock();
@@ -71,6 +70,10 @@ sol! {
             address token0;
             address token1;
         }
+
+
+        // Constants
+        function MIN_LIQUIDITY() external view returns (uint256);
 
         // Pool Management
         function getPoolId(address userToken, address validatorToken) external pure returns (bytes32);
@@ -144,11 +147,6 @@ impl FeeManagerError {
     /// Creates an error when pool does not exist.
     pub const fn pool_does_not_exist() -> Self {
         Self::PoolDoesNotExist(IFeeManager::PoolDoesNotExist {})
-    }
-
-    /// Creates an error for insufficient liquidity.
-    pub const fn insufficient_liquidity() -> Self {
-        Self::InsufficientLiquidity(IFeeManager::InsufficientLiquidity {})
     }
 
     /// Creates an error for insufficient fee token balance.
