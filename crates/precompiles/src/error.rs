@@ -107,7 +107,7 @@ pub fn add_errors_to_registry<T: SolInterface>(
                     })
             }),
         );
-        assert!(old_selector.is_none(), "Duplicate selector {selector:?}");
+        assert!(old_selector.is_none(), "Duplicate selector {selector:x?}");
     }
 }
 
