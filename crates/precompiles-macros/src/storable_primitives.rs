@@ -359,23 +359,6 @@ fn gen_storable_impl(
     }
 }
 
-/// Generate a `MaybePackable` implementation for primitive types.
-fn gen_packable_impl(type_path: &TokenStream) -> TokenStream {
-    quote! {
-        impl MaybePackable for #type_path {
-            #[inline]
-            fn to_word(&self) -> Result<U256> {
-                Ok(<Self as Encodable<1>>::to_evm_words(self)?[0])
-            }
-
-            #[inline]
-            fn from_word(word: U256) -> Result<Self> {
-                <Self as Encodable<1>>::from_evm_words([word])
-            }
-        }
-    }
-}
-
 /// Generate all storage-related impls for a type
 fn gen_complete_impl_set(config: &TypeConfig) -> TokenStream {
     let storable_type_impl = gen_storable_layout_impl(&config.type_path, config.byte_count);
@@ -385,14 +368,12 @@ fn gen_complete_impl_set(config: &TypeConfig) -> TokenStream {
         config.byte_count,
         &config.storable_strategy,
     );
-    let packable_impl = gen_packable_impl(&config.type_path);
     let storage_key_impl = gen_storage_key_impl(&config.type_path, &config.storage_key_strategy);
 
     quote! {
         #storable_type_impl
         #encodable_impl
         #storable_impl
-        #packable_impl
         #storage_key_impl
     }
 }
@@ -617,9 +598,6 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
 
             // delete uses the default implementation from the trait
         }
-
-        // Arrays use the default MaybePackable implementation (returns error)
-        impl crate::storage::MaybePackable for [#elem_type; #array_size] {}
 
         // Implement StorageKey for use as mapping keys
         impl crate::storage::StorageKey for [#elem_type; #array_size] {
@@ -981,9 +959,6 @@ fn gen_struct_array_impl(struct_type: &TokenStream, array_size: usize) -> TokenS
 
             // delete uses the default implementation from the trait
         }
-
-        // Struct arrays use the default MaybePackable implementation (returns error)
-        impl crate::storage::MaybePackable for [#struct_type; #array_size] {}
 
         // Implement StorageKey for use as mapping keys
         impl crate::storage::StorageKey for [#struct_type; #array_size] {

@@ -104,18 +104,6 @@ impl Storable for bool {
     // delete uses default implementation from trait
 }
 
-impl MaybePackable for bool {
-    #[inline]
-    fn to_word(&self) -> Result<U256> {
-        Ok(<Self as Encodable<1>>::to_evm_words(self)?[0])
-    }
-
-    #[inline]
-    fn from_word(word: U256) -> Result<Self> {
-        <Self as Encodable<1>>::from_evm_words([word])
-    }
-}
-
 impl Storable for Address {
     #[inline]
     fn load<S: StorageOps>(storage: &S, base_slot: U256, ctx: LayoutCtx) -> Result<Self> {
@@ -143,18 +131,6 @@ impl Storable for Address {
     }
 
     // delete uses default implementation from trait
-}
-
-impl MaybePackable for Address {
-    #[inline]
-    fn to_word(&self) -> Result<U256> {
-        Ok(<Self as Encodable<1>>::to_evm_words(self)?[0])
-    }
-
-    #[inline]
-    fn from_word(word: U256) -> Result<Self> {
-        <Self as Encodable<1>>::from_evm_words([word])
-    }
 }
 
 #[cfg(test)]

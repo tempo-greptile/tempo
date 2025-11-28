@@ -92,9 +92,6 @@ impl Storable for Bytes {
     }
 }
 
-// Bytes uses the default MaybePackable implementation (returns error)
-impl MaybePackable for Bytes {}
-
 impl Storable for String {
     #[inline]
     fn load<S: StorageOps>(storage: &S, slot: U256, ctx: LayoutCtx) -> Result<Self> {
@@ -119,9 +116,6 @@ impl Storable for String {
         delete_bytes_like(storage, slot)
     }
 }
-
-// String uses the default MaybePackable implementation (returns error)
-impl MaybePackable for String {}
 
 // -- HELPER FUNCTIONS ---------------------------------------------------------
 

@@ -17,17 +17,15 @@ use std::{marker::PhantomData, rc::Rc};
 use crate::{
     error::{Result, TempoPrecompileError},
     storage::{
-        Encodable, Handler, Layout, LayoutCtx, MaybePackable, Storable, StorableType, StorageOps,
-        packing::{
-            calc_element_loc, calc_packed_slot_count, extract_packed_value, insert_packed_value,
-        },
+        Encodable, Handler, Layout, LayoutCtx, Storable, StorableType, StorageOps,
+        packing::{calc_element_loc, calc_packed_slot_count},
         types::Slot,
     },
 };
 
 impl<T> StorableType for Vec<T>
 where
-    T: Storable + MaybePackable,
+    T: Storable,
 {
     /// Vec base slot occupies one full storage slot (stores length).
     const LAYOUT: Layout = Layout::Slots(1);
@@ -40,7 +38,7 @@ where
 
 impl<T> Encodable<1> for Vec<T>
 where
-    T: Storable + MaybePackable,
+    T: Storable,
 {
     const VALIDATE_LAYOUT: () = assert!(Self::SLOTS == 1, "SLOTS must equal WORDS");
 
@@ -58,7 +56,7 @@ where
 
 impl<T> Storable for Vec<T>
 where
-    T: Storable + MaybePackable,
+    T: Storable,
 {
     fn load<S: StorageOps>(storage: &S, len_slot: U256, ctx: LayoutCtx) -> Result<Self> {
         debug_assert_eq!(ctx, LayoutCtx::FULL, "Dynamic arrays cannot be packed");
@@ -133,9 +131,6 @@ where
     }
 }
 
-// Vec uses the default MaybePackable implementation (returns error)
-impl<T: Storable + MaybePackable> MaybePackable for Vec<T> {}
-
 /// Type-safe handler for accessing `Vec<T>` in storage.
 ///
 /// Provides both full-vector operations (read/write/delete) and individual element access.
@@ -164,7 +159,7 @@ impl<T: Storable + MaybePackable> MaybePackable for Vec<T> {}
 /// ```
 pub struct VecHandler<T>
 where
-    T: Storable + MaybePackable,
+    T: Storable,
 {
     len_slot: U256,
     address: Rc<Address>,
@@ -173,7 +168,7 @@ where
 
 impl<T> Handler<Vec<T>> for VecHandler<T>
 where
-    T: Storable + MaybePackable,
+    T: Storable,
 {
     /// Reads the entire vector from storage.
     #[inline]
@@ -196,7 +191,7 @@ where
 
 impl<T> VecHandler<T>
 where
-    T: Storable + MaybePackable,
+    T: Storable,
 {
     /// Creates a new handler for the vector at the given base slot and address.
     #[inline]
@@ -334,7 +329,7 @@ fn load_packed_elements<T, S>(
     byte_count: usize,
 ) -> Result<Vec<T>>
 where
-    T: Storable + MaybePackable,
+    T: Storable,
     S: StorageOps,
 {
     debug_assert!(
@@ -350,6 +345,7 @@ where
     for slot_idx in 0..slot_count {
         let slot_addr = data_start + U256::from(slot_idx);
         let slot_value = storage.sload(slot_addr)?;
+        let slot_packed = PackedSlot(slot_value);
 
         // How many elements in this slot?
         let elements_in_this_slot = if slot_idx == slot_count - 1 {
@@ -361,8 +357,7 @@ where
 
         // Extract each element from this slot
         for _ in 0..elements_in_this_slot {
-            let word = extract_packed_value::<1, U256>(slot_value, current_offset, byte_count)?;
-            let elem = T::from_word(word)?;
+            let elem = T::load(&slot_packed, slot_addr, LayoutCtx::packed(current_offset))?;
             result.push(elem);
 
             // Move to next element position
@@ -389,7 +384,7 @@ fn store_packed_elements<T, S>(
     byte_count: usize,
 ) -> Result<()>
 where
-    T: Storable + MaybePackable,
+    T: Storable,
     S: StorageOps,
 {
     debug_assert!(
@@ -416,19 +411,22 @@ where
 /// Takes a slice of elements and packs them into a single U256 word.
 fn build_packed_slot<T>(elements: &[T], byte_count: usize) -> Result<U256>
 where
-    T: Storable + MaybePackable,
+    T: Storable,
 {
     debug_assert!(T::BYTES <= 16, "build_packed_slot requires T::BYTES <= 16");
-    let mut slot_value = U256::ZERO;
+    let mut slot_value = PackedSlot(U256::ZERO);
     let mut current_offset = 0;
 
     for elem in elements {
-        let word = elem.to_word()?;
-        slot_value = insert_packed_value::<1, U256>(slot_value, &word, current_offset, byte_count)?;
+        elem.store(
+            &mut slot_value,
+            U256::ZERO,
+            LayoutCtx::packed(current_offset),
+        )?;
         current_offset += byte_count;
     }
 
-    Ok(slot_value)
+    Ok(slot_value.0)
 }
 
 /// Load unpacked elements from storage.
@@ -465,6 +463,19 @@ where
     }
 
     Ok(())
+}
+
+struct PackedSlot(U256);
+
+impl StorageOps for PackedSlot {
+    fn sload(&self, _slot: U256) -> Result<U256> {
+        Ok(self.0)
+    }
+
+    fn sstore(&mut self, _slot: U256, value: U256) -> Result<()> {
+        self.0 = value;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

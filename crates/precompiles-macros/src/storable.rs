@@ -167,9 +167,6 @@ pub(crate) fn derive_impl(input: DeriveInput) -> syn::Result<TokenStream> {
 
             // delete uses default implementation from trait
         }
-
-        // Structs use the default MaybePackable implementation (returns error)
-        impl #impl_generics crate::storage::MaybePackable for #strukt #ty_generics #where_clause {}
     };
 
     // Generate array implementations if requested
