@@ -2614,7 +2614,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_unable_to_burn_blocked_from_protected_address() -> eyre::Result<()> {
+    fn test_burn_from_protected_address() -> eyre::Result<()> {
         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
         let admin = Address::random();
         let burner = Address::random();
@@ -2691,7 +2691,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_burn_from_successful_from_authorized_address() -> eyre::Result<()> {
+    fn test_burn_from() -> eyre::Result<()> {
         let mut storage = HashMapStorageProvider::new(1);
         let admin = Address::random();
         let burner = Address::random();
@@ -2701,26 +2701,21 @@ pub(crate) mod tests {
         initialize_path_usd(&mut storage, admin)?;
         let token_id = 1;
 
-        // Create a blacklist policy (so we can test authorized vs blocked addresses)
-        let policy_id = {
-            let mut registry = TIP403Registry::new(&mut storage);
-            registry.create_policy(
+        let mut registry = TIP403Registry::new(&mut storage);
+        // Create a blacklist policy
+        let policy_id = registry.create_policy(
+            admin,
+            ITIP403Registry::createPolicyCall {
                 admin,
-                ITIP403Registry::createPolicyCall {
-                    admin,
-                    policyType: ITIP403Registry::PolicyType::BLACKLIST,
-                },
-            )?
-        };
+                policyType: ITIP403Registry::PolicyType::BLACKLIST,
+            },
+        )?;
 
-        // Verify target address is NOT in blacklist, so it's authorized
-        {
-            let mut registry = TIP403Registry::new(&mut storage);
-            assert!(registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: policy_id,
-                user: target,
-            })?);
-        }
+        // Verify target address is NOT in blacklist
+        assert!(registry.is_authorized(ITIP403Registry::isAuthorizedCall {
+            policyId: policy_id,
+            user: target,
+        })?);
 
         let mut token = TIP20Token::new(token_id, &mut storage);
         token.initialize("Test", "TST", "USD", PATH_USD_ADDRESS, admin, Address::ZERO)?;
@@ -2734,22 +2729,18 @@ pub(crate) mod tests {
         // Grant BURN_FROM_ROLE to burner
         token.grant_role_internal(burner, *BURN_FROM_ROLE)?;
 
+        let amount = U256::from(1000);
+
         // Grant ISSUER_ROLE to admin and mint tokens to target
         token.grant_role_internal(admin, *ISSUER_ROLE)?;
-        token.mint(
-            admin,
-            ITIP20::mintCall {
-                to: target,
-                amount: U256::from(1000),
-            },
-        )?;
+        token.mint(admin, ITIP20::mintCall { to: target, amount })?;
 
         let initial_balance = token.balance_of(ITIP20::balanceOfCall { account: target })?;
         let initial_supply = token.total_supply()?;
-        assert_eq!(initial_balance, U256::from(1000));
-        assert_eq!(initial_supply, U256::from(1000));
+        assert_eq!(initial_balance, amount);
+        assert_eq!(initial_supply, amount);
 
-        // burnFrom should work even though target is authorized (unlike burnBlocked)
+        // burnFrom should work even though target is not on blacklist
         let burn_amount = U256::from(300);
         token.burn_from(
             burner,
@@ -2762,53 +2753,47 @@ pub(crate) mod tests {
         // Verify balances and total supply were updated
         let final_balance = token.balance_of(ITIP20::balanceOfCall { account: target })?;
         let final_supply = token.total_supply()?;
-        assert_eq!(final_balance, U256::from(700));
-        assert_eq!(final_supply, U256::from(700));
+        assert_eq!(final_balance, amount - burn_amount);
+        assert_eq!(final_supply, amount - burn_amount);
 
         Ok(())
     }
 
     #[test]
-    fn test_burn_from_successful_from_blocked_address() -> eyre::Result<()> {
+    fn test_burn_from_blacklisted_address() -> eyre::Result<()> {
         let mut storage = HashMapStorageProvider::new(1);
         let admin = Address::random();
         let burner = Address::random();
         let target = Address::random();
 
-        // Initialize token
         initialize_path_usd(&mut storage, admin)?;
         let token_id = 1;
 
-        // Create a blacklist policy and add target to blacklist
-        let policy_id = {
-            let mut registry = TIP403Registry::new(&mut storage);
-            let policy_id = registry.create_policy(
-                admin,
-                ITIP403Registry::createPolicyCall {
-                    admin,
-                    policyType: ITIP403Registry::PolicyType::BLACKLIST,
-                },
-            )?;
-            // Add target to blacklist (making it blocked/unauthorized)
-            registry.modify_policy_blacklist(
-                admin,
-                ITIP403Registry::modifyPolicyBlacklistCall {
-                    policyId: policy_id,
-                    account: target,
-                    restricted: true,
-                },
-            )?;
-            policy_id
-        };
+        let mut registry = TIP403Registry::new(&mut storage);
 
-        // Verify target address is now in blacklist, so it's NOT authorized (blocked)
-        {
-            let mut registry = TIP403Registry::new(&mut storage);
-            assert!(!registry.is_authorized(ITIP403Registry::isAuthorizedCall {
+        // Create a blacklist policy and add target to blacklist
+        let policy_id = registry.create_policy(
+            admin,
+            ITIP403Registry::createPolicyCall {
+                admin,
+                policyType: ITIP403Registry::PolicyType::BLACKLIST,
+            },
+        )?;
+
+        // Add target to blacklist
+        registry.modify_policy_blacklist(
+            admin,
+            ITIP403Registry::modifyPolicyBlacklistCall {
                 policyId: policy_id,
-                user: target,
-            })?);
-        }
+                account: target,
+                restricted: true,
+            },
+        )?;
+
+        assert!(!registry.is_authorized(ITIP403Registry::isAuthorizedCall {
+            policyId: policy_id,
+            user: target,
+        })?);
 
         let mut token = TIP20Token::new(token_id, &mut storage);
         token.initialize("Test", "TST", "USD", PATH_USD_ADDRESS, admin, Address::ZERO)?;
@@ -2823,19 +2808,14 @@ pub(crate) mod tests {
         token.grant_role_internal(burner, *BURN_FROM_ROLE)?;
 
         // Grant ISSUER_ROLE to admin and mint tokens to target
+        let amount = U256::from(1000);
         token.grant_role_internal(admin, *ISSUER_ROLE)?;
-        token.mint(
-            admin,
-            ITIP20::mintCall {
-                to: target,
-                amount: U256::from(1000),
-            },
-        )?;
+        token.mint(admin, ITIP20::mintCall { to: target, amount })?;
 
         let initial_balance = token.balance_of(ITIP20::balanceOfCall { account: target })?;
         let initial_supply = token.total_supply()?;
-        assert_eq!(initial_balance, U256::from(1000));
-        assert_eq!(initial_supply, U256::from(1000));
+        assert_eq!(initial_balance, amount);
+        assert_eq!(initial_supply, amount);
 
         // burnFrom should work on blocked addresses too
         let burn_amount = U256::from(300);
@@ -2850,8 +2830,8 @@ pub(crate) mod tests {
         // Verify balances and total supply were updated
         let final_balance = token.balance_of(ITIP20::balanceOfCall { account: target })?;
         let final_supply = token.total_supply()?;
-        assert_eq!(final_balance, U256::from(700));
-        assert_eq!(final_supply, U256::from(700));
+        assert_eq!(final_balance, amount - burn_amount);
+        assert_eq!(final_supply, amount - burn_amount);
 
         Ok(())
     }
