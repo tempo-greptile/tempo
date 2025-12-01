@@ -4,10 +4,7 @@ use alloy::primitives::{Address, U256};
 use revm::interpreter::instructions::utility::{IntoAddress, IntoU256};
 use tempo_precompiles_macros;
 
-use crate::{
-    error::Result,
-    storage::{StorageOps, types::*},
-};
+use crate::storage::types::*;
 
 // rust integers: (u)int8, (u)int16, (u)int32, (u)int64, (u)int128
 tempo_precompiles_macros::storable_rust_ints!();
@@ -28,17 +25,23 @@ impl StorableType for bool {
     }
 }
 
-impl Encodable<1> for bool {
-    const VALIDATE_LAYOUT: () = assert!(Self::SLOTS == 1, "SLOTS must equal WORDS");
-
+impl super::sealed::OnlyPrimitives for bool {}
+impl Packable for bool {
     #[inline]
-    fn to_evm_words(&self) -> Result<[U256; 1]> {
-        Ok([if *self { U256::ONE } else { U256::ZERO }])
+    fn to_word(&self) -> U256 {
+        if *self { U256::ONE } else { U256::ZERO }
     }
 
     #[inline]
-    fn from_evm_words(words: [U256; 1]) -> Result<Self> {
-        Ok(!words[0].is_zero())
+    fn from_word(word: U256) -> Self {
+        !word.is_zero()
+    }
+}
+
+impl StorageKey for bool {
+    #[inline]
+    fn as_storage_bytes(&self) -> impl AsRef<[u8]> {
+        if *self { [1u8] } else { [0u8] }
     }
 }
 
@@ -51,17 +54,16 @@ impl StorableType for Address {
     }
 }
 
-impl Encodable<1> for Address {
-    const VALIDATE_LAYOUT: () = assert!(Self::SLOTS == 1, "SLOTS must equal WORDS");
-
+impl super::sealed::OnlyPrimitives for Address {}
+impl Packable for Address {
     #[inline]
-    fn to_evm_words(&self) -> Result<[U256; 1]> {
-        Ok([self.into_u256()])
+    fn to_word(&self) -> U256 {
+        self.into_u256()
     }
 
     #[inline]
-    fn from_evm_words(words: [U256; 1]) -> Result<Self> {
-        Ok(words[0].into_address())
+    fn from_word(word: U256) -> Self {
+        word.into_address()
     }
 }
 
@@ -70,66 +72,6 @@ impl StorageKey for Address {
     fn as_storage_bytes(&self) -> impl AsRef<[u8]> {
         self.as_slice()
     }
-}
-
-// -- STORABLE OPS IMPLEMENTATIONS FOR PRIMITIVES --------------------------------
-
-impl Storable for bool {
-    #[inline]
-    fn load<S: StorageOps>(storage: &S, base_slot: U256, ctx: LayoutCtx) -> Result<Self> {
-        match ctx.packed_offset() {
-            None => storage.sload(base_slot).map(|val| !val.is_zero()),
-            Some(offset) => {
-                let slot = storage.sload(base_slot)?;
-                crate::storage::packing::extract_packed_value(slot, offset, 1)
-            }
-        }
-    }
-
-    #[inline]
-    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
-        let value = if *self { U256::ONE } else { U256::ZERO };
-        match ctx.packed_offset() {
-            None => storage.sstore(base_slot, value),
-            Some(offset) => {
-                let current = storage.sload(base_slot)?;
-                let updated =
-                    crate::storage::packing::insert_packed_value(current, &value, offset, 1)?;
-                storage.sstore(base_slot, updated)
-            }
-        }
-    }
-
-    // delete uses default implementation from trait
-}
-
-impl Storable for Address {
-    #[inline]
-    fn load<S: StorageOps>(storage: &S, base_slot: U256, ctx: LayoutCtx) -> Result<Self> {
-        match ctx.packed_offset() {
-            None => storage.sload(base_slot).map(|val| val.into_address()),
-            Some(offset) => {
-                let slot = storage.sload(base_slot)?;
-                crate::storage::packing::extract_packed_value(slot, offset, 20)
-            }
-        }
-    }
-
-    #[inline]
-    fn store<S: StorageOps>(&self, storage: &mut S, base_slot: U256, ctx: LayoutCtx) -> Result<()> {
-        match ctx.packed_offset() {
-            None => storage.sstore(base_slot, self.into_u256()),
-            Some(offset) => {
-                let current = storage.sload(base_slot)?;
-                let value = self.into_u256();
-                let updated =
-                    crate::storage::packing::insert_packed_value(current, &value, offset, 20)?;
-                storage.sstore(base_slot, updated)
-            }
-        }
-    }
-
-    // delete uses default implementation from trait
 }
 
 #[cfg(test)]
@@ -185,10 +127,10 @@ mod tests {
             let after_delete = slot.read().unwrap();
             assert_eq!(after_delete, Address::ZERO, "Address not zero after delete");
 
-            // EVM words roundtrip
-            let words = addr.to_evm_words().unwrap();
-            let recovered = Address::from_evm_words(words).unwrap();
-            assert_eq!(addr, recovered, "Address EVM words roundtrip failed");
+            // EVM word roundtrip
+            let word = addr.to_word();
+            let recovered = Address::from_word(word.into());
+            assert_eq!(addr, recovered, "Address EVM word roundtrip failed");
         }
 
         #[test]
@@ -207,10 +149,10 @@ mod tests {
             let after_delete = slot.read().unwrap();
             assert!(!after_delete, "Bool not false after delete");
 
-            // EVM words roundtrip
-            let words = b.to_evm_words().unwrap();
-            let recovered = bool::from_evm_words(words).unwrap();
-            assert_eq!(b, recovered, "Bool EVM words roundtrip failed");
+            // EVM word roundtrip
+            let word = b.to_word();
+            let recovered = bool::from_word(word);
+            assert_eq!(b, recovered, "Bool EVM word roundtrip failed");
         }
     }
 

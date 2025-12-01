@@ -71,84 +71,80 @@ fn gen_storage_key_impl(type_path: &TokenStream, strategy: &StorageKeyStrategy) 
     }
 }
 
-/// Generate an `Encodable<1>` implementation based on the conversion strategy.
-/// This only generates `to_evm_words` and `from_evm_words` - storage I/O is in `Storable`.
-fn gen_encodable_impl(
+/// Generate `OnlyPrimitives` and `Packable` implementations based on the conversion strategy.
+/// This generates `to_word` and `from_word` - storage I/O is in `Storable` (blanket impl).
+fn gen_packable_impl(
     type_path: &TokenStream,
     strategy: &StorableConversionStrategy,
 ) -> TokenStream {
     match strategy {
         StorableConversionStrategy::Unsigned | StorableConversionStrategy::U256 => {
             quote! {
-                impl Encodable<1> for #type_path {
-                    const VALIDATE_LAYOUT: () = assert!(Self::SLOTS == 1, "SLOTS must equal WORDS");
-
+                impl crate::storage::types::sealed::OnlyPrimitives for #type_path {}
+                impl Packable for #type_path {
                     #[inline]
-                    fn to_evm_words(&self) -> Result<[U256; 1]> {
-                        Ok([U256::from(*self)])
+                    fn to_word(&self) -> U256 {
+                        U256::from(*self)
                     }
 
                     #[inline]
-                    fn from_evm_words(words: [U256; 1]) -> Result<Self> {
-                        Ok(words[0].to::<Self>())
+                    fn from_word(word: U256) -> Self {
+                        word.to::<Self>()
                     }
                 }
             }
         }
         StorableConversionStrategy::SignedRust(unsigned_type) => {
             quote! {
-                impl Encodable<1> for #type_path {
-                    const VALIDATE_LAYOUT: () = assert!(Self::SLOTS == 1, "SLOTS must equal WORDS");
-
+                impl crate::storage::types::sealed::OnlyPrimitives for #type_path {}
+                impl Packable for #type_path {
                     #[inline]
-                    fn to_evm_words(&self) -> Result<[U256; 1]> {
-                        Ok([U256::from(*self as #unsigned_type)])
+                    fn to_word(&self) -> U256 {
+                        U256::from(*self as #unsigned_type)
                     }
 
                     #[inline]
-                    fn from_evm_words(words: [U256; 1]) -> Result<Self> {
-                        Ok(words[0].to::<#unsigned_type>() as Self)
+                    fn from_word(word: U256) -> Self {
+                        word.to::<#unsigned_type>() as Self
                     }
                 }
             }
         }
         StorableConversionStrategy::SignedAlloy(unsigned_type) => {
             quote! {
-                impl Encodable<1> for #type_path {
-                    const VALIDATE_LAYOUT: () = assert!(Self::SLOTS == 1, "SLOTS must equal WORDS");
-
+                impl crate::storage::types::sealed::OnlyPrimitives for #type_path {}
+                impl Packable for #type_path {
                     #[inline]
-                    fn to_evm_words(&self) -> Result<[::alloy::primitives::U256; 1]> {
+                    fn to_word(&self) -> ::alloy::primitives::U256 {
                         let unsigned_val = self.into_raw();
-                        Ok([::alloy::primitives::U256::from(unsigned_val)])
+                        ::alloy::primitives::U256::from(unsigned_val)
                     }
 
                     #[inline]
-                    fn from_evm_words(words: [::alloy::primitives::U256; 1]) -> Result<Self> {
-                        let unsigned_val = words[0].to::<::alloy::primitives::#unsigned_type>();
-                        Ok(Self::from_raw(unsigned_val))
+                    fn from_word(word: ::alloy::primitives::U256) -> Self {
+                        let unsigned_val = word.to::<::alloy::primitives::#unsigned_type>();
+                        Self::from_raw(unsigned_val)
                     }
                 }
             }
         }
         StorableConversionStrategy::FixedBytes(size) => {
             quote! {
-                impl Encodable<1> for #type_path {
-                    const VALIDATE_LAYOUT: () = assert!(Self::SLOTS == 1, "SLOTS must equal WORDS");
-
+                impl crate::storage::types::sealed::OnlyPrimitives for #type_path {}
+                impl Packable for #type_path {
                     #[inline]
-                    fn to_evm_words(&self) -> Result<[::alloy::primitives::U256; 1]> {
+                    fn to_word(&self) -> ::alloy::primitives::U256 {
                         let mut bytes = [0u8; 32];
                         bytes[..#size].copy_from_slice(&self[..]);
-                        Ok([::alloy::primitives::U256::from_be_bytes(bytes)])
+                        ::alloy::primitives::U256::from_be_bytes(bytes)
                     }
 
                     #[inline]
-                    fn from_evm_words(words: [::alloy::primitives::U256; 1]) -> Result<Self> {
-                        let bytes = words[0].to_be_bytes::<32>();
+                    fn from_word(word: ::alloy::primitives::U256) -> Self {
+                        let bytes = word.to_be_bytes::<32>();
                         let mut fixed_bytes = [0u8; #size];
                         fixed_bytes.copy_from_slice(&bytes[..#size]);
-                        Ok(Self::from(fixed_bytes))
+                        Self::from(fixed_bytes)
                     }
                 }
             }
@@ -156,229 +152,22 @@ fn gen_encodable_impl(
     }
 }
 
-/// Generate a `Storable` implementation with full I/O logic based on the conversion strategy.
-fn gen_storable_impl(
-    type_path: &TokenStream,
-    byte_count: usize,
-    strategy: &StorableConversionStrategy,
-) -> TokenStream {
-    match strategy {
-        StorableConversionStrategy::Unsigned | StorableConversionStrategy::U256 => {
-            quote! {
-                impl Storable for #type_path {
-                    #[inline]
-                    fn load<S: StorageOps>(storage: &S, slot: U256, ctx: LayoutCtx) -> Result<Self> {
-                        match ctx.packed_offset() {
-                            None => {
-                                let value = storage.sload(slot)?;
-                                Ok(value.to::<Self>())
-                            }
-                            Some(offset) => {
-                                let slot_value = storage.sload(slot)?;
-                                crate::storage::packing::extract_packed_value(slot_value, offset, #byte_count)
-                            }
-                        }
-                    }
-
-                    #[inline]
-                    fn store<S: StorageOps>(&self, storage: &mut S, slot: U256, ctx: LayoutCtx) -> Result<()> {
-                        match ctx.packed_offset() {
-                            None => {
-                                storage.sstore(slot, U256::from(*self))?;
-                                Ok(())
-                            }
-                            Some(offset) => {
-                                let current = storage.sload(slot)?;
-                                let value = U256::from(*self);
-                                let updated = crate::storage::packing::insert_packed_value(current, &value, offset, #byte_count)?;
-                                storage.sstore(slot, updated)?;
-                                Ok(())
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // TODO(rusowsky): enable once `Layout.is_packable()` returns `false` for `U256`
-        // StorableConversionStrategy::U256 => {
-        //     quote! {
-        //         impl Storable for #type_path {
-        //             #[inline]
-        //             fn load<S: StorageOps>(storage: &S, slot: #type_path, ctx: LayoutCtx) -> Result<Self> {
-        //                 debug_assert_eq!(ctx, LayoutCtx::FULL, "U256 takes a full slot and cannot be packed");
-        //                 storage.sload(slot)
-        //             }
-        //
-        //             #[inline]
-        //             fn store<S: StorageOps>(&self, storage: &mut S, slot: #type_path, ctx: LayoutCtx) -> Result<()> {
-        //                 debug_assert_eq!(ctx, LayoutCtx::FULL, "U256 takes a full slot and cannot be packed");
-        //                 storage.sstore(slot, *self)
-        //             }
-        //
-        //             #[inline]
-        //             fn to_word(&self) -> Result<#type_path> {
-        //                 Ok(*self)
-        //             }
-        //
-        //             #[inline]
-        //             fn from_word(word: #type_path) -> Result<Self> {
-        //                 Ok(word)
-        //             }
-        //         }
-        //     }
-        // }
-        StorableConversionStrategy::SignedRust(unsigned_type) => {
-            quote! {
-                impl Storable for #type_path {
-                    #[inline]
-                    fn load<S: StorageOps>(storage: &S, slot: U256, ctx: LayoutCtx) -> Result<Self> {
-                        match ctx.packed_offset() {
-                            None => {
-                                let value = storage.sload(slot)?;
-                                // Read as unsigned then cast to signed (preserves bit pattern)
-                                Ok(value.to::<#unsigned_type>() as Self)
-                            }
-                            Some(offset) => {
-                                let slot_value = storage.sload(slot)?;
-                                crate::storage::packing::extract_packed_value(slot_value, offset, #byte_count)
-                            }
-                        }
-                    }
-
-                    #[inline]
-                    fn store<S: StorageOps>(&self, storage: &mut S, slot: U256, ctx: LayoutCtx) -> Result<()> {
-                        match ctx.packed_offset() {
-                            None => {
-                                // Cast to unsigned to preserve bit pattern, then extend to U256
-                                storage.sstore(slot, U256::from(*self as #unsigned_type))?;
-                                Ok(())
-                            }
-                            Some(offset) => {
-                                let current = storage.sload(slot)?;
-                                let value = U256::from(*self as #unsigned_type);
-                                let updated = crate::storage::packing::insert_packed_value(current, &value, offset, #byte_count)?;
-                                storage.sstore(slot, updated)?;
-                                Ok(())
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        StorableConversionStrategy::SignedAlloy(unsigned_type) => {
-            quote! {
-                impl Storable for #type_path {
-                    #[inline]
-                    fn load<S: StorageOps>(storage: &S, slot: ::alloy::primitives::U256, ctx: LayoutCtx) -> Result<Self> {
-                        match ctx.packed_offset() {
-                            None => {
-                                let value = storage.sload(slot)?;
-                                // Convert U256 to unsigned type, then reinterpret as signed
-                                let unsigned_val = value.to::<::alloy::primitives::#unsigned_type>();
-                                Ok(Self::from_raw(unsigned_val))
-                            }
-                            Some(offset) => {
-                                let slot_value = storage.sload(slot)?;
-                                let unsigned_val: ::alloy::primitives::#unsigned_type = crate::storage::packing::extract_packed_value(slot_value, offset, #byte_count)?;
-                                Ok(Self::from_raw(unsigned_val))
-                            }
-                        }
-                    }
-
-                    #[inline]
-                    fn store<S: StorageOps>(&self, storage: &mut S, slot: ::alloy::primitives::U256, ctx: LayoutCtx) -> Result<()> {
-                        match ctx.packed_offset() {
-                            None => {
-                                // Get unsigned bit pattern and store it
-                                let unsigned_val = self.into_raw();
-                                storage.sstore(slot, ::alloy::primitives::U256::from(unsigned_val))?;
-                                Ok(())
-                            }
-                            Some(offset) => {
-                                let current = storage.sload(slot)?;
-                                let unsigned_val = self.into_raw();
-                                let value = ::alloy::primitives::U256::from(unsigned_val);
-                                let updated = crate::storage::packing::insert_packed_value(current, &value, offset, #byte_count)?;
-                                storage.sstore(slot, updated)?;
-                                Ok(())
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        StorableConversionStrategy::FixedBytes(size) => {
-            quote! {
-                impl Storable for #type_path {
-                    #[inline]
-                    fn load<S: StorageOps>(storage: &S, slot: ::alloy::primitives::U256, ctx: LayoutCtx) -> Result<Self> {
-                        match ctx.packed_offset() {
-                            None => {
-                                let value = storage.sload(slot)?;
-                                // `FixedBytes` are stored left-aligned in the slot. Extract the first N bytes from the U256
-                                let bytes = value.to_be_bytes::<32>();
-                                let mut fixed_bytes = [0u8; #size];
-                                fixed_bytes.copy_from_slice(&bytes[..#size]);
-                                Ok(Self::from(fixed_bytes))
-                            }
-                            Some(offset) => {
-                                let slot_value = storage.sload(slot)?;
-                                let bytes: ::alloy::primitives::B256 = crate::storage::packing::extract_packed_value(slot_value, offset, #size)?;
-                                let mut fixed_bytes = [0u8; #size];
-                                fixed_bytes.copy_from_slice(&bytes[..#size]);
-                                Ok(Self::from(fixed_bytes))
-                            }
-                        }
-                    }
-
-                    #[inline]
-                    fn store<S: StorageOps>(&self, storage: &mut S, slot: ::alloy::primitives::U256, ctx: LayoutCtx) -> Result<()> {
-                        match ctx.packed_offset() {
-                            None => {
-                                // Pad `FixedBytes` to 32 bytes (left-aligned).
-                                let mut bytes = [0u8; 32];
-                                bytes[..#size].copy_from_slice(&self[..]);
-                                let value = ::alloy::primitives::U256::from_be_bytes(bytes);
-                                storage.sstore(slot, value)?;
-                                Ok(())
-                            }
-                            Some(offset) => {
-                                let current = storage.sload(slot)?;
-                                let mut bytes = [0u8; 32];
-                                bytes[..#size].copy_from_slice(&self[..]);
-                                let value = ::alloy::primitives::U256::from_be_bytes(bytes);
-                                let updated = crate::storage::packing::insert_packed_value(current, &value, offset, #size)?;
-                                storage.sstore(slot, updated)?;
-                                Ok(())
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Generate all storage-related impls for a type
+/// Generate all storage-related impls for a type.
+///
+/// Note: `Storable` is provided by a blanket impl for all `Packable` types.
 fn gen_complete_impl_set(config: &TypeConfig) -> TokenStream {
     let storable_type_impl = gen_storable_layout_impl(&config.type_path, config.byte_count);
-    let encodable_impl = gen_encodable_impl(&config.type_path, &config.storable_strategy);
-    let storable_impl = gen_storable_impl(
-        &config.type_path,
-        config.byte_count,
-        &config.storable_strategy,
-    );
+    let packable_impl = gen_packable_impl(&config.type_path, &config.storable_strategy);
     let storage_key_impl = gen_storage_key_impl(&config.type_path, &config.storage_key_strategy);
 
     quote! {
         #storable_type_impl
-        #encodable_impl
-        #storable_impl
+        #packable_impl
         #storage_key_impl
     }
 }
 
-/// Generate `StorableType` and `Storable<1>` implementations for all standard Rust integer types.
+/// Generate `StorableType`, `Packable`, and `StorageKey` for all standard Rust integer types.
 pub(crate) fn gen_storable_rust_ints() -> TokenStream {
     let mut impls = Vec::with_capacity(RUST_INT_SIZES.len() * 2);
 
@@ -411,7 +200,7 @@ pub(crate) fn gen_storable_rust_ints() -> TokenStream {
     }
 }
 
-/// Generate `StorableType` and `Storable<1>` implementations for alloy integer types.
+/// Generate `StorableType`, `Packable`, and `StorageKey` for alloy integer types.
 fn gen_alloy_integers() -> Vec<TokenStream> {
     let mut impls = Vec::with_capacity(ALLOY_INT_SIZES.len() * 2);
 
@@ -446,7 +235,7 @@ fn gen_alloy_integers() -> Vec<TokenStream> {
     impls
 }
 
-/// Generate `StorableType` and `Storable<1>` implementations for `FixedBytes<N>` types.
+/// Generate `StorableType`, `Packable`, and `StorageKey` for `FixedBytes<N>` types.
 fn gen_fixed_bytes(sizes: &[usize]) -> Vec<TokenStream> {
     let mut impls = Vec::with_capacity(sizes.len());
 
@@ -464,7 +253,7 @@ fn gen_fixed_bytes(sizes: &[usize]) -> Vec<TokenStream> {
     impls
 }
 
-/// Generate `StorableType` and `Storable<1>` implementations for `FixedBytes<N>` types.
+/// Generate `StorableType`, `Packable`, and `StorageKey` for `FixedBytes<N>` types.
 pub(crate) fn gen_storable_alloy_bytes() -> TokenStream {
     let sizes: Vec<usize> = (1..=32).collect();
     let impls = gen_fixed_bytes(&sizes);
@@ -474,7 +263,7 @@ pub(crate) fn gen_storable_alloy_bytes() -> TokenStream {
     }
 }
 
-/// Generate `StorableType` and `Storable<1>` implementations for all alloy integer types.
+/// Generate `StorableType`, `Packable`, and `StorageKey` for all alloy integer types.
 pub(crate) fn gen_storable_alloy_ints() -> TokenStream {
     let impls = gen_alloy_integers();
 
@@ -499,7 +288,7 @@ fn is_packable(byte_count: usize) -> bool {
     byte_count < 32 && 32 % byte_count == 0
 }
 
-/// Generate a complete `Encodable` and `Storable` implementation for a fixed-size array
+/// Generate `StorableType`, `Storable`, and `StorageKey` for a fixed-size array.
 fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
     let ArrayConfig {
         elem_type,
@@ -529,18 +318,6 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
         gen_unpacked_array_store()
     };
 
-    let to_evm_words_impl = if *elem_is_packable {
-        gen_packed_array_to_evm_words(array_size, elem_byte_count)
-    } else {
-        gen_unpacked_array_to_evm_words(array_size)
-    };
-
-    let from_evm_words_impl = if *elem_is_packable {
-        gen_packed_array_from_evm_words(array_size, elem_byte_count)
-    } else {
-        gen_unpacked_array_from_evm_words(array_size)
-    };
-
     quote! {
         // Implement StorableType
         impl crate::storage::StorableType for [#elem_type; #array_size] {
@@ -552,21 +329,6 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
             fn handle(slot: ::alloy::primitives::U256, ctx: crate::storage::LayoutCtx, address: ::alloy::primitives::Address) -> Self::Handler {
                 debug_assert_eq!(ctx, crate::storage::LayoutCtx::FULL, "Arrays cannot be packed");
                 Self::Handler::new(slot, address)
-            }
-        }
-
-        // Implement Encodable (pure word conversion)
-        impl crate::storage::Encodable<{ #slot_count }> for [#elem_type; #array_size] {
-            const VALIDATE_LAYOUT: () = assert!(Self::SLOTS == #slot_count, "SLOTS must equal WORDS");
-
-            fn to_evm_words(&self) -> crate::error::Result<[::alloy::primitives::U256; { #slot_count }]> {
-                use crate::storage::packing::{calc_element_slot, calc_element_offset, insert_packed_value};
-                #to_evm_words_impl
-            }
-
-            fn from_evm_words(words: [::alloy::primitives::U256; { #slot_count }]) -> crate::error::Result<Self> {
-                use crate::storage::packing::{calc_element_slot, calc_element_offset, extract_packed_value};
-                #from_evm_words_impl
             }
         }
 
@@ -603,11 +365,10 @@ fn gen_array_impl(config: &ArrayConfig) -> TokenStream {
         impl crate::storage::StorageKey for [#elem_type; #array_size] {
             #[inline]
             fn as_storage_bytes(&self) -> impl AsRef<[u8]> {
-                // Serialize to EVM words and concatenate into a Vec
-                let words = <Self as crate::storage::Encodable<{ #slot_count }>>::to_evm_words(self).expect("to_evm_words failed");
-                let mut bytes = Vec::with_capacity(#slot_count * 32);
-                for word in words.iter() {
-                    bytes.extend_from_slice(&word.to_be_bytes::<32>());
+                use crate::storage::StorageKey;
+                let mut bytes = Vec::with_capacity(#array_size * <#elem_type as crate::storage::StorableType>::BYTES);
+                for elem in self.iter() {
+                    bytes.extend_from_slice(elem.as_storage_bytes().as_ref());
                 }
                 bytes
             }
@@ -679,56 +440,6 @@ fn gen_unpacked_array_store() -> TokenStream {
     }
 }
 
-/// Generate to_evm_words implementation for packed arrays
-fn gen_packed_array_to_evm_words(array_size: &usize, elem_byte_count: &usize) -> TokenStream {
-    let slot_count = (*array_size * elem_byte_count).div_ceil(32);
-    quote! {
-        let mut result = [::alloy::primitives::U256::ZERO; #slot_count];
-        for (i, elem) in self.iter().enumerate() {
-            let slot_idx = calc_element_slot(i, #elem_byte_count);
-            let offset = calc_element_offset(i, #elem_byte_count);
-            result[slot_idx] = insert_packed_value(result[slot_idx], elem, offset, #elem_byte_count)?;
-        }
-        Ok(result)
-    }
-}
-
-/// Generate from_evm_words implementation for packed arrays
-fn gen_packed_array_from_evm_words(array_size: &usize, elem_byte_count: &usize) -> TokenStream {
-    quote! {
-        let mut result = [Default::default(); #array_size];
-        for i in 0..#array_size {
-            let slot_idx = calc_element_slot(i, #elem_byte_count);
-            let offset = calc_element_offset(i, #elem_byte_count);
-            result[i] = extract_packed_value(words[slot_idx], offset, #elem_byte_count)?;
-        }
-        Ok(result)
-    }
-}
-
-/// Generate to_evm_words implementation for unpacked arrays
-fn gen_unpacked_array_to_evm_words(array_size: &usize) -> TokenStream {
-    quote! {
-        let mut result = [::alloy::primitives::U256::ZERO; #array_size];
-        for (i, elem) in self.iter().enumerate() {
-            let elem_words = elem.to_evm_words()?;
-            result[i] = elem_words[0];
-        }
-        Ok(result)
-    }
-}
-
-/// Generate from_evm_words implementation for unpacked arrays
-fn gen_unpacked_array_from_evm_words(array_size: &usize) -> TokenStream {
-    quote! {
-        let mut result = [Default::default(); #array_size];
-        for i in 0..#array_size {
-            result[i] = crate::storage::Encodable::<1>::from_evm_words([words[i]])?;
-        }
-        Ok(result)
-    }
-}
-
 /// Generate array implementations for a specific element type
 fn gen_arrays_for_type(
     elem_type: TokenStream,
@@ -751,7 +462,7 @@ fn gen_arrays_for_type(
         .collect()
 }
 
-/// Generate `Encodable` and `Storable` implementations for fixed-size arrays of primitive types
+/// Generate `StorableType`, `Storable`, and `StorageKey` for fixed-size arrays of primitive types.
 pub(crate) fn gen_storable_arrays() -> TokenStream {
     let mut all_impls = Vec::new();
     let sizes: Vec<usize> = (1..=32).collect();
@@ -899,8 +610,6 @@ fn gen_struct_array_impl(struct_type: &TokenStream, array_size: usize) -> TokenS
     // Generate implementation methods
     let load_impl = gen_struct_array_load(struct_type, array_size);
     let store_impl = gen_struct_array_store(struct_type);
-    let to_evm_words_impl = gen_struct_array_to_evm_words(struct_type, array_size);
-    let from_evm_words_impl = gen_struct_array_from_evm_words(struct_type, array_size);
 
     quote! {
         // Helper module with compile-time constants
@@ -919,19 +628,6 @@ fn gen_struct_array_impl(struct_type: &TokenStream, array_size: usize) -> TokenS
 
             fn handle(slot: ::alloy::primitives::U256, ctx: crate::storage::LayoutCtx, address: ::alloy::primitives::Address) -> Self::Handler {
                 crate::storage::Slot::new_with_ctx(slot, ctx, address)
-            }
-        }
-
-        // Implement Encodable (pure word conversion)
-        impl crate::storage::Encodable<{ #mod_ident::SLOT_COUNT }> for [#struct_type; #array_size] {
-            fn to_evm_words(&self) -> crate::error::Result<[::alloy::primitives::U256; { #mod_ident::SLOT_COUNT }]> {
-                #to_evm_words_impl
-            }
-
-            fn from_evm_words(
-                words: [::alloy::primitives::U256; { #mod_ident::SLOT_COUNT }]
-            ) -> crate::error::Result<Self> {
-                #from_evm_words_impl
             }
         }
 
@@ -964,11 +660,11 @@ fn gen_struct_array_impl(struct_type: &TokenStream, array_size: usize) -> TokenS
         impl crate::storage::StorageKey for [#struct_type; #array_size] {
             #[inline]
             fn as_storage_bytes(&self) -> impl AsRef<[u8]> {
-                // Serialize to EVM words and concatenate into a Vec
-                let words = <Self as crate::storage::Encodable<{ #mod_ident::SLOT_COUNT }>>::to_evm_words(self).expect("to_evm_words failed");
-                let mut bytes = Vec::with_capacity(#mod_ident::SLOT_COUNT * 32);
-                for word in words.iter() {
-                    bytes.extend_from_slice(&word.to_be_bytes::<32>());
+                use crate::storage::StorageKey;
+                // Iterate elements and concatenate their bytes
+                let mut bytes = Vec::with_capacity(#array_size * <#struct_type as crate::storage::StorableType>::SLOTS * 32);
+                for elem in self.iter() {
+                    bytes.extend_from_slice(elem.as_storage_bytes().as_ref());
                 }
                 bytes
             }
@@ -1010,48 +706,5 @@ fn gen_struct_array_store(struct_type: &TokenStream) -> TokenStream {
             <#struct_type as crate::storage::Storable>::store(elem, storage, elem_slot, crate::storage::LayoutCtx::FULL)?;
         }
         Ok(())
-    }
-}
-
-/// Generate to_evm_words implementation for struct arrays.
-///
-/// Copies N-word chunks from each element into the result array.
-fn gen_struct_array_to_evm_words(struct_type: &TokenStream, array_size: usize) -> TokenStream {
-    quote! {
-        let mut result = [::alloy::primitives::U256::ZERO; #array_size * <#struct_type as crate::storage::StorableType>::SLOTS];
-
-        for (i, elem) in self.iter().enumerate() {
-            let elem_words = <#struct_type as crate::storage::Encodable<{<#struct_type as crate::storage::StorableType>::SLOTS}>>::to_evm_words(elem)?;
-            let start_idx = i * <#struct_type as crate::storage::StorableType>::SLOTS;
-
-            // Copy all words from this element
-            for (j, word) in elem_words.iter().enumerate() {
-                result[start_idx + j] = *word;
-            }
-        }
-
-        Ok(result)
-    }
-}
-
-/// Generate from_evm_words implementation for struct arrays.
-///
-/// Extracts N-word chunks and converts each to a struct element.
-fn gen_struct_array_from_evm_words(struct_type: &TokenStream, array_size: usize) -> TokenStream {
-    quote! {
-        let mut result = [Default::default(); #array_size];
-
-        for i in 0..#array_size {
-            let start_idx = i * <#struct_type as crate::storage::StorableType>::SLOTS;
-
-            // Extract words for this element using std::array::from_fn
-            let elem_words = ::std::array::from_fn::<_, {<#struct_type as crate::storage::StorableType>::SLOTS}, _>(|j| {
-                words[start_idx + j]
-            });
-
-            result[i] = <#struct_type as crate::storage::Encodable<{<#struct_type as crate::storage::StorableType>::SLOTS}>>::from_evm_words(elem_words)?;
-        }
-
-        Ok(result)
     }
 }
