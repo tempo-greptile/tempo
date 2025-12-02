@@ -51,7 +51,7 @@ const RESERVED: &[&str] = &["address", "storage", "msg_sender"];
 ///
 /// The macro generates:
 /// 1. Transformed struct with generic parameters and runtime fields
-/// 2. Constructor: `_new(address, storage)`
+/// 2. Constructor: `__new(address, storage)`
 /// 3. Type-safe (private) getter and setter methods
 ///
 /// # Requirements

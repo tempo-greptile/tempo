@@ -1,4 +1,6 @@
-use crate::{Precompile, input_cost, mutate, mutate_void, unknown_selector, view};
+use crate::{
+    Precompile, fill_precompile_output, input_cost, mutate, mutate_void, unknown_selector, view,
+};
 use alloy::{primitives::Address, sol_types::SolCall};
 use revm::precompile::{PrecompileError, PrecompileResult};
 
@@ -66,13 +68,11 @@ impl Precompile for TIP403Registry {
             _ => unknown_selector(selector, self.storage.gas_used(), self.storage.spec()),
         };
 
-        result.map(|mut res| {
-            res.gas_used = self.storage.gas_used();
-            res
-        })
+        result.map(|res| fill_precompile_output(res, &mut self.storage))
     }
 }
 
+// TODO(rusowsky): enable after migration
 // #[cfg(test)]
 // mod tests {
 //     use super::*;
@@ -437,7 +437,7 @@ impl Precompile for TIP403Registry {
 //     #[test]
 //     fn test_create_multiple_policies() {
 //         let mut storage = HashMapStorageProvider::new(1);
-//         let mut precompile = TIP403Registry::new();
+//         let mut precompile = TIP403Registry::new(&mut storage);
 //         let admin = Address::from([1u8; 20]);
 
 //         // Create multiple policies with different types
@@ -474,7 +474,7 @@ impl Precompile for TIP403Registry {
 //     #[test]
 //     fn tip403_registry_test_selector_coverage() {
 //         let mut storage = HashMapStorageProvider::new(1);
-//         let mut registry = TIP403Registry::new();
+//         let mut registry = TIP403Registry::new(&mut storage);
 
 //         let unsupported = check_selector_coverage(
 //             &mut registry,

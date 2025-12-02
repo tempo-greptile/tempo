@@ -196,7 +196,7 @@ mod tests {
     use tempo_contracts::DEFAULT_7702_DELEGATE_ADDRESS;
     use tempo_evm::TempoEvmFactory;
     use tempo_precompiles::{
-        LINKING_USD_ADDRESS, storage::evm::EvmPrecompileStorageProvider, tip20::TIP20Token,
+        PATH_USD_ADDRESS, storage::evm::EvmPrecompileStorageProvider, tip20::TIP20Token,
     };
 
     #[test]
@@ -210,11 +210,11 @@ mod tests {
             EvmInternals::new(&mut ctx.journaled_state, &ctx.block),
             &ctx.cfg,
         );
-        TIP20Token::new(0, &mut storage)
+        TIP20Token::new(0)
             .initialize("USD", "USD", "USD", Address::ZERO, Address::ZERO)
             .unwrap();
-        TIP20Token::new(1, &mut storage)
-            .initialize("USD", "USD", "USD", LINKING_USD_ADDRESS, Address::ZERO)
+        TIP20Token::new(1)
+            .initialize("USD", "USD", "USD", PATH_USD_ADDRESS, Address::ZERO)
             .unwrap();
         drop(storage);
 
@@ -247,11 +247,11 @@ mod tests {
             EvmInternals::new(&mut ctx.journaled_state, &ctx.block),
             &ctx.cfg,
         );
-        TIP20Token::new(0, &mut storage)
+        TIP20Token::new(0)
             .initialize("USD", "USD", "USD", Address::ZERO, Address::ZERO)
             .unwrap();
-        TIP20Token::new(1, &mut storage)
-            .initialize("USD", "USD", "USD", LINKING_USD_ADDRESS, Address::ZERO)
+        TIP20Token::new(1)
+            .initialize("USD", "USD", "USD", PATH_USD_ADDRESS, Address::ZERO)
             .unwrap();
         drop(storage);
 

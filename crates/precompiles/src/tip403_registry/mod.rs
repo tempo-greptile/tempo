@@ -132,28 +132,24 @@ impl TIP403Registry {
 
             match policy_type {
                 ITIP403Registry::PolicyType::WHITELIST => {
-                    self.storage.emit_event(
-                        TIP403_REGISTRY_ADDRESS,
-                        TIP403RegistryEvent::WhitelistUpdated(ITIP403Registry::WhitelistUpdated {
+                    self.emit_event(TIP403RegistryEvent::WhitelistUpdated(
+                        ITIP403Registry::WhitelistUpdated {
                             policyId: new_policy_id,
                             updater: msg_sender,
                             account: *account,
                             allowed: true,
-                        })
-                        .into_log_data(),
-                    )?;
+                        },
+                    ))?;
                 }
                 ITIP403Registry::PolicyType::BLACKLIST => {
-                    self.storage.emit_event(
-                        TIP403_REGISTRY_ADDRESS,
-                        TIP403RegistryEvent::BlacklistUpdated(ITIP403Registry::BlacklistUpdated {
+                    self.emit_event(TIP403RegistryEvent::BlacklistUpdated(
+                        ITIP403Registry::BlacklistUpdated {
                             policyId: new_policy_id,
                             updater: msg_sender,
                             account: *account,
                             restricted: true,
-                        })
-                        .into_log_data(),
-                    )?;
+                        },
+                    ))?;
                 }
                 ITIP403Registry::PolicyType::__Invalid => {
                     return Err(TIP403RegistryError::incompatible_policy_type().into());
@@ -162,25 +158,21 @@ impl TIP403Registry {
         }
 
         // Emit policy creation events
-        self.storage.emit_event(
-            TIP403_REGISTRY_ADDRESS,
-            TIP403RegistryEvent::PolicyCreated(ITIP403Registry::PolicyCreated {
+        self.emit_event(TIP403RegistryEvent::PolicyCreated(
+            ITIP403Registry::PolicyCreated {
                 policyId: new_policy_id,
                 updater: msg_sender,
                 policyType: call.policyType,
-            })
-            .into_log_data(),
-        )?;
+            },
+        ))?;
 
-        self.storage.emit_event(
-            TIP403_REGISTRY_ADDRESS,
-            TIP403RegistryEvent::PolicyAdminUpdated(ITIP403Registry::PolicyAdminUpdated {
+        self.emit_event(TIP403RegistryEvent::PolicyAdminUpdated(
+            ITIP403Registry::PolicyAdminUpdated {
                 policyId: new_policy_id,
                 updater: msg_sender,
                 admin,
-            })
-            .into_log_data(),
-        )?;
+            },
+        ))?;
 
         Ok(new_policy_id)
     }
@@ -206,15 +198,13 @@ impl TIP403Registry {
             },
         )?;
 
-        self.storage.emit_event(
-            TIP403_REGISTRY_ADDRESS,
-            TIP403RegistryEvent::PolicyAdminUpdated(ITIP403Registry::PolicyAdminUpdated {
+        self.emit_event(TIP403RegistryEvent::PolicyAdminUpdated(
+            ITIP403Registry::PolicyAdminUpdated {
                 policyId: call.policyId,
                 updater: msg_sender,
                 admin: call.admin,
-            })
-            .into_log_data(),
-        )
+            },
+        ))
     }
 
     pub fn modify_policy_whitelist(
@@ -236,16 +226,14 @@ impl TIP403Registry {
 
         self.set_policy_set(call.policyId, call.account, call.allowed)?;
 
-        self.storage.emit_event(
-            TIP403_REGISTRY_ADDRESS,
-            TIP403RegistryEvent::WhitelistUpdated(ITIP403Registry::WhitelistUpdated {
+        self.emit_event(TIP403RegistryEvent::WhitelistUpdated(
+            ITIP403Registry::WhitelistUpdated {
                 policyId: call.policyId,
                 updater: msg_sender,
                 account: call.account,
                 allowed: call.allowed,
-            })
-            .into_log_data(),
-        )
+            },
+        ))
     }
 
     pub fn modify_policy_blacklist(
@@ -267,16 +255,14 @@ impl TIP403Registry {
 
         self.set_policy_set(call.policyId, call.account, call.restricted)?;
 
-        self.storage.emit_event(
-            TIP403_REGISTRY_ADDRESS,
-            TIP403RegistryEvent::BlacklistUpdated(ITIP403Registry::BlacklistUpdated {
+        self.emit_event(TIP403RegistryEvent::BlacklistUpdated(
+            ITIP403Registry::BlacklistUpdated {
                 policyId: call.policyId,
                 updater: msg_sender,
                 account: call.account,
                 restricted: call.restricted,
-            })
-            .into_log_data(),
-        )
+            },
+        ))
     }
 
     // Internal helper functions

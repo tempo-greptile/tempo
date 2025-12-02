@@ -164,6 +164,16 @@ pub(crate) fn gen_constructor(
             fn emited_events(&self) -> &Vec<::alloy::primitives::LogData> {
                 self.storage.get_events(self.address)
             }
+
+            #[cfg(any(test, feature = "test-utils"))]
+            fn assert_emited_events(&self, expected: Vec<impl ::alloy::primitives::IntoLogData>) {
+                let emited = self.storage.get_events(self.address);
+                assert_eq!(emited.len(), expected.len());
+
+                for (i, event) = expected.iter().enumerate() {
+                    assert_eq!(emited[i], event.into_log_data());
+                }
+            }
         }
     }
 }

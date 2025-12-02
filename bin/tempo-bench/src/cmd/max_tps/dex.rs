@@ -333,7 +333,7 @@ where
             "Test".to_owned(),
             "TEST".to_owned(),
             "USD".to_owned(),
-            LINKING_USD_ADDRESS,
+            PATH_USD_ADDRESS,
             caller,
         )
         .send()

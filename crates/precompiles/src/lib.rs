@@ -3,17 +3,17 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod error;
-pub use error::Result;
+pub use error::{IntoPrecompileResult, Result};
 
 pub mod storage;
 
-use tempo_chainspec::hardfork::TempoHardfork;
-// pub mod linking_usd;
+pub mod account_keychain;
+pub mod path_usd;
 // pub mod nonce;
 // pub mod stablecoin_exchange;
-// pub mod tip20;
-// pub mod tip20_factory;
-// pub mod tip20_rewards_registry;
+pub mod tip20;
+pub mod tip20_factory;
+pub mod tip20_rewards_registry;
 pub mod tip403_registry;
 // pub mod tip_account_registrar;
 // pub mod tip_fee_manager;
@@ -27,16 +27,16 @@ use crate::{
     // nonce::NonceManager,
     // path_usd::PathUSD,
     // stablecoin_exchange::StablecoinExchange,
-    storage::{PrecompileStorageProvider, evm::EvmPrecompileStorageProvider},
+    storage::{PrecompileStorageProvider, StorageContext, evm::EvmPrecompileStorageProvider},
     // tip_account_registrar::TipAccountRegistrar,
     // tip_fee_manager::TipFeeManager,
-    // tip20::{TIP20Token, address_to_token_id_unchecked, is_tip20},
-    // tip20_factory::TIP20Factory,
-    // tip20_rewards_registry::TIP20RewardsRegistry,
+    tip20::{TIP20Token, address_to_token_id_unchecked, is_tip20},
+    tip20_factory::TIP20Factory,
+    tip20_rewards_registry::TIP20RewardsRegistry,
     tip403_registry::TIP403Registry,
     // validator_config::ValidatorConfig,
 };
-pub use error::IntoPrecompileResult;
+use tempo_chainspec::hardfork::TempoHardfork;
 
 #[cfg(test)]
 use alloy::sol_types::SolInterface;
@@ -52,8 +52,13 @@ use revm::{
 };
 
 pub use tempo_contracts::precompiles::{
-    // ACCOUNT_KEYCHAIN_ADDRESS, DEFAULT_FEE_TOKEN_POST_ALLEGRETTO, DEFAULT_FEE_TOKEN_PRE_ALLEGRETTO,
-    // NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS, STABLECOIN_EXCHANGE_ADDRESS, TIP_ACCOUNT_REGISTRAR,
+    // ACCOUNT_KEYCHAIN_ADDRESS,
+    // DEFAULT_FEE_TOKEN_POST_ALLEGRETTO,
+    // DEFAULT_FEE_TOKEN_PRE_ALLEGRETTO,
+    NONCE_PRECOMPILE_ADDRESS,
+    // PATH_USD_ADDRESS,
+    STABLECOIN_EXCHANGE_ADDRESS,
+    TIP_ACCOUNT_REGISTRAR,
     TIP_FEE_MANAGER_ADDRESS,
     TIP20_FACTORY_ADDRESS,
     TIP20_REWARDS_REGISTRY_ADDRESS,
@@ -287,7 +292,7 @@ fn mutate_void<T: SolCall>(
 #[inline]
 fn fill_precompile_output(
     mut output: PrecompileOutput,
-    storage: &mut impl PrecompileStorageProvider,
+    storage: &mut StorageContext,
 ) -> PrecompileOutput {
     output.gas_used = storage.gas_used();
 

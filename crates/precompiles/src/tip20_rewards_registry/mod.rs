@@ -4,14 +4,13 @@ pub mod dispatch;
 use crate::{
     TIP20_REWARDS_REGISTRY_ADDRESS,
     error::{Result, TempoPrecompileError},
-    storage::{Mapping, PrecompileStorageProvider, VecSlotExt},
+    storage::{Handler, Mapping},
     tip20::{TIP20Token, address_to_token_id_unchecked},
 };
 use alloy::{
-    primitives::{Address, B256, Bytes, U256, keccak256},
+    primitives::{Address, B256, U256, keccak256},
     sol_types::SolValue,
 };
-use revm::state::Bytecode;
 
 pub use tempo_contracts::precompiles::{ITIP20RewardsRegistry, TIP20RewardsRegistryError};
 use tempo_precompiles_macros::contract;
@@ -21,65 +20,64 @@ use tempo_precompiles_macros::contract;
 #[contract]
 pub struct TIP20RewardsRegistry {
     last_updated_timestamp: u128,
-    streams_ending_at: Mapping<u128, Vec<Address>>,
+    ending_streams: Mapping<u128, Vec<Address>>,
     stream_index: Mapping<B256, U256>,
 }
 
 /// Helper type to easily interact with the `stream_ending_at` array
 type StreamEndingAt = Mapping<u128, Vec<Address>>;
 
-impl<'a, S: PrecompileStorageProvider> TIP20RewardsRegistry<'a, S> {
+impl TIP20RewardsRegistry {
     /// Creates an instance of the precompile.
     ///
     /// Caution: This does not initialize the account, see [`Self::initialize`].
-    pub fn new(storage: &'a mut S) -> Self {
-        Self::_new(TIP20_REWARDS_REGISTRY_ADDRESS, storage)
+    pub fn new() -> Self {
+        Self::__new(TIP20_REWARDS_REGISTRY_ADDRESS)
     }
 
     /// Initializes the TIP20 rewards registry contract.
     ///
     /// Ensures the [`TIP20RewardsRegistry`] account isn't empty and prevents state clear.
     pub fn initialize(&mut self) -> Result<()> {
-        self.storage.set_code(
-            TIP20_REWARDS_REGISTRY_ADDRESS,
-            Bytecode::new_legacy(Bytes::from_static(&[0xef])),
-        )
+        self.__initialize()
     }
 
     /// Add a token to the registry for a given stream end time
     pub fn add_stream(&mut self, token: Address, end_time: u128) -> Result<()> {
         let stream_key = keccak256((token, end_time).abi_encode());
-        let stream_ending_at = StreamEndingAt::new(slots::STREAMS_ENDING_AT).at(end_time);
-        let length = stream_ending_at.len(self)?;
+        let stream_ending_at = self.ending_streams.at(end_time);
+        let length = stream_ending_at.len()?;
 
-        self.sstore_stream_index(stream_key, U256::from(length))?;
-        stream_ending_at.push(self, token)
+        self.stream_index.at(stream_key).write(U256::from(length))?;
+        stream_ending_at.push(token)
     }
 
     /// Remove stream before it is finalized
     pub fn remove_stream(&mut self, token: Address, end_time: u128) -> Result<()> {
         let stream_key = keccak256((token, end_time).abi_encode());
-        let index = self.sload_stream_index(stream_key)?.to::<usize>();
+        let index: usize = self.stream_index.at(stream_key).read()?.to();
 
-        let stream_ending_at = StreamEndingAt::new(slots::STREAMS_ENDING_AT).at(end_time);
-        let length = stream_ending_at.len(self)?;
+        let stream_ending_at = self.ending_streams.at(end_time);
+        let length = stream_ending_at.len()?;
         let last_index = length
             .checked_sub(1)
             .ok_or(TempoPrecompileError::under_overflow())?;
 
         // If removing element that's not the last, swap with last element
         if index != last_index {
-            let last_token = stream_ending_at.read_at(self, last_index)?;
-            stream_ending_at.write_at(self, index, last_token)?;
+            let last_token = stream_ending_at.at(last_index).read()?;
+            stream_ending_at.at(index).write(last_token)?;
 
             // Update stream_index for the moved element
             let last_stream_key = keccak256((last_token, end_time).abi_encode());
-            self.sstore_stream_index(last_stream_key, U256::from(index))?;
+            self.stream_index
+                .at(last_stream_key)
+                .write(U256::from(index))?;
         }
 
         // Remove last element and clear its index
-        stream_ending_at.pop(self)?;
-        self.clear_stream_index(stream_key)?;
+        stream_ending_at.pop()?;
+        self.stream_index.at(stream_key).delete()?;
 
         Ok(())
     }
@@ -91,7 +89,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20RewardsRegistry<'a, S> {
         }
 
         let current_timestamp = self.storage.timestamp().to::<u128>();
-        let mut last_updated = self.sload_last_updated_timestamp()?;
+        let mut last_updated = self.last_updated_timestamp.read()?;
 
         if last_updated == 0 {
             last_updated = current_timestamp.saturating_sub(1);
@@ -106,7 +104,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20RewardsRegistry<'a, S> {
             .ok_or(TempoPrecompileError::under_overflow())?;
 
         while current_timestamp >= next_timestamp {
-            let tokens = self.sload_streams_ending_at(next_timestamp)?;
+            let tokens = self.ending_streams.at(next_timestamp).read()?;
 
             for token in tokens {
                 let token_id = address_to_token_id_unchecked(token);
@@ -114,18 +112,18 @@ impl<'a, S: PrecompileStorageProvider> TIP20RewardsRegistry<'a, S> {
                 tip20_token.finalize_streams(self.address, next_timestamp)?;
 
                 let stream_key = keccak256((token, next_timestamp).abi_encode());
-                self.clear_stream_index(stream_key)?;
+                self.stream_index.at(stream_key).delete()?;
             }
 
             // Clear all elements from the vec
-            self.clear_streams_ending_at(next_timestamp)?;
+            self.ending_streams.at(next_timestamp).delete()?;
 
             next_timestamp = next_timestamp
                 .checked_add(1)
                 .ok_or(TempoPrecompileError::under_overflow())?;
         }
 
-        self.sstore_last_updated_timestamp(current_timestamp)?;
+        self.last_updated_timestamp.write(current_timestamp)?;
 
         Ok(())
     }
@@ -133,9 +131,7 @@ impl<'a, S: PrecompileStorageProvider> TIP20RewardsRegistry<'a, S> {
     /// Helper method to get the count of streams at a given end time (for testing)
     #[cfg(test)]
     pub(crate) fn get_stream_count_at(&mut self, end_time: u128) -> Result<usize> {
-        StreamEndingAt::new(slots::STREAMS_ENDING_AT)
-            .at(end_time)
-            .len(self)
+        self.ending_streams.at(end_time).len()
     }
 }
 
@@ -143,10 +139,10 @@ impl<'a, S: PrecompileStorageProvider> TIP20RewardsRegistry<'a, S> {
 mod tests {
     use super::*;
     use crate::{
-        LINKING_USD_ADDRESS,
+        PATH_USD_ADDRESS,
         error::TempoPrecompileError,
         storage::{ContractStorage, hashmap::HashMapStorageProvider},
-        tip20::{ISSUER_ROLE, TIP20Token, tests::initialize_linking_usd},
+        tip20::{ISSUER_ROLE, TIP20Token, tests::initialize_path_usd},
         tip20_rewards_registry::TIP20RewardsRegistry,
     };
     use tempo_contracts::precompiles::ITIP20;
@@ -154,14 +150,14 @@ mod tests {
     fn setup_registry(timestamp: u64) -> (HashMapStorageProvider, Address) {
         let mut storage = HashMapStorageProvider::new(timestamp);
         let admin = Address::random();
-        initialize_linking_usd(&mut storage, admin).unwrap();
+        initialize_path_usd(admin).unwrap();
         (storage, admin)
     }
 
     #[test]
     fn test_add_stream() -> eyre::Result<()> {
         let (mut storage, _admin) = setup_registry(1000);
-        let mut registry = TIP20RewardsRegistry::new(&mut storage);
+        let mut registry = TIP20RewardsRegistry::new();
         registry.initialize()?;
 
         let token_addr = Address::random();
@@ -195,7 +191,7 @@ mod tests {
     #[test]
     fn test_remove_stream() -> eyre::Result<()> {
         let (mut storage, _admin) = setup_registry(1000);
-        let mut registry = TIP20RewardsRegistry::new(&mut storage);
+        let mut registry = TIP20RewardsRegistry::new();
         registry.initialize()?;
 
         let token1 = Address::random();
@@ -255,7 +251,7 @@ mod tests {
     #[test]
     fn test_sload_streams_ending_at() -> eyre::Result<()> {
         let (mut storage, _admin) = setup_registry(1000);
-        let mut registry = TIP20RewardsRegistry::new(&mut storage);
+        let mut registry = TIP20RewardsRegistry::new();
         registry.initialize()?;
 
         let timestamp = 2000u128;
@@ -299,8 +295,8 @@ mod tests {
         let (mut storage, admin) = setup_registry(1500);
 
         // Create a TIP20 token and start a reward stream
-        let mut token = TIP20Token::new(1, &mut storage);
-        token.initialize("Test", "TST", "USD", LINKING_USD_ADDRESS, admin)?;
+        let mut token = TIP20Token::new(1);
+        token.initialize("Test", "TST", "USD", PATH_USD_ADDRESS, admin)?;
         let token_addr = token.address();
 
         token.grant_role_internal(admin, *ISSUER_ROLE)?;
@@ -327,7 +323,7 @@ mod tests {
         assert_eq!(stream_id, 1);
 
         let end_time = current_time + 5;
-        let mut registry = TIP20RewardsRegistry::new(token.storage());
+        let mut registry = TIP20RewardsRegistry::new();
         registry.initialize()?;
 
         // Test unauthorized caller
