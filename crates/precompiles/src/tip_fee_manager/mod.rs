@@ -431,12 +431,12 @@ mod tests {
 
     use super::*;
     use crate::{
-        PATH_USD_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+        TIP_FEE_MANAGER_ADDRESS,
         error::TempoPrecompileError,
         storage::ContractStorage,
         test_precompile,
         test_util::TIP20Builder,
-        tip20::{ITIP20, TIP20Token, is_tip20, token_id_to_address},
+        tip20::{ITIP20, is_tip20, token_id_to_address},
     };
 
     test_precompile!(set_user_token, |user| {
