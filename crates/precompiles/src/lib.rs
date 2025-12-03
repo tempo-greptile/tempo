@@ -15,7 +15,7 @@ pub mod tip20;
 pub mod tip20_factory;
 pub mod tip20_rewards_registry;
 pub mod tip403_registry;
-// pub mod tip_account_registrar;
+pub mod tip_account_registrar;
 // pub mod tip_fee_manager;
 // pub mod validator_config;
 
