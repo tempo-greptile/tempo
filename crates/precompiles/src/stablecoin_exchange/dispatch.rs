@@ -11,7 +11,7 @@ use crate::{
     unknown_selector, view,
 };
 
-impl<'a, S: PrecompileStorageProvider> Precompile for StablecoinExchange<'a, S> {
+impl Precompile for StablecoinExchange {
     fn call(&mut self, calldata: &[u8], msg_sender: Address) -> PrecompileResult {
         self.storage
             .deduct_gas(input_cost(calldata.len()))
@@ -188,7 +188,7 @@ impl<'a, S: PrecompileStorageProvider> Precompile for StablecoinExchange<'a, S> 
             _ => unknown_selector(selector, self.storage.gas_used(), self.storage.spec()),
         };
 
-        result.map(|res| fill_precompile_output(res, self.storage))
+        result.map(|res| fill_precompile_output(res, &mut self.storage))
     }
 }
 
@@ -215,7 +215,7 @@ mod tests {
     fn setup_exchange_with_liquidity<S: PrecompileStorageProvider>(
         storage: &mut S,
     ) -> (StablecoinExchange<'_, S>, Address, Address, Address) {
-        let mut exchange = StablecoinExchange::new(storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let admin = Address::random();
@@ -223,7 +223,7 @@ mod tests {
         let amount = 200_000_000u128;
 
         // Initialize quote token (PathUSD)
-        let mut quote = PathUSD::new(exchange.storage);
+        let mut quote = PathUSD::new();
         quote.initialize(admin).unwrap();
 
         quote
@@ -257,7 +257,7 @@ mod tests {
 
         // Initialize base token
         let quote_address = quote.token.address();
-        let mut base = TIP20Token::new(1, quote.token.storage());
+        let mut base = TIP20Token::new(1);
         base.initialize("BASE", "BASE", "USD", quote_address, admin, Address::ZERO)
             .unwrap();
 
@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn test_place_call() {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::from([1u8; 20]);
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn test_place_flip_call() {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::from([1u8; 20]);
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn test_balance_of_call() {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::from([1u8; 20]);
@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn test_min_price_pre_moderato() {
         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Adagio);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::ZERO;
@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn test_min_price_post_moderato() {
         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Moderato);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::ZERO;
@@ -410,7 +410,7 @@ mod tests {
     #[test]
     fn test_tick_spacing() {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::ZERO;
@@ -433,7 +433,7 @@ mod tests {
     #[test]
     fn test_max_price_pre_moderato() {
         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Adagio);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::ZERO;
@@ -455,7 +455,7 @@ mod tests {
     #[test]
     fn test_max_price_post_moderato() {
         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Moderato);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::ZERO;
@@ -477,7 +477,7 @@ mod tests {
     #[test]
     fn test_create_pair_call() {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::from([1u8; 20]);
@@ -495,7 +495,7 @@ mod tests {
     #[test]
     fn test_withdraw_call() {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::from([1u8; 20]);
@@ -516,7 +516,7 @@ mod tests {
     #[test]
     fn test_cancel_call() {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::from([1u8; 20]);
@@ -633,7 +633,7 @@ mod tests {
     #[test]
     fn test_active_order_id_call() {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::random();
@@ -652,7 +652,7 @@ mod tests {
     #[test]
     fn test_pending_order_id_call() {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::random();
@@ -672,7 +672,7 @@ mod tests {
     fn test_invalid_selector() {
         use tempo_chainspec::hardfork::TempoHardfork;
         let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::Moderato);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::from([1u8; 20]);
@@ -688,7 +688,7 @@ mod tests {
     #[test]
     fn test_missing_selector() {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
         exchange.initialize().unwrap();
 
         let sender = Address::from([1u8; 20]);
@@ -703,7 +703,7 @@ mod tests {
     #[test]
     fn stablecoin_exchange_test_selector_coverage() {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
 
         let unsupported = check_selector_coverage(
             &mut exchange,

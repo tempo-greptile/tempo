@@ -7,7 +7,7 @@
 use crate::{
     error::TempoPrecompileError,
     stablecoin_exchange::{IStablecoinExchange, error::OrderError},
-    storage::{Slot, StorageOps, slots::mapping_slot},
+    storage::{Slot, StorageOps},
 };
 use alloy::primitives::{Address, B256};
 use tempo_precompiles_macros::Storable;
@@ -149,38 +149,6 @@ impl Order {
         Ok(Self::new(
             order_id, maker, book_key, amount, tick, is_bid, true, flip_tick,
         ))
-    }
-
-    /// Update the order's remaining value in storage
-    pub fn update_remaining<S: StorageOps>(
-        storage: &mut S,
-        order_id: u128,
-        new_remaining: u128,
-    ) -> Result<(), TempoPrecompileError> {
-        let order_base_slot = mapping_slot(order_id.to_be_bytes(), super::slots::ORDERS);
-        OrderAmount::new_at_loc(order_base_slot, __packing_order::REMAINING_LOC)
-            .write(storage, new_remaining)?;
-        Ok(())
-    }
-
-    pub fn update_next_order<S: StorageOps>(
-        storage: &mut S,
-        order_id: u128,
-        new_next: u128,
-    ) -> Result<(), TempoPrecompileError> {
-        let order_base_slot = mapping_slot(order_id.to_be_bytes(), super::slots::ORDERS);
-        OrderId::new_at_loc(order_base_slot, __packing_order::NEXT_LOC).write(storage, new_next)?;
-        Ok(())
-    }
-
-    pub fn update_prev_order<S: StorageOps>(
-        storage: &mut S,
-        order_id: u128,
-        new_prev: u128,
-    ) -> Result<(), TempoPrecompileError> {
-        let order_base_slot = mapping_slot(order_id.to_be_bytes(), super::slots::ORDERS);
-        OrderId::new_at_loc(order_base_slot, __packing_order::PREV_LOC).write(storage, new_prev)?;
-        Ok(())
     }
 
     /// Returns the order ID.
@@ -603,7 +571,7 @@ mod tests {
     #[test]
     fn test_store_order() -> eyre::Result<()> {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
 
         let id = 42;
         let order = Order::new_flip(id, TEST_MAKER, TEST_BOOK_KEY, 1000, 5, true, 10).unwrap();
@@ -628,7 +596,7 @@ mod tests {
     #[test]
     fn test_delete_order() -> eyre::Result<()> {
         let mut storage = HashMapStorageProvider::new(1);
-        let mut exchange = StablecoinExchange::new(&mut storage);
+        let mut exchange = StablecoinExchange::new();
 
         let id = 42;
         let order = Order::new_flip(id, TEST_MAKER, TEST_BOOK_KEY, 1000, 5, true, 10).unwrap();

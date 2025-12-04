@@ -10,7 +10,7 @@ pub mod storage;
 pub mod account_keychain;
 pub mod nonce;
 pub mod path_usd;
-// pub mod stablecoin_exchange;
+pub mod stablecoin_exchange;
 pub mod tip20;
 pub mod tip20_factory;
 pub mod tip20_rewards_registry;
@@ -26,7 +26,7 @@ use crate::{
     account_keychain::AccountKeychain,
     nonce::NonceManager,
     path_usd::PathUSD,
-    // stablecoin_exchange::StablecoinExchange,
+    stablecoin_exchange::StablecoinExchange,
     storage::{PrecompileStorageProvider, StorageContext, evm::EvmPrecompileStorageProvider},
     tip_account_registrar::TipAccountRegistrar,
     tip_fee_manager::TipFeeManager,
@@ -192,14 +192,14 @@ impl TIP20Precompile {
     }
 }
 
-// pub struct StablecoinExchangePrecompile;
-// impl StablecoinExchangePrecompile {
-//     pub fn create(chain_id: u64, spec: TempoHardfork) -> DynPrecompile {
-//         tempo_precompile!("StablecoinExchange", |input| StablecoinExchange::new(
-//             &mut EvmPrecompileStorageProvider::new(input.internals, input.gas, chain_id, spec)
-//         ))
-//     }
-// }
+pub struct StablecoinExchangePrecompile;
+impl StablecoinExchangePrecompile {
+    pub fn create(chain_id: u64, spec: TempoHardfork) -> DynPrecompile {
+        tempo_precompile!("StablecoinExchange", chain_id, spec, |input| {
+            StablecoinExchange::new()
+        })
+    }
+}
 
 pub struct NoncePrecompile;
 impl NoncePrecompile {
