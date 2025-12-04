@@ -50,16 +50,12 @@ impl TIP20Token {
             self.set_global_reward_per_token(new_rpt)?;
 
             // Emit reward scheduled event for immediate payout
-            self.storage.emit_event(
-                self.address,
-                TIP20Event::RewardScheduled(ITIP20::RewardScheduled {
-                    funder: msg_sender,
-                    id: 0,
-                    amount: call.amount,
-                    durationSeconds: 0,
-                })
-                .into_log_data(),
-            )?;
+            self.emit_event(TIP20Event::RewardScheduled(ITIP20::RewardScheduled {
+                funder: msg_sender,
+                id: 0,
+                amount: call.amount,
+                durationSeconds: 0,
+            }))?;
 
             Ok(0)
         } else {

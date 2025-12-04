@@ -212,17 +212,13 @@ impl TipFeeManager {
             },
         )?;
 
-        self.storage.emit_event(
-            self.address,
-            TIPFeeAMMEvent::RebalanceSwap(ITIPFeeAMM::RebalanceSwap {
-                userToken: user_token,
-                validatorToken: validator_token,
-                swapper: msg_sender,
-                amountIn: amount_in,
-                amountOut: amount_out,
-            })
-            .into_log_data(),
-        )?;
+        self.emit_event(TIPFeeAMMEvent::RebalanceSwap(ITIPFeeAMM::RebalanceSwap {
+            userToken: user_token,
+            validatorToken: validator_token,
+            swapper: msg_sender,
+            amountIn: amount_in,
+            amountOut: amount_out,
+        }))?;
 
         Ok(amount_in)
     }
@@ -348,18 +344,14 @@ impl TipFeeManager {
         )?;
 
         // Emit Mint event
-        self.storage.emit_event(
-            self.address,
-            TIPFeeAMMEvent::Mint(ITIPFeeAMM::Mint {
-                sender: msg_sender,
-                userToken: user_token,
-                validatorToken: validator_token,
-                amountUserToken: amount_user_token,
-                amountValidatorToken: amount_validator_token,
-                liquidity,
-            })
-            .into_log_data(),
-        )?;
+        self.emit_event(TIPFeeAMMEvent::Mint(ITIPFeeAMM::Mint {
+            sender: msg_sender,
+            userToken: user_token,
+            validatorToken: validator_token,
+            amountUserToken: amount_user_token,
+            amountValidatorToken: amount_validator_token,
+            liquidity,
+        }))?;
 
         Ok(liquidity)
     }
@@ -465,18 +457,14 @@ impl TipFeeManager {
         )?;
 
         // Emit Mint event
-        self.storage.emit_event(
-            self.address,
-            TIPFeeAMMEvent::Mint(ITIPFeeAMM::Mint {
-                sender: msg_sender,
-                userToken: user_token,
-                validatorToken: validator_token,
-                amountUserToken: U256::ZERO,
-                amountValidatorToken: amount_validator_token,
-                liquidity,
-            })
-            .into_log_data(),
-        )?;
+        self.emit_event(TIPFeeAMMEvent::Mint(ITIPFeeAMM::Mint {
+            sender: msg_sender,
+            userToken: user_token,
+            validatorToken: validator_token,
+            amountUserToken: U256::ZERO,
+            amountValidatorToken: amount_validator_token,
+            liquidity,
+        }))?;
 
         Ok(liquidity)
     }
