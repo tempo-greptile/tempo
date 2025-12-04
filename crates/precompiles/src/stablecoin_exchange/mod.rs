@@ -1650,6 +1650,7 @@ impl StablecoinExchange {
 
 #[cfg(test)]
 mod tests {
+    use alloy::primitives::IntoLogData;
     use tempo_chainspec::hardfork::TempoHardfork;
     use tempo_contracts::precompiles::TIP20Error;
 
@@ -1658,7 +1659,6 @@ mod tests {
         path_usd::TRANSFER_ROLE,
         storage::{ContractStorage, StorageContext, hashmap::HashMapStorageProvider},
         test_util::TIP20Setup,
-        tip20::ISSUER_ROLE,
     };
 
     use super::*;
@@ -1677,7 +1677,7 @@ mod tests {
             .with_approval(user, exchange_address, U256::from(amount))
             .apply()?;
 
-        // Configure base token
+        // Configure base token (uses PathUSD as quote by default)
         let base = TIP20Setup::create("BASE", "BASE", admin)
             .with_issuer(admin)
             .with_mint(user, U256::from(amount))
@@ -2243,7 +2243,7 @@ mod tests {
             assert_eq!(level.total_liquidity, 0);
 
             // Verify balance was reduced by the escrow amount
-            let mut quote_tip20 = TIP20Token::from_address(quote_token);
+            let quote_tip20 = TIP20Token::from_address(quote_token);
             let remaining_balance =
                 quote_tip20.balance_of(ITIP20::balanceOfCall { account: alice })?;
             assert_eq!(remaining_balance, U256::ZERO);
@@ -2292,7 +2292,7 @@ mod tests {
             assert_eq!(exchange.balance_of(alice, quote_token)?, 0);
 
             let (alice_balance_before, exchange_balance_before) = {
-                let mut quote_tip20 = TIP20Token::from_address(quote_token);
+                let quote_tip20 = TIP20Token::from_address(quote_token);
 
                 (
                     quote_tip20.balance_of(ITIP20::balanceOfCall { account: alice })?,
@@ -2457,8 +2457,7 @@ mod tests {
             assert_eq!(exchange.balance_of(alice, quote_token)?, 0);
 
             // Verify wallet balances changed correctly
-            let mut quote_tip20 = TIP20Token::from_address(quote_token);
-
+            let quote_tip20 = TIP20Token::from_address(quote_token);
             assert_eq!(
                 quote_tip20.balance_of(ITIP20::balanceOfCall { account: alice })?,
                 expected_escrow
@@ -2790,1904 +2789,1441 @@ mod tests {
         })
     }
 
-    //     #[test]
-    //     fn test_pair_created() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let admin = Address::random();
-    //             let alice = Address::random();
-
-    //             let min_order_amount = MIN_ORDER_AMOUNT;
-    //             // Setup tokens
-    //             let (base_token, quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, min_order_amount)?;
-
-    //             // Create the pair
-    //             let key = exchange
-    //                 .create_pair(base_token)
-    //                 .expect("Could not create pair");
-
-    //             // Verify PairCreated event was emitted
-    //             let events = &exchange.storage.events[&exchange.address];
-    //             assert_eq!(events.len(), 1);
-    //             assert_eq!(
-    //                 events[0],
-    //                 StablecoinExchangeEvents::PairCreated(IStablecoinExchange::PairCreated {
-    //                     key,
-    //                     base: base_token,
-    //                     quote: quote_token,
-    //                 })
-    //                 .into_log_data()
-    //             );
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_pair_already_created() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let admin = Address::random();
-    //             let alice = Address::random();
-
-    //             let min_order_amount = MIN_ORDER_AMOUNT;
-    //             // Setup tokens
-    //             let (base_token, _) =
-    //                 setup_test_tokens(admin, alice, exchange.address, min_order_amount)?;
-
-    //             exchange
-    //                 .create_pair(base_token)
-    //                 .expect("Could not create pair");
-
-    //             let result = exchange.create_pair(base_token);
-    //             assert_eq!(
-    //                 result,
-    //                 Err(StablecoinExchangeError::pair_already_exists().into())
-    //             );
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     /// Helper to verify a single hop in a route
-    //     fn verify_hop(
-    //         exchange_addr: Address,
-    //         hop: (B256, bool),
-    //         token_in: Address,
-    //         token_out: Address,
-    //     ) -> eyre::Result<()> {
-    //         let (book_key, base_for_quote) = hop;
-    //         let expected_book_key = compute_book_key(token_in, token_out);
-    //         assert_eq!(book_key, expected_book_key, "Book key should match");
-
-    //         let mut exchange = StablecoinExchange::__new(exchange_addr);
-    //         let orderbook = exchange.books.at(book_key).read()?;
-    //         let expected_direction = token_in == orderbook.base;
-    //         assert_eq!(
-    //             base_for_quote, expected_direction,
-    //             "Direction should be correct: token_in={}, base={}, base_for_quote={}",
-    //             token_in, orderbook.base, base_for_quote
-    //         );
-
-    //         Ok(())
-    //     }
-
-    //     #[test]
-    //     fn test_find_path_to_root() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let admin = Address::random();
-
-    //             // Setup: PathUSD <- USDC <- TokenA
-    //             let path_usd_addr = {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd
-    //                     .initialize(admin)
-    //                     .expect("Failed to initialize PathUSD");
-    //                 path_usd.token.address()
-    //             };
-
-    //             let usdc_addr = {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.initialize("USDC", "USDC", "USD", path_usd_addr, admin, Address::ZERO)
-    //                     .expect("Failed to initialize USDC");
-    //                 usdc.address()
-    //             };
-
-    //             let token_a_addr = {
-    //                 let mut token_a = TIP20Token::new(3);
-    //                 token_a
-    //                     .initialize("TokenA", "TKA", "USD", usdc_addr, admin, Address::ZERO)
-    //                     .expect("Failed to initialize TokenA");
-    //                 token_a.address()
-    //             };
-
-    //             // Find path from TokenA to root
-    //             let path = exchange
-    //                 .find_path_to_root(token_a_addr)
-    //                 .expect("Failed to find path");
-
-    //             // Expected: [TokenA, USDC, PathUSD]
-    //             assert_eq!(path.len(), 3);
-    //             assert_eq!(path[0], token_a_addr);
-    //             assert_eq!(path[1], usdc_addr);
-    //             assert_eq!(path[2], path_usd_addr);
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_find_trade_path_same_token_errors() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let admin = Address::random();
-    //             let user = Address::random();
-
-    //             let min_order_amount = MIN_ORDER_AMOUNT;
-    //             let (token, _) = setup_test_tokens(admin, user, exchange.address, min_order_amount);
-
-    //             // Trading same token should error with IdenticalTokens
-    //             let result = exchange.find_trade_path(token, token);
-    //             assert_eq!(
-    //                 result,
-    //                 Err(StablecoinExchangeError::identical_tokens().into()),
-    //                 "Should return IdenticalTokens error when token_in == token_out"
-    //             );
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_find_trade_path_direct_pair() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let admin = Address::random();
-    //             let user = Address::random();
-
-    //             let min_order_amount = MIN_ORDER_AMOUNT;
-    //             // Setup: PathUSD <- Token (direct pair)
-    //             let (token, path_usd) =
-    //                 setup_test_tokens(admin, user, exchange.address, min_order_amount);
-
-    //             // Create the pair first
-    //             exchange.create_pair(token).expect("Failed to create pair");
-
-    //             // Trade token -> path_usd (direct pair)
-    //             let route = exchange
-    //                 .find_trade_path(token, path_usd)
-    //                 .expect("Should find direct pair");
-
-    //             // Expected: 1 hop (token -> path_usd)
-    //             assert_eq!(route.len(), 1, "Should have 1 hop for direct pair");
-    //             verify_hop(exchange.address, route[0], token, path_usd)?;
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_find_trade_path_reverse_pair() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let admin = Address::random();
-    //             let user = Address::random();
-
-    //             let min_order_amount = MIN_ORDER_AMOUNT;
-    //             // Setup: PathUSD <- Token
-    //             let (token, path_usd) =
-    //                 setup_test_tokens(admin, user, exchange.address, min_order_amount);
-
-    //             // Create the pair first
-    //             exchange.create_pair(token).expect("Failed to create pair");
-
-    //             // Trade path_usd -> token (reverse direction)
-    //             let route = exchange
-    //                 .find_trade_path(path_usd, token)
-    //                 .expect("Should find reverse pair");
-
-    //             // Expected: 1 hop (path_usd -> token)
-    //             assert_eq!(route.len(), 1, "Should have 1 hop for reverse pair");
-    //             verify_hop(exchange.address, route[0], path_usd, token)?;
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_find_trade_path_two_hop_siblings() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let admin = Address::random();
-
-    //             // Setup: PathUSD <- USDC
-    //             //        PathUSD <- EURC
-    //             // (USDC and EURC are siblings, both have PathUSD as quote)
-    //             let path_usd_addr = {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd
-    //                     .initialize(admin)
-    //                     .expect("Failed to initialize PathUSD");
-    //                 path_usd.token.address()
-    //             };
-
-    //             let usdc_addr = {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.initialize("USDC", "USDC", "USD", path_usd_addr, admin, Address::ZERO)
-    //                     .expect("Failed to initialize USDC");
-    //                 usdc.address()
-    //             };
-
-    //             let eurc_addr = {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.initialize("EURC", "EURC", "USD", path_usd_addr, admin, Address::ZERO)
-    //                     .expect("Failed to initialize EURC");
-    //                 eurc.address()
-    //             };
-
-    //             // Create pairs first
-    //             exchange
-    //                 .create_pair(usdc_addr)
-    //                 .expect("Failed to create USDC pair");
-    //             exchange
-    //                 .create_pair(eurc_addr)
-    //                 .expect("Failed to create EURC pair");
-
-    //             // Trade USDC -> EURC should go through PathUSD
-    //             let route = exchange
-    //                 .find_trade_path(usdc_addr, eurc_addr)
-    //                 .expect("Should find path");
-
-    //             // Expected: 2 hops (USDC -> PathUSD, PathUSD -> EURC)
-    //             assert_eq!(route.len(), 2, "Should have 2 hops for sibling tokens");
-    //             verify_hop(exchange.address, route[0], usdc_addr, path_usd_addr)?;
-    //             verify_hop(exchange.address, route[1], path_usd_addr, eurc_addr)?;
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_quote_exact_in_multi_hop() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let admin = Address::random();
-    //             let alice = Address::random();
-    //             let min_order_amount = MIN_ORDER_AMOUNT;
-
-    //             // Setup: PathUSD <- USDC
-    //             //        PathUSD <- EURC
-    //             let path_usd_addr = {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd
-    //                     .initialize(admin)
-    //                     .expect("Failed to initialize PathUSD");
-    //                 path_usd.token.address()
-    //             };
-
-    //             let usdc_addr = {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.initialize("USDC", "USDC", "USD", path_usd_addr, admin, Address::ZERO)
-    //                     .expect("Failed to initialize USDC");
-    //                 usdc.address()
-    //             };
-
-    //             let eurc_addr = {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.initialize("EURC", "EURC", "USD", path_usd_addr, admin, Address::ZERO)
-    //                     .expect("Failed to initialize EURC");
-    //                 eurc.address()
-    //             };
-
-    //             // Create pairs
-    //             exchange
-    //                 .create_pair(usdc_addr)
-    //                 .expect("Failed to create USDC pair");
-    //             exchange
-    //                 .create_pair(eurc_addr)
-    //                 .expect("Failed to create EURC pair");
-
-    //             // Setup tokens and roles
-    //             {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.grant_role_internal(admin, *ISSUER_ROLE)?;
-    //                 usdc.mint(
-    //                     admin,
-    //                     ITIP20::mintCall {
-    //                         to: alice,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to mint USDC");
-    //             }
-
-    //             {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.grant_role_internal(admin, *ISSUER_ROLE)?;
-    //                 eurc.mint(
-    //                     admin,
-    //                     ITIP20::mintCall {
-    //                         to: alice,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to mint EURC");
-    //             }
-
-    //             {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd.token.grant_role_internal(admin, *ISSUER_ROLE)?;
-    //                 path_usd
-    //                     .token
-    //                     .mint(
-    //                         admin,
-    //                         ITIP20::mintCall {
-    //                             to: alice,
-    //                             amount: U256::from(min_order_amount * 10),
-    //                         },
-    //                     )
-    //                     .expect("Failed to mint PathUSD");
-    //             }
-
-    //             // Approve exchange
-    //             {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.approve(
-    //                     alice,
-    //                     ITIP20::approveCall {
-    //                         spender: exchange.address,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to approve USDC");
-    //             }
-
-    //             {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.approve(
-    //                     alice,
-    //                     ITIP20::approveCall {
-    //                         spender: exchange.address,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to approve EURC");
-    //             }
-
-    //             {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd
-    //                     .token
-    //                     .approve(
-    //                         alice,
-    //                         ITIP20::approveCall {
-    //                             spender: exchange.address,
-    //                             amount: U256::from(min_order_amount * 10),
-    //                         },
-    //                     )
-    //                     .expect("Failed to approve PathUSD");
-    //             }
-
-    //             // Place orders to provide liquidity at 1:1 rate (tick 0)
-    //             // For trade USDC -> PathUSD -> EURC:
-    //             // - First hop needs: bid on USDC (someone buying USDC with PathUSD)
-    //             // - Second hop needs: ask on EURC (someone selling EURC for PathUSD)
-
-    //             // USDC bid: buy USDC with PathUSD
-    //             exchange
-    //                 .place(alice, usdc_addr, min_order_amount * 5, true, 0)
-    //                 .expect("Failed to place USDC bid order");
-
-    //             // EURC ask: sell EURC for PathUSD
-    //             exchange
-    //                 .place(alice, eurc_addr, min_order_amount * 5, false, 0)
-    //                 .expect("Failed to place EURC ask order");
-
-    //             exchange
-    //                 .execute_block(Address::ZERO)
-    //                 .expect("Failed to execute block");
-
-    //             // Quote multi-hop: USDC -> PathUSD -> EURC
-    //             let amount_in = min_order_amount;
-    //             let amount_out = exchange
-    //                 .quote_swap_exact_amount_in(usdc_addr, eurc_addr, amount_in)
-    //                 .expect("Should quote multi-hop trade");
-
-    //             // With 1:1 rates at each hop, output should equal input
-    //             assert_eq!(
-    //                 amount_out, amount_in,
-    //                 "With 1:1 rates, output should equal input"
-    //             );
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_quote_exact_out_multi_hop() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let admin = Address::random();
-    //             let alice = Address::random();
-
-    //             let min_order_amount = MIN_ORDER_AMOUNT;
-    //             // Setup: PathUSD <- USDC
-    //             //        PathUSD <- EURC
-    //             let path_usd_addr = {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd
-    //                     .initialize(admin)
-    //                     .expect("Failed to initialize PathUSD");
-    //                 path_usd.token.address()
-    //             };
-
-    //             let usdc_addr = {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.initialize("USDC", "USDC", "USD", path_usd_addr, admin, Address::ZERO)
-    //                     .expect("Failed to initialize USDC");
-    //                 usdc.address()
-    //             };
-
-    //             let eurc_addr = {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.initialize("EURC", "EURC", "USD", path_usd_addr, admin, Address::ZERO)
-    //                     .expect("Failed to initialize EURC");
-    //                 eurc.address()
-    //             };
-
-    //             // Create pairs and setup (same as previous test)
-    //             exchange
-    //                 .create_pair(usdc_addr)
-    //                 .expect("Failed to create USDC pair");
-    //             exchange
-    //                 .create_pair(eurc_addr)
-    //                 .expect("Failed to create EURC pair");
-
-    //             {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.grant_role_internal(admin, *ISSUER_ROLE)?;
-    //                 usdc.mint(
-    //                     admin,
-    //                     ITIP20::mintCall {
-    //                         to: alice,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to mint USDC");
-    //                 usdc.approve(
-    //                     alice,
-    //                     ITIP20::approveCall {
-    //                         spender: exchange.address,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to approve USDC");
-    //             }
-
-    //             {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.grant_role_internal(admin, *ISSUER_ROLE)?;
-    //                 eurc.mint(
-    //                     admin,
-    //                     ITIP20::mintCall {
-    //                         to: alice,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to mint EURC");
-    //                 eurc.approve(
-    //                     alice,
-    //                     ITIP20::approveCall {
-    //                         spender: exchange.address,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to approve EURC");
-    //             }
-
-    //             {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd.token.grant_role_internal(admin, *ISSUER_ROLE)?;
-    //                 path_usd
-    //                     .token
-    //                     .mint(
-    //                         admin,
-    //                         ITIP20::mintCall {
-    //                             to: alice,
-    //                             amount: U256::from(min_order_amount * 10),
-    //                         },
-    //                     )
-    //                     .expect("Failed to mint PathUSD");
-    //                 path_usd
-    //                     .token
-    //                     .approve(
-    //                         alice,
-    //                         ITIP20::approveCall {
-    //                             spender: exchange.address,
-    //                             amount: U256::from(min_order_amount * 10),
-    //                         },
-    //                     )
-    //                     .expect("Failed to approve PathUSD");
-    //             }
-
-    //             // Place orders at 1:1 rate
-    //             exchange
-    //                 .place(alice, usdc_addr, min_order_amount * 5, true, 0)
-    //                 .expect("Failed to place USDC bid order");
-    //             exchange
-    //                 .place(alice, eurc_addr, min_order_amount * 5, false, 0)
-    //                 .expect("Failed to place EURC ask order");
-
-    //             exchange
-    //                 .execute_block(Address::ZERO)
-    //                 .expect("Failed to execute block");
-
-    //             // Quote multi-hop for exact output: USDC -> PathUSD -> EURC
-    //             let amount_out = min_order_amount;
-    //             let amount_in = exchange
-    //                 .quote_swap_exact_amount_out(usdc_addr, eurc_addr, amount_out)
-    //                 .expect("Should quote multi-hop trade for exact output");
-
-    //             // With 1:1 rates at each hop, input should equal output
-    //             assert_eq!(
-    //                 amount_in, amount_out,
-    //                 "With 1:1 rates, input should equal output"
-    //             );
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_swap_exact_in_multi_hop_transitory_balances() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let admin = Address::random();
-    //             let alice = Address::random();
-    //             let bob = Address::random();
-
-    //             let min_order_amount = MIN_ORDER_AMOUNT;
-    //             // Setup: PathUSD <- USDC <- EURC
-    //             let path_usd_addr = {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd
-    //                     .initialize(admin)
-    //                     .expect("Failed to initialize PathUSD");
-    //                 path_usd.token.address()
-    //             };
-
-    //             let usdc_addr = {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.initialize("USDC", "USDC", "USD", path_usd_addr, admin, Address::ZERO)
-    //                     .expect("Failed to initialize USDC");
-    //                 usdc.address()
-    //             };
-
-    //             let eurc_addr = {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.initialize("EURC", "EURC", "USD", path_usd_addr, admin, Address::ZERO)
-    //                     .expect("Failed to initialize EURC");
-    //                 eurc.address()
-    //             };
-
-    //             exchange
-    //                 .create_pair(usdc_addr)
-    //                 .expect("Failed to create USDC pair");
-    //             exchange
-    //                 .create_pair(eurc_addr)
-    //                 .expect("Failed to create EURC pair");
-
-    //             // Setup alice as liquidity provider
-    //             {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.grant_role_internal(admin, *ISSUER_ROLE)?;
-    //                 usdc.mint(
-    //                     admin,
-    //                     ITIP20::mintCall {
-    //                         to: alice,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to mint USDC");
-    //                 usdc.approve(
-    //                     alice,
-    //                     ITIP20::approveCall {
-    //                         spender: exchange.address,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to approve USDC");
-    //             }
-
-    //             {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.grant_role_internal(admin, *ISSUER_ROLE)?;
-    //                 eurc.mint(
-    //                     admin,
-    //                     ITIP20::mintCall {
-    //                         to: alice,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to mint EURC");
-    //                 eurc.approve(
-    //                     alice,
-    //                     ITIP20::approveCall {
-    //                         spender: exchange.address,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to approve EURC");
-    //             }
-
-    //             {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd.token.grant_role_internal(admin, *ISSUER_ROLE)?;
-    //                 path_usd.token.mint(
-    //                     admin,
-    //                     ITIP20::mintCall {
-    //                         to: alice,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )?;
-
-    //                 path_usd.token.approve(
-    //                     alice,
-    //                     ITIP20::approveCall {
-    //                         spender: exchange.address,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )?;
-    //             }
-
-    //             // Setup bob as trader
-    //             {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.mint(
-    //                     admin,
-    //                     ITIP20::mintCall {
-    //                         to: bob,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )?;
-
-    //                 usdc.approve(
-    //                     bob,
-    //                     ITIP20::approveCall {
-    //                         spender: exchange.address,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )?;
-    //             }
-
-    //             // Place liquidity orders at 1:1
-    //             exchange
-    //                 .place(alice, usdc_addr, min_order_amount * 5, true, 0)
-    //                 .expect("Failed to place USDC bid order");
-    //             exchange
-    //                 .place(alice, eurc_addr, min_order_amount * 5, false, 0)
-    //                 .expect("Failed to place EURC ask order");
-    //             exchange
-    //                 .execute_block(Address::ZERO)
-    //                 .expect("Failed to execute block");
-
-    //             // Check bob's balances before swap
-    //             let bob_usdc_before = {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.balance_of(ITIP20::balanceOfCall { account: bob })?
-    //             };
-    //             let bob_eurc_before = {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.balance_of(ITIP20::balanceOfCall { account: bob })?
-    //             };
-
-    //             // Execute multi-hop swap: USDC -> PathUSD -> EURC
-    //             let amount_in = min_order_amount;
-    //             let amount_out = exchange
-    //                 .swap_exact_amount_in(
-    //                     bob, usdc_addr, eurc_addr, amount_in, 0, // min_amount_out
-    //                 )
-    //                 .expect("Should execute multi-hop swap");
-
-    //             // Check bob's balances after swap
-    //             let bob_usdc_after = {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.balance_of(ITIP20::balanceOfCall { account: bob })?
-    //             };
-    //             let bob_eurc_after = {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.balance_of(ITIP20::balanceOfCall { account: bob })?
-    //             };
-
-    //             // Verify bob spent USDC and received EURC
-    //             assert_eq!(
-    //                 bob_usdc_before - bob_usdc_after,
-    //                 U256::from(amount_in),
-    //                 "Bob should have spent exact amount_in USDC"
-    //             );
-    //             assert_eq!(
-    //                 bob_eurc_after - bob_eurc_before,
-    //                 U256::from(amount_out),
-    //                 "Bob should have received amount_out EURC"
-    //             );
-
-    //             // Verify bob has ZERO PathUSD (intermediate token should be transitory)
-    //             let bob_path_usd_wallet = {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd
-    //                     .token
-    //                     .balance_of(ITIP20::balanceOfCall { account: bob })?
-    //             };
-    //             assert_eq!(
-    //                 bob_path_usd_wallet,
-    //                 U256::ZERO,
-    //                 "Bob should have ZERO PathUSD in wallet (transitory)"
-    //             );
-
-    //             let bob_path_usd_exchange = exchange
-    //                 .balance_of(bob, path_usd_addr)
-    //                 .expect("Failed to get bob's PathUSD exchange balance");
-    //             assert_eq!(
-    //                 bob_path_usd_exchange, 0,
-    //                 "Bob should have ZERO PathUSD on exchange (transitory)"
-    //             );
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_swap_exact_out_multi_hop_transitory_balances() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let admin = Address::random();
-    //             let alice = Address::random();
-    //             let bob = Address::random();
-
-    //             let min_order_amount = MIN_ORDER_AMOUNT;
-    //             // Setup: PathUSD <- USDC <- EURC
-    //             let path_usd_addr = {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd
-    //                     .initialize(admin)
-    //                     .expect("Failed to initialize PathUSD");
-    //                 path_usd.token.address()
-    //             };
-
-    //             let usdc_addr = {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.initialize("USDC", "USDC", "USD", path_usd_addr, admin, Address::ZERO)
-    //                     .expect("Failed to initialize USDC");
-    //                 usdc.address()
-    //             };
-
-    //             let eurc_addr = {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.initialize("EURC", "EURC", "USD", path_usd_addr, admin, Address::ZERO)
-    //                     .expect("Failed to initialize EURC");
-    //                 eurc.address()
-    //             };
-
-    //             exchange
-    //                 .create_pair(usdc_addr)
-    //                 .expect("Failed to create USDC pair");
-    //             exchange
-    //                 .create_pair(eurc_addr)
-    //                 .expect("Failed to create EURC pair");
-
-    //             // Setup alice as liquidity provider
-    //             {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.grant_role_internal(admin, *ISSUER_ROLE)?;
-    //                 usdc.mint(
-    //                     admin,
-    //                     ITIP20::mintCall {
-    //                         to: alice,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to mint USDC");
-    //                 usdc.approve(
-    //                     alice,
-    //                     ITIP20::approveCall {
-    //                         spender: exchange.address,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to approve USDC");
-    //             }
-
-    //             {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.grant_role_internal(admin, *ISSUER_ROLE)?;
-    //                 eurc.mint(
-    //                     admin,
-    //                     ITIP20::mintCall {
-    //                         to: alice,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to mint EURC");
-    //                 eurc.approve(
-    //                     alice,
-    //                     ITIP20::approveCall {
-    //                         spender: exchange.address,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to approve EURC");
-    //             }
-
-    //             {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd.token.grant_role_internal(admin, *ISSUER_ROLE)?;
-    //                 path_usd
-    //                     .token
-    //                     .mint(
-    //                         admin,
-    //                         ITIP20::mintCall {
-    //                             to: alice,
-    //                             amount: U256::from(min_order_amount * 10),
-    //                         },
-    //                     )
-    //                     .expect("Failed to mint PathUSD");
-    //                 path_usd
-    //                     .token
-    //                     .approve(
-    //                         alice,
-    //                         ITIP20::approveCall {
-    //                             spender: exchange.address,
-    //                             amount: U256::from(min_order_amount * 10),
-    //                         },
-    //                     )
-    //                     .expect("Failed to approve PathUSD");
-    //             }
-
-    //             // Setup bob as trader
-    //             {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.mint(
-    //                     admin,
-    //                     ITIP20::mintCall {
-    //                         to: bob,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to mint USDC for bob");
-    //                 usdc.approve(
-    //                     bob,
-    //                     ITIP20::approveCall {
-    //                         spender: exchange.address,
-    //                         amount: U256::from(min_order_amount * 10),
-    //                     },
-    //                 )
-    //                 .expect("Failed to approve USDC for bob");
-    //             }
-
-    //             // Place liquidity orders at 1:1
-    //             exchange
-    //                 .place(alice, usdc_addr, min_order_amount * 5, true, 0)
-    //                 .expect("Failed to place USDC bid order");
-    //             exchange
-    //                 .place(alice, eurc_addr, min_order_amount * 5, false, 0)
-    //                 .expect("Failed to place EURC ask order");
-    //             exchange
-    //                 .execute_block(Address::ZERO)
-    //                 .expect("Failed to execute block");
-
-    //             // Check bob's balances before swap
-    //             let bob_usdc_before = {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.balance_of(ITIP20::balanceOfCall { account: bob })?
-    //             };
-    //             let bob_eurc_before = {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.balance_of(ITIP20::balanceOfCall { account: bob })?
-    //             };
-
-    //             // Execute multi-hop swap: USDC -> PathUSD -> EURC (exact output)
-    //             let amount_out = 90u128;
-    //             let amount_in = exchange.swap_exact_amount_out(
-    //                 bob,
-    //                 usdc_addr,
-    //                 eurc_addr,
-    //                 amount_out,
-    //                 u128::MAX, // max_amount_in
-    //             )?;
-
-    //             // Check bob's balances after swap
-    //             let bob_usdc_after = {
-    //                 let mut usdc = TIP20Token::new(2);
-    //                 usdc.balance_of(ITIP20::balanceOfCall { account: bob })?
-    //             };
-    //             let bob_eurc_after = {
-    //                 let mut eurc = TIP20Token::new(3);
-    //                 eurc.balance_of(ITIP20::balanceOfCall { account: bob })?
-    //             };
-
-    //             // Verify bob spent USDC and received exact EURC
-    //             assert_eq!(
-    //                 bob_usdc_before - bob_usdc_after,
-    //                 U256::from(amount_in),
-    //                 "Bob should have spent amount_in USDC"
-    //             );
-    //             assert_eq!(
-    //                 bob_eurc_after - bob_eurc_before,
-    //                 U256::from(amount_out),
-    //                 "Bob should have received exact amount_out EURC"
-    //             );
-
-    //             // Verify bob has ZERO PathUSD (intermediate token should be transitory)
-    //             let bob_path_usd_wallet = {
-    //                 let mut path_usd = PathUSD::new();
-    //                 path_usd
-    //                     .token
-    //                     .balance_of(ITIP20::balanceOfCall { account: bob })?
-    //             };
-    //             assert_eq!(
-    //                 bob_path_usd_wallet,
-    //                 U256::ZERO,
-    //                 "Bob should have ZERO PathUSD in wallet (transitory)"
-    //             );
-
-    //             let bob_path_usd_exchange = exchange
-    //                 .balance_of(bob, path_usd_addr)
-    //                 .expect("Failed to get bob's PathUSD exchange balance");
-    //             assert_eq!(
-    //                 bob_path_usd_exchange, 0,
-    //                 "Bob should have ZERO PathUSD on exchange (transitory)"
-    //             );
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_create_pair_invalid_currency() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let admin = Address::random();
-    //             // Init path USD
-    //             let mut path_usd = TIP20Token::from_address(PATH_USD_ADDRESS);
-    //             path_usd.initialize(
-    //                 "PathUSD",
-    //                 "LUSD",
-    //                 "USD",
-    //                 Address::ZERO,
-    //                 admin,
-    //                 Address::ZERO,
-    //             )?;
-
-    //             // Create EUR token with PATH USD as quote (valid non-USD token)
-    //             let mut token_0 = TIP20Token::new(1);
-    //             token_0.initialize(
-    //                 "EuroToken",
-    //                 "EURO",
-    //                 "EUR",
-    //                 PATH_USD_ADDRESS,
-    //                 admin,
-    //                 Address::ZERO,
-    //             )?;
-    //             let token_0_address = token_0.address();
-
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             // Test: create_pair should reject non-USD token (EUR token has EUR currency)
-    //             let result = exchange.create_pair(token_0_address);
-    //             assert!(matches!(
-    //                 result,
-    //                 Err(TempoPrecompileError::TIP20(TIP20Error::InvalidCurrency(_)))
-    //             ));
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_max_in_check_pre_moderato() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let alice = Address::random();
-    //             let bob = Address::random();
-    //             let admin = Address::random();
-
-    //             let (base_token, quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, 200_000_000u128)?;
-    //             exchange.create_pair(base_token)?;
-
-    //             let tick_50 = 50i16;
-    //             let tick_100 = 100i16;
-    //             let order_amount = MIN_ORDER_AMOUNT;
-
-    //             exchange.place(alice, base_token, order_amount, false, tick_50)?;
-    //             exchange.place(alice, base_token, order_amount, false, tick_100)?;
-    //             exchange.execute_block(Address::ZERO)?;
-
-    //             exchange.set_balance(bob, quote_token, 200_000_000u128)?;
-
-    //             let price_50 = orderbook::tick_to_price(tick_50);
-    //             let quote_for_first =
-    //                 (order_amount * price_50 as u128) / orderbook::PRICE_SCALE as u128;
-    //             let max_in_between = quote_for_first + 500;
-
-    //             let result = exchange.swap_exact_amount_out(
-    //                 bob,
-    //                 quote_token,
-    //                 base_token,
-    //                 order_amount + 999,
-    //                 max_in_between,
-    //             );
-    //             assert!(result.is_err());
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_create_pair_rejects_non_tip20_base_post_moderato() -> eyre::Result<()> {
-    //         // Test with Moderato hardfork (validation should be enforced)
-    //         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Moderato);
-    //         StorageContext::enter(&mut storage, || {
-    //             let admin = Address::random();
-    //             // Init PATH USD
-    //             let mut path_usd = TIP20Token::from_address(PATH_USD_ADDRESS);
-    //             path_usd.initialize(
-    //                 "PathUSD",
-    //                 "LUSD",
-    //                 "USD",
-    //                 Address::ZERO,
-    //                 admin,
-    //                 Address::ZERO,
-    //             )?;
-
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             // Test: create_pair should reject non-TIP20 address (random address without TIP20 prefix)
-    //             let non_tip20_address = Address::random();
-    //             let result = exchange.create_pair(non_tip20_address);
-    //             assert!(matches!(
-    //                 result,
-    //                 Err(TempoPrecompileError::StablecoinExchange(
-    //                     StablecoinExchangeError::InvalidBaseToken(_)
-    //                 ))
-    //             ));
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_max_in_check_post_moderato() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Moderato);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let alice = Address::random();
-    //             let bob = Address::random();
-    //             let admin = Address::random();
-
-    //             let (base_token, quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, 200_000_000u128)?;
-    //             exchange.create_pair(base_token)?;
-
-    //             let tick_50 = 50i16;
-    //             let tick_100 = 100i16;
-    //             let order_amount = MIN_ORDER_AMOUNT;
-
-    //             exchange.place(alice, base_token, order_amount, false, tick_50)?;
-    //             exchange.place(alice, base_token, order_amount, false, tick_100)?;
-    //             exchange.execute_block(Address::ZERO)?;
-
-    //             exchange.set_balance(bob, quote_token, 200_000_000u128)?;
-
-    //             let price_50 = orderbook::tick_to_price(tick_50);
-    //             let price_100 = orderbook::tick_to_price(tick_100);
-    //             let quote_for_first =
-    //                 (order_amount * price_50 as u128) / orderbook::PRICE_SCALE as u128;
-    //             let quote_for_partial_second =
-    //                 (999 * price_100 as u128) / orderbook::PRICE_SCALE as u128;
-    //             let total_needed = quote_for_first + quote_for_partial_second;
-
-    //             let result = exchange.swap_exact_amount_out(
-    //                 bob,
-    //                 quote_token,
-    //                 base_token,
-    //                 order_amount + 999,
-    //                 total_needed,
-    //             );
-    //             assert!(result.is_ok());
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_create_pair_allows_non_tip20_base_pre_moderato() -> eyre::Result<()> {
-    //         // Test with Adagio (pre-Moderato) - validation should not be enforced
-    //         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Adagio);
-    //         StorageContext::enter(&mut storage, || {
-    //             let admin = Address::random();
-    //             // Init Linking USD
-    //             let mut path_usd = TIP20Token::from_address(PATH_USD_ADDRESS);
-    //             path_usd.initialize(
-    //                 "PathUSD",
-    //                 "LUSD",
-    //                 "USD",
-    //                 Address::ZERO,
-    //                 admin,
-    //                 Address::ZERO,
-    //             )?;
-
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             // Test: create_pair should not reject non-TIP20 address pre-Moderato
-    //             // This will fail with a different error (trying to read quote_token from non-TIP20)
-    //             // but NOT the InvalidQuoteToken error from the is_tip20 check
-    //             let non_tip20_address = Address::random();
-    //             let result = exchange.create_pair(non_tip20_address);
-
-    //             // Should fail but not with InvalidQuoteToken error (that check is skipped pre-Moderato)
-    //             assert!(result.is_err());
-    //             assert!(!matches!(
-    //                 result,
-    //                 Err(TempoPrecompileError::TIP20(TIP20Error::InvalidQuoteToken(
-    //                     _
-    //                 )))
-    //             ));
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_exact_out_bid_side_pre_moderato() -> eyre::Result<()> {
-    //         // Pre-Moderato: old behavior with unit mismatch causes MaxInputExceeded
-    //         let mut storage = HashMapStorageProvider::new(1); // Default is Adagio
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let alice = Address::random();
-    //             let bob = Address::random();
-    //             let admin = Address::random();
-
-    //             let (base_token, quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, 1_000_000_000u128);
-    //             exchange.create_pair(base_token)?;
-
-    //             let tick = 1000i16;
-    //             let price = tick_to_price(tick);
-    //             let order_amount_base = MIN_ORDER_AMOUNT;
-
-    //             exchange.place(alice, base_token, order_amount_base, true, tick)?;
-    //             exchange.execute_block(Address::ZERO)?;
-
-    //             let amount_out_quote = 5_000_000u128;
-    //             let base_needed = (amount_out_quote * PRICE_SCALE as u128) / price as u128;
-    //             let max_amount_in = base_needed + 10000;
-
-    //             exchange.set_balance(bob, base_token, max_amount_in * 2)?;
-
-    //             // Pre-Moderato: should fail with MaxInputExceeded due to unit mismatch
-    //             let result = exchange.swap_exact_amount_out(
-    //                 bob,
-    //                 base_token,
-    //                 quote_token,
-    //                 amount_out_quote,
-    //                 max_amount_in,
-    //             );
-
-    //             assert!(
-    //                 matches!(
-    //                     result,
-    //                     Err(TempoPrecompileError::StablecoinExchange(
-    //                         StablecoinExchangeError::MaxInputExceeded(_)
-    //                     ))
-    //                 ),
-    //                 "Pre-Moderato should fail with MaxInputExceeded"
-    //             );
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_exact_out_bid_side_post_moderato() -> eyre::Result<()> {
-    //         // Post-Moderato: new behavior with correct unit conversion
-    //         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Moderato);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let alice = Address::random();
-    //             let bob = Address::random();
-    //             let admin = Address::random();
-
-    //             let (base_token, quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, 1_000_000_000u128);
-    //             exchange.create_pair(base_token)?;
-
-    //             let tick = 1000i16;
-    //             let price = tick_to_price(tick);
-    //             let order_amount_base = MIN_ORDER_AMOUNT;
-
-    //             exchange.place(alice, base_token, order_amount_base, true, tick)?;
-    //             exchange.execute_block(Address::ZERO)?;
-
-    //             let amount_out_quote = 5_000_000u128;
-    //             let base_needed = (amount_out_quote * PRICE_SCALE as u128) / price as u128;
-    //             let max_amount_in = base_needed + 10000;
-
-    //             exchange.set_balance(bob, base_token, max_amount_in * 2)?;
-
-    //             let _amount_in = exchange.swap_exact_amount_out(
-    //                 bob,
-    //                 base_token,
-    //                 quote_token,
-    //                 amount_out_quote,
-    //                 max_amount_in,
-    //             )?;
-
-    //             // Verify Bob got exactly the quote amount requested
-    //             let mut quote_tip20 = TIP20Token::from_address(quote_token);
-    //             let bob_quote_balance =
-    //                 quote_tip20.balance_of(ITIP20::balanceOfCall { account: bob })?;
-    //             assert_eq!(bob_quote_balance, U256::from(amount_out_quote));
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_exact_in_ask_side_pre_moderato() -> eyre::Result<()> {
-    //         // Pre-Moderato: old behavior treats quote amount as base amount
-    //         let mut storage = HashMapStorageProvider::new(1); // Default is Adagio
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let alice = Address::random();
-    //             let bob = Address::random();
-    //             let admin = Address::random();
-
-    //             let (base_token, quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, 1_000_000_000u128);
-    //             exchange.create_pair(base_token)?;
-
-    //             let tick = 1000i16;
-    //             let price = tick_to_price(tick);
-    //             let order_amount_base = MIN_ORDER_AMOUNT;
-
-    //             exchange.place(alice, base_token, order_amount_base, false, tick)?;
-    //             exchange.execute_block(Address::ZERO)?;
-
-    //             let amount_in_quote = 5_000_000u128;
-    //             let min_amount_out = 0;
-
-    //             exchange.set_balance(bob, quote_token, amount_in_quote * 2)?;
-
-    //             let amount_out = exchange.swap_exact_amount_in(
-    //                 bob,
-    //                 quote_token,
-    //                 base_token,
-    //                 amount_in_quote,
-    //                 min_amount_out,
-    //             )?;
-
-    //             // Pre-Moderato: returns incorrect amount (treats quote as base)
-    //             // It will return amount_in_quote (5M) instead of the correct converted amount
-    //             assert_eq!(amount_out, amount_in_quote);
-    //             assert_ne!(
-    //                 amount_out,
-    //                 (amount_in_quote * PRICE_SCALE as u128) / price as u128
-    //             );
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_exact_in_ask_side_post_moderato() -> eyre::Result<()> {
-    //         // Post-Moderato: new behavior with correct unit conversion
-    //         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Moderato);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let alice = Address::random();
-    //             let bob = Address::random();
-    //             let admin = Address::random();
-
-    //             let (base_token, quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, 1_000_000_000u128);
-    //             exchange.create_pair(base_token)?;
-
-    //             let tick = 1000i16;
-    //             let price = tick_to_price(tick);
-    //             let order_amount_base = MIN_ORDER_AMOUNT;
-
-    //             exchange.place(alice, base_token, order_amount_base, false, tick)?;
-    //             exchange.execute_block(Address::ZERO)?;
-
-    //             let amount_in_quote = 5_000_000u128;
-    //             let min_amount_out = 0;
-
-    //             exchange.set_balance(bob, quote_token, amount_in_quote * 2)?;
-
-    //             let amount_out = exchange.swap_exact_amount_in(
-    //                 bob,
-    //                 quote_token,
-    //                 base_token,
-    //                 amount_in_quote,
-    //                 min_amount_out,
-    //             )?;
-
-    //             // Post-Moderato: returns correct converted amount
-    //             let expected_base = (amount_in_quote * PRICE_SCALE as u128) / price as u128;
-    //             assert_eq!(amount_out, expected_base);
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_clear_order_post_allegretto() -> eyre::Result<()> {
-    //         const AMOUNT: u128 = 1_000_000_000;
-
-    //         // Test that fill_order properly clears the prev pointer when advancing to the next order
-    //         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let alice = Address::random();
-    //             let bob = Address::random();
-    //             let carol = Address::random();
-    //             let admin = Address::random();
-
-    //             let (base_token, quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, AMOUNT);
-    //             exchange.create_pair(base_token)?;
-
-    //             // Give bob base tokens and carol quote tokens
-    //             mint_and_approve_token(1, admin, bob, exchange.address, AMOUNT);
-    //             mint_and_approve_quote(admin, carol, exchange.address, AMOUNT);
-
-    //             let tick = 100i16;
-
-    //             // Place two ask orders at the same tick: Order 1 (alice), Order 2 (bob)
-    //             let order1_amount = MIN_ORDER_AMOUNT;
-    //             let order2_amount = MIN_ORDER_AMOUNT;
-
-    //             let order1_id = exchange.place(alice, base_token, order1_amount, false, tick)?;
-    //             let order2_id = exchange.place(bob, base_token, order2_amount, false, tick)?;
-    //             exchange.execute_block(Address::ZERO)?;
-
-    //             // Verify linked list is set up correctly
-    //             let order1 = exchange.orders.at(order1_id).read()?;
-    //             let order2 = exchange.orders.at(order2_id).read()?;
-    //             assert_eq!(order1.next(), order2_id);
-    //             assert_eq!(order2.prev(), order1_id);
-
-    //             // Swap to fill order1 completely
-    //             let swap_amount = order1_amount;
-    //             exchange.swap_exact_amount_out(
-    //                 carol,
-    //                 quote_token,
-    //                 base_token,
-    //                 swap_amount,
-    //                 u128::MAX,
-    //             )?;
-
-    //             // After filling order1, order2 should be the new head with prev = 0
-    //             let order2_after = exchange.sload_orders(order2_id)?;
-    //             assert_eq!(
-    //                 order2_after.prev(),
-    //                 0,
-    //                 "New head order should have prev = 0 after previous head was filled"
-    //             );
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_best_tick_updates_on_fill() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let alice = Address::random();
-    //             let bob = Address::random();
-    //             let admin = Address::random();
-    //             let amount = MIN_ORDER_AMOUNT;
-
-    //             // Use different ticks for bids (100, 90) and asks (50, 60)
-    //             let (bid_tick_1, bid_tick_2) = (100_i16, 90_i16); // (best, second best)
-    //             let (ask_tick_1, ask_tick_2) = (50_i16, 60_i16); // (best, second best)
-
-    //             // Calculate escrow for all orders
-    //             let bid_price_1 = orderbook::tick_to_price(bid_tick_1);
-    //             let bid_price_2 = orderbook::tick_to_price(bid_tick_2);
-    //             let bid_escrow_1 = (amount * bid_price_1 as u128) / orderbook::PRICE_SCALE as u128;
-    //             let bid_escrow_2 = (amount * bid_price_2 as u128) / orderbook::PRICE_SCALE as u128;
-    //             let total_bid_escrow = bid_escrow_1 + bid_escrow_2;
-
-    //             let (base_token, quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, total_bid_escrow);
-    //             exchange.create_pair(base_token)?;
-    //             let book_key = compute_book_key(base_token, quote_token);
-
-    //             // Place bid orders at two different ticks
-    //             exchange.place(alice, base_token, amount, true, bid_tick_1)?;
-    //             exchange.place(alice, base_token, amount, true, bid_tick_2)?;
-
-    //             // Place ask orders at two different ticks
-    //             mint_and_approve_token(1, admin, alice, exchange.address, amount * 2);
-    //             exchange.place(alice, base_token, amount, false, ask_tick_1)?;
-    //             exchange.place(alice, base_token, amount, false, ask_tick_2)?;
-
-    //             exchange.execute_block(Address::ZERO)?;
-
-    //             // Verify initial best ticks
-    //             let orderbook = exchange.books.at(book_key).read()?;
-    //             assert_eq!(orderbook.best_bid_tick, bid_tick_1);
-    //             assert_eq!(orderbook.best_ask_tick, ask_tick_1);
-
-    //             // Fill all bids at tick 100 (bob sells base)
-    //             exchange.set_balance(bob, base_token, amount)?;
-    //             exchange.swap_exact_amount_in(bob, base_token, quote_token, amount, 0)?;
-    //             // Verify best_bid_tick moved to tick 90, best_ask_tick unchanged
-    //             let orderbook = exchange.books.at(book_key).read()?;
-    //             assert_eq!(orderbook.best_bid_tick, bid_tick_2);
-    //             assert_eq!(orderbook.best_ask_tick, ask_tick_1);
-
-    //             // Fill remaining bid at tick 90
-    //             exchange.set_balance(bob, base_token, amount)?;
-    //             exchange.swap_exact_amount_in(bob, base_token, quote_token, amount, 0)?;
-    //             // Verify best_bid_tick is now i16::MIN, best_ask_tick unchanged
-    //             let orderbook = exchange.books.at(book_key).read()?;
-    //             assert_eq!(orderbook.best_bid_tick, i16::MIN);
-    //             assert_eq!(orderbook.best_ask_tick, ask_tick_1);
-
-    //             // Fill all asks at tick 50 (bob buys base)
-    //             let ask_price_1 = orderbook::tick_to_price(ask_tick_1);
-    //             let quote_needed = (amount * ask_price_1 as u128) / orderbook::PRICE_SCALE as u128;
-    //             exchange.set_balance(bob, quote_token, quote_needed)?;
-    //             exchange.swap_exact_amount_in(bob, quote_token, base_token, quote_needed, 0)?;
-    //             // Verify best_ask_tick moved to tick 60, best_bid_tick unchanged
-    //             let orderbook = exchange.books.at(book_key).read()?;
-    //             assert_eq!(orderbook.best_ask_tick, ask_tick_2);
-    //             assert_eq!(orderbook.best_bid_tick, i16::MIN);
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_best_tick_updates_on_cancel() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let alice = Address::random();
-    //             let admin = Address::random();
-    //             let amount = MIN_ORDER_AMOUNT;
-
-    //             let (bid_tick_1, bid_tick_2) = (100_i16, 90_i16); // (best, second best)
-    //             let (ask_tick_1, ask_tick_2) = (50_i16, 60_i16); // (best, second best)
-
-    //             // Calculate escrow for 3 bid orders (2 at tick 100, 1 at tick 90)
-    //             let price_1 = orderbook::tick_to_price(bid_tick_1);
-    //             let price_2 = orderbook::tick_to_price(bid_tick_2);
-    //             let escrow_1 = (amount * price_1 as u128) / orderbook::PRICE_SCALE as u128;
-    //             let escrow_2 = (amount * price_2 as u128) / orderbook::PRICE_SCALE as u128;
-    //             let total_escrow = escrow_1 * 2 + escrow_2;
-
-    //             let (base_token, quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, total_escrow);
-    //             exchange.create_pair(base_token)?;
-    //             let book_key = compute_book_key(base_token, quote_token);
-
-    //             // Place 2 bid orders at tick 100, 1 at tick 90
-    //             let bid_order_1 = exchange.place(alice, base_token, amount, true, bid_tick_1)?;
-    //             let bid_order_2 = exchange.place(alice, base_token, amount, true, bid_tick_1)?;
-    //             let bid_order_3 = exchange.place(alice, base_token, amount, true, bid_tick_2)?;
-
-    //             // Place 2 ask orders at tick 50 and tick 60
-    //             mint_and_approve_token(1, admin, alice, exchange.address, amount * 2);
-    //             let ask_order_1 = exchange.place(alice, base_token, amount, false, ask_tick_1)?;
-    //             let ask_order_2 = exchange.place(alice, base_token, amount, false, ask_tick_2)?;
-
-    //             exchange.execute_block(Address::ZERO)?;
-
-    //             // Verify initial best ticks
-    //             let orderbook = exchange.books.at(book_key).read()?;
-    //             assert_eq!(orderbook.best_bid_tick, bid_tick_1);
-    //             assert_eq!(orderbook.best_ask_tick, ask_tick_1);
-
-    //             // Cancel one bid at tick 100
-    //             exchange.cancel(alice, bid_order_1)?;
-    //             // Verify best_bid_tick remains 100, best_ask_tick unchanged
-    //             let orderbook = exchange.books.at(book_key).read()?;
-    //             assert_eq!(orderbook.best_bid_tick, bid_tick_1);
-    //             assert_eq!(orderbook.best_ask_tick, ask_tick_1);
-
-    //             // Cancel remaining bid at tick 100
-    //             exchange.cancel(alice, bid_order_2)?;
-    //             // Verify best_bid_tick moved to 90, best_ask_tick unchanged
-    //             let orderbook = exchange.books.at(book_key).read()?;
-    //             assert_eq!(orderbook.best_bid_tick, bid_tick_2);
-    //             assert_eq!(orderbook.best_ask_tick, ask_tick_1);
-
-    //             // Cancel ask at tick 50
-    //             exchange.cancel(alice, ask_order_1)?;
-    //             // Verify best_ask_tick moved to 60, best_bid_tick unchanged
-    //             let orderbook = exchange.books.at(book_key).read()?;
-    //             assert_eq!(orderbook.best_bid_tick, bid_tick_2);
-    //             assert_eq!(orderbook.best_ask_tick, ask_tick_2);
-
-    //             // Cancel bid at tick 90
-    //             exchange.cancel(alice, bid_order_3)?;
-    //             // Verify best_bid_tick is now i16::MIN, best_ask_tick unchanged
-    //             let orderbook = exchange.books.at(book_key).read()?;
-    //             assert_eq!(orderbook.best_bid_tick, i16::MIN);
-    //             assert_eq!(orderbook.best_ask_tick, ask_tick_2);
-
-    //             // Cancel ask at tick 60
-    //             exchange.cancel(alice, ask_order_2)?;
-    //             // Verify best_ask_tick is now i16::MAX, best_bid_tick unchanged
-    //             let orderbook = exchange.books.at(book_key).read()?;
-    //             assert_eq!(orderbook.best_bid_tick, i16::MIN);
-    //             assert_eq!(orderbook.best_ask_tick, i16::MAX);
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_place_post_allegretto() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let alice = Address::random();
-    //             let admin = Address::random();
-
-    //             let (base_token, _quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, 1_000_000_000);
-    //             exchange.create_pair(base_token)?;
-
-    //             // Give alice base tokens
-    //             mint_and_approve_token(1, admin, alice, exchange.address, 1_000_000_000);
-
-    //             // Test invalid tick spacing
-    //             let invalid_tick = 15i16;
-    //             let result = exchange.place(alice, base_token, MIN_ORDER_AMOUNT, true, invalid_tick);
-
-    //             let error = result.unwrap_err();
-    //             assert!(matches!(
-    //                 error,
-    //                 TempoPrecompileError::StablecoinExchange(StablecoinExchangeError::InvalidTick(_))
-    //             ));
-
-    //             // Test valid tick spacing
-    //             let valid_tick = -20i16;
-    //             let result = exchange.place(alice, base_token, MIN_ORDER_AMOUNT, true, valid_tick);
-    //             assert!(result.is_ok());
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_place_flip_post_allegretto() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let alice = Address::random();
-    //             let admin = Address::random();
-
-    //             let (base_token, _quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, 1_000_000_000);
-    //             exchange.create_pair(base_token)?;
-
-    //             // Give alice base tokens
-    //             mint_and_approve_token(1, admin, alice, exchange.address, 1_000_000_000);
-
-    //             // Test invalid tick spacing
-    //             let invalid_tick = 15i16;
-    //             let invalid_flip_tick = 25i16;
-    //             let result = exchange.place_flip(
-    //                 alice,
-    //                 base_token,
-    //                 MIN_ORDER_AMOUNT,
-    //                 true,
-    //                 invalid_tick,
-    //                 invalid_flip_tick,
-    //             );
-
-    //             let error = result.unwrap_err();
-    //             assert!(matches!(
-    //                 error,
-    //                 TempoPrecompileError::StablecoinExchange(StablecoinExchangeError::InvalidTick(_))
-    //             ));
-
-    //             // Test valid tick spacing
-    //             let valid_tick = 20i16;
-    //             let invalid_flip_tick = 25i16;
-    //             let result = exchange.place_flip(
-    //                 alice,
-    //                 base_token,
-    //                 MIN_ORDER_AMOUNT,
-    //                 true,
-    //                 valid_tick,
-    //                 invalid_flip_tick,
-    //             );
-
-    //             let error = result.unwrap_err();
-    //             assert!(matches!(
-    //                 error,
-    //                 TempoPrecompileError::StablecoinExchange(StablecoinExchangeError::InvalidFlipTick(
-    //                     _
-    //                 ))
-    //             ));
-
-    //             let valid_flip_tick = 30i16;
-    //             let result = exchange.place_flip(
-    //                 alice,
-    //                 base_token,
-    //                 MIN_ORDER_AMOUNT,
-    //                 true,
-    //                 valid_tick,
-    //                 valid_flip_tick,
-    //             );
-    //             assert!(result.is_ok());
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_find_trade_path_rejects_non_tip20_post_allegretto() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let admin = Address::random();
-    //             let user = Address::random();
-
-    //             let (_, quote_token) =
-    //                 setup_test_tokens(admin, user, exchange.address, MIN_ORDER_AMOUNT);
-
-    //             let non_tip20_address = Address::random();
-    //             let result = exchange.find_trade_path(non_tip20_address, quote_token);
-    //             assert!(
-    //                 matches!(
-    //                     result,
-    //                     Err(TempoPrecompileError::StablecoinExchange(
-    //                         StablecoinExchangeError::InvalidToken(_)
-    //                     ))
-    //                 ),
-    //                 "Should return InvalidToken error for non-TIP20 token post-Allegretto"
-    //             );
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     #[test]
-    //     fn test_quote_exact_in_handles_both_directions() -> eyre::Result<()> {
-    //         let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
-    //         StorageContext::enter(&mut storage, || {
-    //             let mut exchange = StablecoinExchange::new();
-    //             exchange.initialize()?;
-
-    //             let alice = Address::random();
-    //             let admin = Address::random();
-    //             let amount = MIN_ORDER_AMOUNT;
-    //             let tick = 100_i16;
-    //             let price = orderbook::tick_to_price(tick);
-
-    //             // Calculate escrow for bid order (quote needed to buy `amount` base)
-    //             let bid_escrow = (amount * price as u128) / orderbook::PRICE_SCALE as u128;
-
-    //             let (base_token, quote_token) =
-    //                 setup_test_tokens(admin, alice, exchange.address, bid_escrow);
-
-    //             TIP20Setup::config(base_token)
-    //                 .with_mint(alice, amount)
-    //                 .with_approval(alice, exchange.address, amount)
-    //                 .apply()?;
-
-    //             exchange.create_pair(base_token)?;
-    //             let book_key = compute_book_key(base_token, quote_token);
-
-    //             // Place a bid order (alice wants to buy base with quote)
-    //             exchange.place(alice, base_token, amount, true, tick)?;
-    //             exchange.execute_block(Address::ZERO)?;
-
-    //             // Test is_bid == true: base -> quote
-    //             let quoted_out_bid = exchange.quote_exact_in(book_key, amount, true)?;
-    //             let expected_quote_out = amount
-    //                 .checked_mul(price as u128)
-    //                 .and_then(|v| v.checked_div(orderbook::PRICE_SCALE as u128))
-    //                 .expect("calculation");
-    //             assert_eq!(
-    //                 quoted_out_bid, expected_quote_out,
-    //                 "quote_exact_in with is_bid=true should return quote amount"
-    //             );
-
-    //             // Place an ask order (alice wants to sell base for quote)
-    //             exchange.place(alice, base_token, amount, false, tick)?;
-    //             exchange.execute_block(Address::ZERO)?;
-
-    //             // Test is_bid == false: quote -> base
-    //             let quote_in = (amount * price as u128) / orderbook::PRICE_SCALE as u128;
-    //             let quoted_out_ask = exchange.quote_exact_in(book_key, quote_in, false)?;
-    //             let expected_base_out = quote_in
-    //                 .checked_mul(orderbook::PRICE_SCALE as u128)
-    //                 .and_then(|v| v.checked_div(price as u128))
-    //                 .expect("calculation");
-    //             assert_eq!(
-    //                 quoted_out_ask, expected_base_out,
-    //                 "quote_exact_in with is_bid=false should return base amount"
-    //             );
-
-    //             Ok(())
-    //         })
-    //     }
-
-    //     // #[test]
-    //     // fn test_place_auto_creates_pair_post_allegretto() -> Result<()> {
-    //     //     let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
-    //     //     StorageContext::enter(&mut storage, || {
-    //     //         let mut exchange = StablecoinExchange::new();
-    //     //         exchange.initialize()?;
-    //     //         let admin = Address::random();
-    //     //         let user = Address::random();
-
-    //     //         // Setup tokens
-    //     //         let (base_token, quote_token) =
-    //     //             setup_test_tokens(admin, user, exchange.address, 100_000_000);
-
-    //     //         // Before placing order, verify pair doesn't exist
-    //     //         let book_key = compute_book_key(base_token, quote_token);
-    //     //         let book_before = exchange.books.at(book_key).read()?;
-    //     //         assert!(book_before.base.is_zero(),);
-
-    //     //         // Transfer tokens to exchange first
-    //     //         let mut base = TIP20Token::new(1);
-    //     //         base.transfer(
-    //     //             user,
-    //     //             ITIP20::transferCall {
-    //     //                 to: exchange.address,
-    //     //                 amount: U256::from(MIN_ORDER_AMOUNT),
-    //     //             },
-    //     //         )
-    //     //         .expect("Base token transfer failed");
-
-    //     //         // Place an order which should also create the pair
-    //     //         exchange.place(user, base_token, MIN_ORDER_AMOUNT, true, 0)?;
-
-    //     //         let book_after = exchange.books.at(book_key).read()?;
-    //     //         assert_eq!(book_after.base, base_token);
-
-    //     //         // Verify PairCreated event was emitted (along with OrderPlaced)
-    //     //         let events = &exchange.storage.events[&exchange.address];
-    //     //         assert_eq!(events.len(), 2);
-    //     //         assert_eq!(
-    //     //             events[0],
-    //     //             StablecoinExchangeEvents::PairCreated(IStablecoinExchange::PairCreated {
-    //     //                 key: book_key,
-    //     //                 base: base_token,
-    //     //                 quote: quote_token,
-    //     //             })
-    //     //             .into_log_data()
-    //     //         );
-
-    //     //         Ok(())
-    //     //     })
-    //     // }
-
-    //     // #[test]
-    //     // fn test_place_flip_auto_creates_pair_post_allegretto() -> Result<()> {
-    //     //     let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
-    //     //     StorageContext::enter(&mut storage, || {
-    //     //         let mut exchange = StablecoinExchange::new();
-    //     //         exchange.initialize()?;
-
-    //     //         let admin = Address::random();
-    //     //         let user = Address::random();
-
-    //     //         // Setup tokens
-    //     //         let (base_token, quote_token) =
-    //     //             setup_test_tokens(admin, user, exchange.address, 100_000_000);
-
-    //     //         // Before placing flip order, verify pair doesn't exist
-    //     //         let book_key = compute_book_key(base_token, quote_token);
-    //     //         let book_before = exchange.books.at(book_key).read()?;
-    //     //         assert!(book_before.base.is_zero(),);
-
-    //     //         // Transfer tokens to exchange first
-    //     //         let mut base = TIP20Token::new(1);
-    //     //         base.transfer(
-    //     //             user,
-    //     //             ITIP20::transferCall {
-    //     //                 to: exchange.address,
-    //     //                 amount: U256::from(MIN_ORDER_AMOUNT),
-    //     //             },
-    //     //         )
-    //     //         .expect("Base token transfer failed");
-
-    //     //         // Place a flip order which should also create the pair
-    //     //         exchange.place_flip(user, base_token, MIN_ORDER_AMOUNT, true, 0, 10)?;
-
-    //     //         let book_after = exchange.books.at(book_key).read()?;
-    //     //         assert_eq!(book_after.base, base_token);
-
-    //     //         // Verify PairCreated event was emitted (along with FlipOrderPlaced)
-    //     //         let events = &exchange.storage.events[&exchange.address];
-    //     //         assert_eq!(events.len(), 2);
-    //     //         assert_eq!(
-    //     //             events[0],
-    //     //             StablecoinExchangeEvents::PairCreated(IStablecoinExchange::PairCreated {
-    //     //                 key: book_key,
-    //     //                 base: base_token,
-    //     //                 quote: quote_token,
-    //     //             })
-    //     //             .into_log_data()
-    //     //         );
-
-    //     //         Ok(())
-    //     //     })
-    //     // }
+    #[test]
+    fn test_pair_created() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+            let alice = Address::random();
+
+            let min_order_amount = MIN_ORDER_AMOUNT;
+            // Setup tokens
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, min_order_amount)?;
+
+            // Create the pair
+            let key = exchange
+                .create_pair(base_token)
+                .expect("Could not create pair");
+
+            // Verify PairCreated event was emitted
+            exchange.assert_emited_events(vec![StablecoinExchangeEvents::PairCreated(
+                IStablecoinExchange::PairCreated {
+                    key,
+                    base: base_token,
+                    quote: quote_token,
+                },
+            )]);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_pair_already_created() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+            let alice = Address::random();
+
+            let min_order_amount = MIN_ORDER_AMOUNT;
+            // Setup tokens
+            let (base_token, _) =
+                setup_test_tokens(admin, alice, exchange.address, min_order_amount)?;
+
+            exchange
+                .create_pair(base_token)
+                .expect("Could not create pair");
+
+            let result = exchange.create_pair(base_token);
+            assert_eq!(
+                result,
+                Err(StablecoinExchangeError::pair_already_exists().into())
+            );
+
+            Ok(())
+        })
+    }
+
+    /// Helper to verify a single hop in a route
+    fn verify_hop(hop: (B256, bool), token_in: Address, token_out: Address) -> eyre::Result<()> {
+        let (book_key, base_for_quote) = hop;
+        let expected_book_key = compute_book_key(token_in, token_out);
+        assert_eq!(book_key, expected_book_key, "Book key should match");
+
+        let exchange = StablecoinExchange::new();
+        let orderbook = exchange.books.at(book_key).read()?;
+        let expected_direction = token_in == orderbook.base;
+        assert_eq!(
+            base_for_quote, expected_direction,
+            "Direction should be correct: token_in={}, base={}, base_for_quote={}",
+            token_in, orderbook.base, base_for_quote
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_find_path_to_root() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+
+            // Setup: PathUSD <- USDC <- TokenA
+            let usdc = TIP20Setup::create("USDC", "USDC", admin).apply()?;
+            let token_a = TIP20Setup::create("TokenA", "TKA", admin)
+                .quote_token(usdc.address())
+                .apply()?;
+
+            // Find path from TokenA to root
+            let path = exchange.find_path_to_root(token_a.address())?;
+
+            // Expected: [TokenA, USDC, PathUSD]
+            assert_eq!(path.len(), 3);
+            assert_eq!(path[0], token_a.address());
+            assert_eq!(path[1], usdc.address());
+            assert_eq!(path[2], PATH_USD_ADDRESS);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_find_trade_path_same_token_errors() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+            let user = Address::random();
+
+            let min_order_amount = MIN_ORDER_AMOUNT;
+            let (token, _) = setup_test_tokens(admin, user, exchange.address, min_order_amount)?;
+
+            // Trading same token should error with IdenticalTokens
+            let result = exchange.find_trade_path(token, token);
+            assert_eq!(
+                result,
+                Err(StablecoinExchangeError::identical_tokens().into()),
+                "Should return IdenticalTokens error when token_in == token_out"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_find_trade_path_direct_pair() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+            let user = Address::random();
+
+            let min_order_amount = MIN_ORDER_AMOUNT;
+            // Setup: PathUSD <- Token (direct pair)
+            let (token, path_usd) =
+                setup_test_tokens(admin, user, exchange.address, min_order_amount)?;
+
+            // Create the pair first
+            exchange.create_pair(token).expect("Failed to create pair");
+
+            // Trade token -> path_usd (direct pair)
+            let route = exchange
+                .find_trade_path(token, path_usd)
+                .expect("Should find direct pair");
+
+            // Expected: 1 hop (token -> path_usd)
+            assert_eq!(route.len(), 1, "Should have 1 hop for direct pair");
+            verify_hop(route[0], token, path_usd)?;
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_find_trade_path_reverse_pair() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+            let user = Address::random();
+
+            let min_order_amount = MIN_ORDER_AMOUNT;
+            // Setup: PathUSD <- Token
+            let (token, path_usd) =
+                setup_test_tokens(admin, user, exchange.address, min_order_amount)?;
+
+            // Create the pair first
+            exchange.create_pair(token).expect("Failed to create pair");
+
+            // Trade path_usd -> token (reverse direction)
+            let route = exchange
+                .find_trade_path(path_usd, token)
+                .expect("Should find reverse pair");
+
+            // Expected: 1 hop (path_usd -> token)
+            assert_eq!(route.len(), 1, "Should have 1 hop for reverse pair");
+            verify_hop(route[0], path_usd, token)?;
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_find_trade_path_two_hop_siblings() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+
+            // Setup: PathUSD <- USDC
+            //        PathUSD <- EURC
+            // (USDC and EURC are siblings, both have PathUSD as quote)
+            let usdc = TIP20Setup::create("USDC", "USDC", admin).apply()?;
+            let eurc = TIP20Setup::create("EURC", "EURC", admin).apply()?;
+
+            // Create pairs first
+            exchange.create_pair(usdc.address())?;
+            exchange.create_pair(eurc.address())?;
+
+            // Trade USDC -> EURC should go through PathUSD
+            let route = exchange.find_trade_path(usdc.address(), eurc.address())?;
+
+            // Expected: 2 hops (USDC -> PathUSD, PathUSD -> EURC)
+            assert_eq!(route.len(), 2, "Should have 2 hops for sibling tokens");
+            verify_hop(route[0], usdc.address(), PATH_USD_ADDRESS)?;
+            verify_hop(route[1], PATH_USD_ADDRESS, eurc.address())?;
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_quote_exact_in_multi_hop() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+            let alice = Address::random();
+            let min_order_amount = MIN_ORDER_AMOUNT;
+            let min_order_amount_x10 = U256::from(MIN_ORDER_AMOUNT * 10);
+
+            // Setup: PathUSD <- USDC
+            //        PathUSD <- EURC
+            let _path_usd = TIP20Setup::path_usd(admin)
+                .with_issuer(admin)
+                .with_mint(alice, min_order_amount_x10)
+                .with_approval(alice, exchange.address, min_order_amount_x10)
+                .apply()?;
+            let usdc = TIP20Setup::create("USDC", "USDC", admin)
+                .with_issuer(admin)
+                .with_mint(alice, min_order_amount_x10)
+                .with_approval(alice, exchange.address, min_order_amount_x10)
+                .apply()?;
+            let eurc = TIP20Setup::create("EURC", "EURC", admin)
+                .with_issuer(admin)
+                .with_mint(alice, min_order_amount_x10)
+                .with_approval(alice, exchange.address, min_order_amount_x10)
+                .apply()?;
+
+            // Create pairs
+            exchange.create_pair(usdc.address())?;
+            exchange.create_pair(eurc.address())?;
+
+            // Place orders to provide liquidity at 1:1 rate (tick 0)
+            // For trade USDC -> PathUSD -> EURC:
+            // - First hop needs: bid on USDC (someone buying USDC with PathUSD)
+            // - Second hop needs: ask on EURC (someone selling EURC for PathUSD)
+
+            // USDC bid: buy USDC with PathUSD
+            exchange.place(alice, usdc.address(), min_order_amount * 5, true, 0)?;
+
+            // EURC ask: sell EURC for PathUSD
+            exchange.place(alice, eurc.address(), min_order_amount * 5, false, 0)?;
+
+            exchange.execute_block(Address::ZERO)?;
+
+            // Quote multi-hop: USDC -> PathUSD -> EURC
+            let amount_in = min_order_amount;
+            let amount_out =
+                exchange.quote_swap_exact_amount_in(usdc.address(), eurc.address(), amount_in)?;
+
+            // With 1:1 rates at each hop, output should equal input
+            assert_eq!(
+                amount_out, amount_in,
+                "With 1:1 rates, output should equal input"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_quote_exact_out_multi_hop() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+            let alice = Address::random();
+            let min_order_amount = MIN_ORDER_AMOUNT;
+            let min_order_amount_x10 = U256::from(MIN_ORDER_AMOUNT * 10);
+
+            // Setup: PathUSD <- USDC
+            //        PathUSD <- EURC
+            let _path_usd = TIP20Setup::path_usd(admin)
+                .with_issuer(admin)
+                .with_mint(alice, min_order_amount_x10)
+                .with_approval(alice, exchange.address, min_order_amount_x10)
+                .apply()?;
+            let usdc = TIP20Setup::create("USDC", "USDC", admin)
+                .with_issuer(admin)
+                .with_mint(alice, min_order_amount_x10)
+                .with_approval(alice, exchange.address, min_order_amount_x10)
+                .apply()?;
+            let eurc = TIP20Setup::create("EURC", "EURC", admin)
+                .with_issuer(admin)
+                .with_mint(alice, min_order_amount_x10)
+                .with_approval(alice, exchange.address, min_order_amount_x10)
+                .apply()?;
+
+            // Create pairs (same as previous test)
+            exchange.create_pair(usdc.address())?;
+            exchange.create_pair(eurc.address())?;
+
+            // Place orders at 1:1 rate
+            exchange.place(alice, usdc.address(), min_order_amount * 5, true, 0)?;
+            exchange.place(alice, eurc.address(), min_order_amount * 5, false, 0)?;
+            exchange.execute_block(Address::ZERO)?;
+
+            // Quote multi-hop for exact output: USDC -> PathUSD -> EURC
+            let amount_out = min_order_amount;
+            let amount_in =
+                exchange.quote_swap_exact_amount_out(usdc.address(), eurc.address(), amount_out)?;
+
+            // With 1:1 rates at each hop, input should equal output
+            assert_eq!(
+                amount_in, amount_out,
+                "With 1:1 rates, input should equal output"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_swap_exact_in_multi_hop_transitory_balances() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+            let alice = Address::random();
+            let bob = Address::random();
+
+            let min_order_amount = MIN_ORDER_AMOUNT;
+            let min_order_amount_x10 = U256::from(MIN_ORDER_AMOUNT * 10);
+
+            // Setup: PathUSD <- USDC <- EURC
+            let path_usd = TIP20Setup::path_usd(admin)
+                .with_issuer(admin)
+                // Setup alice as a liquidity provider
+                .with_mint(alice, min_order_amount_x10)
+                .with_approval(alice, exchange.address, min_order_amount_x10)
+                .apply()?;
+
+            let usdc = TIP20Setup::create("USDC", "USDC", admin)
+                .with_issuer(admin)
+                // Setup alice as a liquidity provider
+                .with_mint(alice, min_order_amount_x10)
+                .with_approval(alice, exchange.address, min_order_amount_x10)
+                // Setup bob as a trader
+                .with_mint(bob, min_order_amount_x10)
+                .with_approval(bob, exchange.address, min_order_amount_x10)
+                .apply()?;
+
+            let eurc = TIP20Setup::create("EURC", "EURC", admin)
+                .with_issuer(admin)
+                // Setup alice as a liquidity provider
+                .with_mint(alice, min_order_amount_x10)
+                .with_approval(alice, exchange.address, min_order_amount_x10)
+                .apply()?;
+
+            // Create pairs
+            exchange.create_pair(usdc.address())?;
+            exchange.create_pair(eurc.address())?;
+
+            // Place liquidity orders at 1:1
+            exchange.place(alice, usdc.address(), min_order_amount * 5, true, 0)?;
+            exchange.place(alice, eurc.address(), min_order_amount * 5, false, 0)?;
+            exchange.execute_block(Address::ZERO)?;
+
+            // Check bob's balances before swap
+            let bob_usdc_before = usdc.balance_of(ITIP20::balanceOfCall { account: bob })?;
+            let bob_eurc_before = eurc.balance_of(ITIP20::balanceOfCall { account: bob })?;
+
+            // Execute multi-hop swap: USDC -> PathUSD -> EURC
+            let amount_in = min_order_amount;
+            let amount_out = exchange.swap_exact_amount_in(
+                bob,
+                usdc.address(),
+                eurc.address(),
+                amount_in,
+                0, // min_amount_out
+            )?;
+
+            // Check bob's balances after swap
+            let bob_usdc_after = usdc.balance_of(ITIP20::balanceOfCall { account: bob })?;
+            let bob_eurc_after = eurc.balance_of(ITIP20::balanceOfCall { account: bob })?;
+
+            // Verify bob spent USDC and received EURC
+            assert_eq!(
+                bob_usdc_before - bob_usdc_after,
+                U256::from(amount_in),
+                "Bob should have spent exact amount_in USDC"
+            );
+            assert_eq!(
+                bob_eurc_after - bob_eurc_before,
+                U256::from(amount_out),
+                "Bob should have received amount_out EURC"
+            );
+
+            // Verify bob has ZERO PathUSD (intermediate token should be transitory)
+            let bob_path_usd_wallet =
+                path_usd.balance_of(ITIP20::balanceOfCall { account: bob })?;
+            assert_eq!(
+                bob_path_usd_wallet,
+                U256::ZERO,
+                "Bob should have ZERO PathUSD in wallet (transitory)"
+            );
+
+            let bob_path_usd_exchange = exchange.balance_of(bob, path_usd.address())?;
+            assert_eq!(
+                bob_path_usd_exchange, 0,
+                "Bob should have ZERO PathUSD on exchange (transitory)"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_swap_exact_out_multi_hop_transitory_balances() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+            let alice = Address::random();
+            let bob = Address::random();
+
+            let min_order_amount = MIN_ORDER_AMOUNT;
+            let min_order_amount_x10 = U256::from(MIN_ORDER_AMOUNT * 10);
+
+            // Setup: PathUSD <- USDC <- EURC
+            let path_usd = TIP20Setup::path_usd(admin)
+                .with_issuer(admin)
+                // Setup alice as a liquidity provider
+                .with_mint(alice, min_order_amount_x10)
+                .with_approval(alice, exchange.address, min_order_amount_x10)
+                .apply()?;
+
+            let usdc = TIP20Setup::create("USDC", "USDC", admin)
+                .with_issuer(admin)
+                // Setup alice as a liquidity provider
+                .with_mint(alice, min_order_amount_x10)
+                .with_approval(alice, exchange.address, min_order_amount_x10)
+                // Setup bob as a trader
+                .with_mint(bob, min_order_amount_x10)
+                .with_approval(bob, exchange.address, min_order_amount_x10)
+                .apply()?;
+
+            let eurc = TIP20Setup::create("EURC", "EURC", admin)
+                .with_issuer(admin)
+                // Setup alice as a liquidity provider
+                .with_mint(alice, min_order_amount_x10)
+                .with_approval(alice, exchange.address, min_order_amount_x10)
+                .apply()?;
+
+            // Create pairs
+            exchange.create_pair(usdc.address())?;
+            exchange.create_pair(eurc.address())?;
+
+            // Place liquidity orders at 1:1
+            exchange.place(alice, usdc.address(), min_order_amount * 5, true, 0)?;
+            exchange.place(alice, eurc.address(), min_order_amount * 5, false, 0)?;
+            exchange.execute_block(Address::ZERO)?;
+
+            // Check bob's balances before swap
+            let bob_usdc_before = usdc.balance_of(ITIP20::balanceOfCall { account: bob })?;
+            let bob_eurc_before = eurc.balance_of(ITIP20::balanceOfCall { account: bob })?;
+
+            // Execute multi-hop swap: USDC -> PathUSD -> EURC (exact output)
+            let amount_out = 90u128;
+            let amount_in = exchange.swap_exact_amount_out(
+                bob,
+                usdc.address(),
+                eurc.address(),
+                amount_out,
+                u128::MAX, // max_amount_in
+            )?;
+
+            // Check bob's balances after swap
+            let bob_usdc_after = usdc.balance_of(ITIP20::balanceOfCall { account: bob })?;
+            let bob_eurc_after = eurc.balance_of(ITIP20::balanceOfCall { account: bob })?;
+
+            // Verify bob spent USDC and received exact EURC
+            assert_eq!(
+                bob_usdc_before - bob_usdc_after,
+                U256::from(amount_in),
+                "Bob should have spent amount_in USDC"
+            );
+            assert_eq!(
+                bob_eurc_after - bob_eurc_before,
+                U256::from(amount_out),
+                "Bob should have received exact amount_out EURC"
+            );
+
+            // Verify bob has ZERO PathUSD (intermediate token should be transitory)
+            let bob_path_usd_wallet =
+                path_usd.balance_of(ITIP20::balanceOfCall { account: bob })?;
+            assert_eq!(
+                bob_path_usd_wallet,
+                U256::ZERO,
+                "Bob should have ZERO PathUSD in wallet (transitory)"
+            );
+
+            let bob_path_usd_exchange = exchange
+                .balance_of(bob, path_usd.address())
+                .expect("Failed to get bob's PathUSD exchange balance");
+            assert_eq!(
+                bob_path_usd_exchange, 0,
+                "Bob should have ZERO PathUSD on exchange (transitory)"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_create_pair_invalid_currency() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let admin = Address::random();
+
+            // Create EUR token with PATH USD as quote (valid non-USD token)
+            let token_0 = TIP20Setup::create("EuroToken", "EURO", admin)
+                .currency("EUR")
+                .apply()?;
+
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            // Test: create_pair should reject non-USD token (EUR token has EUR currency)
+            let result = exchange.create_pair(token_0.address());
+            assert!(matches!(
+                result,
+                Err(TempoPrecompileError::TIP20(TIP20Error::InvalidCurrency(_)))
+            ));
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_max_in_check_pre_moderato() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let alice = Address::random();
+            let bob = Address::random();
+            let admin = Address::random();
+
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, 200_000_000u128)?;
+            exchange.create_pair(base_token)?;
+
+            let tick_50 = 50i16;
+            let tick_100 = 100i16;
+            let order_amount = MIN_ORDER_AMOUNT;
+
+            exchange.place(alice, base_token, order_amount, false, tick_50)?;
+            exchange.place(alice, base_token, order_amount, false, tick_100)?;
+            exchange.execute_block(Address::ZERO)?;
+
+            exchange.set_balance(bob, quote_token, 200_000_000u128)?;
+
+            let price_50 = orderbook::tick_to_price(tick_50);
+            let quote_for_first =
+                (order_amount * price_50 as u128) / orderbook::PRICE_SCALE as u128;
+            let max_in_between = quote_for_first + 500;
+
+            let result = exchange.swap_exact_amount_out(
+                bob,
+                quote_token,
+                base_token,
+                order_amount + 999,
+                max_in_between,
+            );
+            assert!(result.is_err());
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_create_pair_rejects_non_tip20_base_post_moderato() -> eyre::Result<()> {
+        // Test with Moderato hardfork (validation should be enforced)
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Moderato);
+        StorageContext::enter(&mut storage, || {
+            let admin = Address::random();
+            let _path_usd = TIP20Setup::path_usd(admin).apply()?;
+
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            // Test: create_pair should reject non-TIP20 address (random address without TIP20 prefix)
+            let non_tip20_address = Address::random();
+            let result = exchange.create_pair(non_tip20_address);
+            assert!(matches!(
+                result,
+                Err(TempoPrecompileError::StablecoinExchange(
+                    StablecoinExchangeError::InvalidBaseToken(_)
+                ))
+            ));
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_max_in_check_post_moderato() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Moderato);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let alice = Address::random();
+            let bob = Address::random();
+            let admin = Address::random();
+
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, 200_000_000u128)?;
+            exchange.create_pair(base_token)?;
+
+            let tick_50 = 50i16;
+            let tick_100 = 100i16;
+            let order_amount = MIN_ORDER_AMOUNT;
+
+            exchange.place(alice, base_token, order_amount, false, tick_50)?;
+            exchange.place(alice, base_token, order_amount, false, tick_100)?;
+            exchange.execute_block(Address::ZERO)?;
+
+            exchange.set_balance(bob, quote_token, 200_000_000u128)?;
+
+            let price_50 = orderbook::tick_to_price(tick_50);
+            let price_100 = orderbook::tick_to_price(tick_100);
+            let quote_for_first =
+                (order_amount * price_50 as u128) / orderbook::PRICE_SCALE as u128;
+            let quote_for_partial_second =
+                (999 * price_100 as u128) / orderbook::PRICE_SCALE as u128;
+            let total_needed = quote_for_first + quote_for_partial_second;
+
+            let result = exchange.swap_exact_amount_out(
+                bob,
+                quote_token,
+                base_token,
+                order_amount + 999,
+                total_needed,
+            );
+            assert!(result.is_ok());
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_create_pair_allows_non_tip20_base_pre_moderato() -> eyre::Result<()> {
+        // Test with Adagio (pre-Moderato) - validation should not be enforced
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Adagio);
+        StorageContext::enter(&mut storage, || {
+            let admin = Address::random();
+            let _path_usd = TIP20Setup::path_usd(admin).apply()?;
+
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            // Test: create_pair should not reject non-TIP20 address pre-Moderato
+            // This will fail with a different error (trying to read quote_token from non-TIP20)
+            // but NOT the InvalidQuoteToken error from the is_tip20 check
+            let non_tip20_address = Address::random();
+            let result = exchange.create_pair(non_tip20_address);
+
+            // Should fail but not with InvalidQuoteToken error (that check is skipped pre-Moderato)
+            assert!(result.is_err());
+            assert!(!matches!(
+                result,
+                Err(TempoPrecompileError::TIP20(TIP20Error::InvalidQuoteToken(
+                    _
+                )))
+            ));
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_exact_out_bid_side_pre_moderato() -> eyre::Result<()> {
+        // Pre-Moderato: old behavior with unit mismatch causes MaxInputExceeded
+        let mut storage = HashMapStorageProvider::new(1); // Default is Adagio
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let alice = Address::random();
+            let bob = Address::random();
+            let admin = Address::random();
+
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, 1_000_000_000u128)?;
+            exchange.create_pair(base_token)?;
+
+            let tick = 1000i16;
+            let price = tick_to_price(tick);
+            let order_amount_base = MIN_ORDER_AMOUNT;
+
+            exchange.place(alice, base_token, order_amount_base, true, tick)?;
+            exchange.execute_block(Address::ZERO)?;
+
+            let amount_out_quote = 5_000_000u128;
+            let base_needed = (amount_out_quote * PRICE_SCALE as u128) / price as u128;
+            let max_amount_in = base_needed + 10000;
+
+            exchange.set_balance(bob, base_token, max_amount_in * 2)?;
+
+            // Pre-Moderato: should fail with MaxInputExceeded due to unit mismatch
+            let result = exchange.swap_exact_amount_out(
+                bob,
+                base_token,
+                quote_token,
+                amount_out_quote,
+                max_amount_in,
+            );
+
+            assert!(
+                matches!(
+                    result,
+                    Err(TempoPrecompileError::StablecoinExchange(
+                        StablecoinExchangeError::MaxInputExceeded(_)
+                    ))
+                ),
+                "Pre-Moderato should fail with MaxInputExceeded"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_exact_out_bid_side_post_moderato() -> eyre::Result<()> {
+        // Post-Moderato: new behavior with correct unit conversion
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Moderato);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let alice = Address::random();
+            let bob = Address::random();
+            let admin = Address::random();
+
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, 1_000_000_000u128)?;
+            exchange.create_pair(base_token)?;
+
+            let tick = 1000i16;
+            let price = tick_to_price(tick);
+            let order_amount_base = MIN_ORDER_AMOUNT;
+
+            exchange.place(alice, base_token, order_amount_base, true, tick)?;
+            exchange.execute_block(Address::ZERO)?;
+
+            let amount_out_quote = 5_000_000u128;
+            let base_needed = (amount_out_quote * PRICE_SCALE as u128) / price as u128;
+            let max_amount_in = base_needed + 10000;
+
+            exchange.set_balance(bob, base_token, max_amount_in * 2)?;
+
+            let _amount_in = exchange.swap_exact_amount_out(
+                bob,
+                base_token,
+                quote_token,
+                amount_out_quote,
+                max_amount_in,
+            )?;
+
+            // Verify Bob got exactly the quote amount requested
+            let bob_quote_balance = TIP20Token::from_address(quote_token)
+                .balance_of(ITIP20::balanceOfCall { account: bob })?;
+            assert_eq!(bob_quote_balance, U256::from(amount_out_quote));
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_exact_in_ask_side_pre_moderato() -> eyre::Result<()> {
+        // Pre-Moderato: old behavior treats quote amount as base amount
+        let mut storage = HashMapStorageProvider::new(1); // Default is Adagio
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let alice = Address::random();
+            let bob = Address::random();
+            let admin = Address::random();
+
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, 1_000_000_000u128)?;
+            exchange.create_pair(base_token)?;
+
+            let tick = 1000i16;
+            let price = tick_to_price(tick);
+            let order_amount_base = MIN_ORDER_AMOUNT;
+
+            exchange.place(alice, base_token, order_amount_base, false, tick)?;
+            exchange.execute_block(Address::ZERO)?;
+
+            let amount_in_quote = 5_000_000u128;
+            let min_amount_out = 0;
+
+            exchange.set_balance(bob, quote_token, amount_in_quote * 2)?;
+
+            let amount_out = exchange.swap_exact_amount_in(
+                bob,
+                quote_token,
+                base_token,
+                amount_in_quote,
+                min_amount_out,
+            )?;
+
+            // Pre-Moderato: returns incorrect amount (treats quote as base)
+            // It will return amount_in_quote (5M) instead of the correct converted amount
+            assert_eq!(amount_out, amount_in_quote);
+            assert_ne!(
+                amount_out,
+                (amount_in_quote * PRICE_SCALE as u128) / price as u128
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_exact_in_ask_side_post_moderato() -> eyre::Result<()> {
+        // Post-Moderato: new behavior with correct unit conversion
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Moderato);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let alice = Address::random();
+            let bob = Address::random();
+            let admin = Address::random();
+
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, 1_000_000_000u128)?;
+            exchange.create_pair(base_token)?;
+
+            let tick = 1000i16;
+            let price = tick_to_price(tick);
+            let order_amount_base = MIN_ORDER_AMOUNT;
+
+            exchange.place(alice, base_token, order_amount_base, false, tick)?;
+            exchange.execute_block(Address::ZERO)?;
+
+            let amount_in_quote = 5_000_000u128;
+            let min_amount_out = 0;
+
+            exchange.set_balance(bob, quote_token, amount_in_quote * 2)?;
+
+            let amount_out = exchange.swap_exact_amount_in(
+                bob,
+                quote_token,
+                base_token,
+                amount_in_quote,
+                min_amount_out,
+            )?;
+
+            // Post-Moderato: returns correct converted amount
+            let expected_base = (amount_in_quote * PRICE_SCALE as u128) / price as u128;
+            assert_eq!(amount_out, expected_base);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_clear_order_post_allegretto() -> eyre::Result<()> {
+        const AMOUNT: u128 = 1_000_000_000;
+
+        // Test that fill_order properly clears the prev pointer when advancing to the next order
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let alice = Address::random();
+            let bob = Address::random();
+            let carol = Address::random();
+            let admin = Address::random();
+
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, AMOUNT)?;
+            exchange.create_pair(base_token)?;
+
+            // Give bob base tokens and carol quote tokens
+            TIP20Setup::config(base_token)
+                .with_mint(bob, U256::from(AMOUNT))
+                .with_approval(bob, exchange.address, U256::from(AMOUNT))
+                .apply()?;
+            TIP20Setup::config(quote_token)
+                .with_mint(carol, U256::from(AMOUNT))
+                .with_approval(carol, exchange.address, U256::from(AMOUNT))
+                .apply()?;
+
+            let tick = 100i16;
+
+            // Place two ask orders at the same tick: Order 1 (alice), Order 2 (bob)
+            let order1_amount = MIN_ORDER_AMOUNT;
+            let order2_amount = MIN_ORDER_AMOUNT;
+
+            let order1_id = exchange.place(alice, base_token, order1_amount, false, tick)?;
+            let order2_id = exchange.place(bob, base_token, order2_amount, false, tick)?;
+            exchange.execute_block(Address::ZERO)?;
+
+            // Verify linked list is set up correctly
+            let order1 = exchange.orders.at(order1_id).read()?;
+            let order2 = exchange.orders.at(order2_id).read()?;
+            assert_eq!(order1.next(), order2_id);
+            assert_eq!(order2.prev(), order1_id);
+
+            // Swap to fill order1 completely
+            let swap_amount = order1_amount;
+            exchange.swap_exact_amount_out(
+                carol,
+                quote_token,
+                base_token,
+                swap_amount,
+                u128::MAX,
+            )?;
+
+            // After filling order1, order2 should be the new head with prev = 0
+            let order2_after = exchange.orders.at(order2_id).read()?;
+            assert_eq!(
+                order2_after.prev(),
+                0,
+                "New head order should have prev = 0 after previous head was filled"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_best_tick_updates_on_fill() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let alice = Address::random();
+            let bob = Address::random();
+            let admin = Address::random();
+            let amount = MIN_ORDER_AMOUNT;
+
+            // Use different ticks for bids (100, 90) and asks (50, 60)
+            let (bid_tick_1, bid_tick_2) = (100_i16, 90_i16); // (best, second best)
+            let (ask_tick_1, ask_tick_2) = (50_i16, 60_i16); // (best, second best)
+
+            // Calculate escrow for all orders
+            let bid_price_1 = orderbook::tick_to_price(bid_tick_1);
+            let bid_price_2 = orderbook::tick_to_price(bid_tick_2);
+            let bid_escrow_1 = (amount * bid_price_1 as u128) / orderbook::PRICE_SCALE as u128;
+            let bid_escrow_2 = (amount * bid_price_2 as u128) / orderbook::PRICE_SCALE as u128;
+            let total_bid_escrow = bid_escrow_1 + bid_escrow_2;
+
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, total_bid_escrow)?;
+            exchange.create_pair(base_token)?;
+            let book_key = compute_book_key(base_token, quote_token);
+
+            // Place bid orders at two different ticks
+            exchange.place(alice, base_token, amount, true, bid_tick_1)?;
+            exchange.place(alice, base_token, amount, true, bid_tick_2)?;
+
+            // Place ask orders at two different ticks
+            TIP20Setup::config(base_token)
+                .with_mint(alice, U256::from(amount * 2))
+                .with_approval(alice, exchange.address, U256::from(amount * 2))
+                .apply()?;
+            exchange.place(alice, base_token, amount, false, ask_tick_1)?;
+            exchange.place(alice, base_token, amount, false, ask_tick_2)?;
+
+            exchange.execute_block(Address::ZERO)?;
+
+            // Verify initial best ticks
+            let orderbook = exchange.books.at(book_key).read()?;
+            assert_eq!(orderbook.best_bid_tick, bid_tick_1);
+            assert_eq!(orderbook.best_ask_tick, ask_tick_1);
+
+            // Fill all bids at tick 100 (bob sells base)
+            exchange.set_balance(bob, base_token, amount)?;
+            exchange.swap_exact_amount_in(bob, base_token, quote_token, amount, 0)?;
+            // Verify best_bid_tick moved to tick 90, best_ask_tick unchanged
+            let orderbook = exchange.books.at(book_key).read()?;
+            assert_eq!(orderbook.best_bid_tick, bid_tick_2);
+            assert_eq!(orderbook.best_ask_tick, ask_tick_1);
+
+            // Fill remaining bid at tick 90
+            exchange.set_balance(bob, base_token, amount)?;
+            exchange.swap_exact_amount_in(bob, base_token, quote_token, amount, 0)?;
+            // Verify best_bid_tick is now i16::MIN, best_ask_tick unchanged
+            let orderbook = exchange.books.at(book_key).read()?;
+            assert_eq!(orderbook.best_bid_tick, i16::MIN);
+            assert_eq!(orderbook.best_ask_tick, ask_tick_1);
+
+            // Fill all asks at tick 50 (bob buys base)
+            let ask_price_1 = orderbook::tick_to_price(ask_tick_1);
+            let quote_needed = (amount * ask_price_1 as u128) / orderbook::PRICE_SCALE as u128;
+            exchange.set_balance(bob, quote_token, quote_needed)?;
+            exchange.swap_exact_amount_in(bob, quote_token, base_token, quote_needed, 0)?;
+            // Verify best_ask_tick moved to tick 60, best_bid_tick unchanged
+            let orderbook = exchange.books.at(book_key).read()?;
+            assert_eq!(orderbook.best_ask_tick, ask_tick_2);
+            assert_eq!(orderbook.best_bid_tick, i16::MIN);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_best_tick_updates_on_cancel() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let alice = Address::random();
+            let admin = Address::random();
+            let amount = MIN_ORDER_AMOUNT;
+
+            let (bid_tick_1, bid_tick_2) = (100_i16, 90_i16); // (best, second best)
+            let (ask_tick_1, ask_tick_2) = (50_i16, 60_i16); // (best, second best)
+
+            // Calculate escrow for 3 bid orders (2 at tick 100, 1 at tick 90)
+            let price_1 = orderbook::tick_to_price(bid_tick_1);
+            let price_2 = orderbook::tick_to_price(bid_tick_2);
+            let escrow_1 = (amount * price_1 as u128) / orderbook::PRICE_SCALE as u128;
+            let escrow_2 = (amount * price_2 as u128) / orderbook::PRICE_SCALE as u128;
+            let total_escrow = escrow_1 * 2 + escrow_2;
+
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, total_escrow)?;
+            exchange.create_pair(base_token)?;
+            let book_key = compute_book_key(base_token, quote_token);
+
+            // Place 2 bid orders at tick 100, 1 at tick 90
+            let bid_order_1 = exchange.place(alice, base_token, amount, true, bid_tick_1)?;
+            let bid_order_2 = exchange.place(alice, base_token, amount, true, bid_tick_1)?;
+            let bid_order_3 = exchange.place(alice, base_token, amount, true, bid_tick_2)?;
+
+            // Place 2 ask orders at tick 50 and tick 60
+            TIP20Setup::config(base_token)
+                .with_mint(alice, U256::from(amount * 2))
+                .with_approval(alice, exchange.address, U256::from(amount * 2))
+                .apply()?;
+            let ask_order_1 = exchange.place(alice, base_token, amount, false, ask_tick_1)?;
+            let ask_order_2 = exchange.place(alice, base_token, amount, false, ask_tick_2)?;
+
+            exchange.execute_block(Address::ZERO)?;
+
+            // Verify initial best ticks
+            let orderbook = exchange.books.at(book_key).read()?;
+            assert_eq!(orderbook.best_bid_tick, bid_tick_1);
+            assert_eq!(orderbook.best_ask_tick, ask_tick_1);
+
+            // Cancel one bid at tick 100
+            exchange.cancel(alice, bid_order_1)?;
+            // Verify best_bid_tick remains 100, best_ask_tick unchanged
+            let orderbook = exchange.books.at(book_key).read()?;
+            assert_eq!(orderbook.best_bid_tick, bid_tick_1);
+            assert_eq!(orderbook.best_ask_tick, ask_tick_1);
+
+            // Cancel remaining bid at tick 100
+            exchange.cancel(alice, bid_order_2)?;
+            // Verify best_bid_tick moved to 90, best_ask_tick unchanged
+            let orderbook = exchange.books.at(book_key).read()?;
+            assert_eq!(orderbook.best_bid_tick, bid_tick_2);
+            assert_eq!(orderbook.best_ask_tick, ask_tick_1);
+
+            // Cancel ask at tick 50
+            exchange.cancel(alice, ask_order_1)?;
+            // Verify best_ask_tick moved to 60, best_bid_tick unchanged
+            let orderbook = exchange.books.at(book_key).read()?;
+            assert_eq!(orderbook.best_bid_tick, bid_tick_2);
+            assert_eq!(orderbook.best_ask_tick, ask_tick_2);
+
+            // Cancel bid at tick 90
+            exchange.cancel(alice, bid_order_3)?;
+            // Verify best_bid_tick is now i16::MIN, best_ask_tick unchanged
+            let orderbook = exchange.books.at(book_key).read()?;
+            assert_eq!(orderbook.best_bid_tick, i16::MIN);
+            assert_eq!(orderbook.best_ask_tick, ask_tick_2);
+
+            // Cancel ask at tick 60
+            exchange.cancel(alice, ask_order_2)?;
+            // Verify best_ask_tick is now i16::MAX, best_bid_tick unchanged
+            let orderbook = exchange.books.at(book_key).read()?;
+            assert_eq!(orderbook.best_bid_tick, i16::MIN);
+            assert_eq!(orderbook.best_ask_tick, i16::MAX);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_place_post_allegretto() -> eyre::Result<()> {
+        const AMOUNT: u128 = 1_000_000_000;
+
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let alice = Address::random();
+            let admin = Address::random();
+
+            let (base_token, _quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, AMOUNT)?;
+            exchange.create_pair(base_token)?;
+
+            // Give alice base tokens
+            TIP20Setup::config(base_token)
+                .with_mint(alice, U256::from(AMOUNT))
+                .with_approval(alice, exchange.address, U256::from(AMOUNT))
+                .apply()?;
+
+            // Test invalid tick spacing
+            let invalid_tick = 15i16;
+            let result = exchange.place(alice, base_token, MIN_ORDER_AMOUNT, true, invalid_tick);
+
+            let error = result.unwrap_err();
+            assert!(matches!(
+                error,
+                TempoPrecompileError::StablecoinExchange(StablecoinExchangeError::InvalidTick(_))
+            ));
+
+            // Test valid tick spacing
+            let valid_tick = -20i16;
+            let result = exchange.place(alice, base_token, MIN_ORDER_AMOUNT, true, valid_tick);
+            assert!(result.is_ok());
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_place_flip_post_allegretto() -> eyre::Result<()> {
+        const AMOUNT: u128 = 1_000_000_000;
+
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let alice = Address::random();
+            let admin = Address::random();
+
+            let (base_token, _quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, AMOUNT)?;
+            exchange.create_pair(base_token)?;
+
+            // Give alice base tokens
+            TIP20Setup::config(base_token)
+                .with_mint(alice, U256::from(AMOUNT))
+                .with_approval(alice, exchange.address, U256::from(AMOUNT))
+                .apply()?;
+
+            // Test invalid tick spacing
+            let invalid_tick = 15i16;
+            let invalid_flip_tick = 25i16;
+            let result = exchange.place_flip(
+                alice,
+                base_token,
+                MIN_ORDER_AMOUNT,
+                true,
+                invalid_tick,
+                invalid_flip_tick,
+            );
+
+            let error = result.unwrap_err();
+            assert!(matches!(
+                error,
+                TempoPrecompileError::StablecoinExchange(StablecoinExchangeError::InvalidTick(_))
+            ));
+
+            // Test valid tick spacing
+            let valid_tick = 20i16;
+            let invalid_flip_tick = 25i16;
+            let result = exchange.place_flip(
+                alice,
+                base_token,
+                MIN_ORDER_AMOUNT,
+                true,
+                valid_tick,
+                invalid_flip_tick,
+            );
+
+            let error = result.unwrap_err();
+            assert!(matches!(
+                error,
+                TempoPrecompileError::StablecoinExchange(StablecoinExchangeError::InvalidFlipTick(
+                    _
+                ))
+            ));
+
+            let valid_flip_tick = 30i16;
+            let result = exchange.place_flip(
+                alice,
+                base_token,
+                MIN_ORDER_AMOUNT,
+                true,
+                valid_tick,
+                valid_flip_tick,
+            );
+            assert!(result.is_ok());
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_find_trade_path_rejects_non_tip20_post_allegretto() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+            let user = Address::random();
+
+            let (_, quote_token) =
+                setup_test_tokens(admin, user, exchange.address, MIN_ORDER_AMOUNT)?;
+
+            let non_tip20_address = Address::random();
+            let result = exchange.find_trade_path(non_tip20_address, quote_token);
+            assert!(
+                matches!(
+                    result,
+                    Err(TempoPrecompileError::StablecoinExchange(
+                        StablecoinExchangeError::InvalidToken(_)
+                    ))
+                ),
+                "Should return InvalidToken error for non-TIP20 token post-Allegretto"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_quote_exact_in_handles_both_directions() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let alice = Address::random();
+            let admin = Address::random();
+            let amount = MIN_ORDER_AMOUNT;
+            let tick = 100_i16;
+            let price = orderbook::tick_to_price(tick);
+
+            // Calculate escrow for bid order (quote needed to buy `amount` base)
+            let bid_escrow = (amount * price as u128) / orderbook::PRICE_SCALE as u128;
+
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, alice, exchange.address, bid_escrow)?;
+
+            TIP20Setup::config(base_token)
+                .with_mint(alice, U256::from(amount))
+                .with_approval(alice, exchange.address, U256::from(amount))
+                .apply()?;
+
+            exchange.create_pair(base_token)?;
+            let book_key = compute_book_key(base_token, quote_token);
+
+            // Place a bid order (alice wants to buy base with quote)
+            exchange.place(alice, base_token, amount, true, tick)?;
+            exchange.execute_block(Address::ZERO)?;
+
+            // Test is_bid == true: base -> quote
+            let quoted_out_bid = exchange.quote_exact_in(book_key, amount, true)?;
+            let expected_quote_out = amount
+                .checked_mul(price as u128)
+                .and_then(|v| v.checked_div(orderbook::PRICE_SCALE as u128))
+                .expect("calculation");
+            assert_eq!(
+                quoted_out_bid, expected_quote_out,
+                "quote_exact_in with is_bid=true should return quote amount"
+            );
+
+            // Place an ask order (alice wants to sell base for quote)
+            exchange.place(alice, base_token, amount, false, tick)?;
+            exchange.execute_block(Address::ZERO)?;
+
+            // Test is_bid == false: quote -> base
+            let quote_in = (amount * price as u128) / orderbook::PRICE_SCALE as u128;
+            let quoted_out_ask = exchange.quote_exact_in(book_key, quote_in, false)?;
+            let expected_base_out = quote_in
+                .checked_mul(orderbook::PRICE_SCALE as u128)
+                .and_then(|v| v.checked_div(price as u128))
+                .expect("calculation");
+            assert_eq!(
+                quoted_out_ask, expected_base_out,
+                "quote_exact_in with is_bid=false should return base amount"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_place_auto_creates_pair_post_allegretto() -> Result<()> {
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+            let admin = Address::random();
+            let user = Address::random();
+
+            // Setup tokens
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, user, exchange.address, 100_000_000)?;
+
+            // Before placing order, verify pair doesn't exist
+            let book_key = compute_book_key(base_token, quote_token);
+            let book_before = exchange.books.at(book_key).read()?;
+            assert!(book_before.base.is_zero(),);
+
+            // Transfer tokens to exchange first
+            let mut base = TIP20Token::new(1);
+            base.transfer(
+                user,
+                ITIP20::transferCall {
+                    to: exchange.address,
+                    amount: U256::from(MIN_ORDER_AMOUNT),
+                },
+            )
+            .expect("Base token transfer failed");
+
+            // Place an order which should also create the pair
+            exchange.place(user, base_token, MIN_ORDER_AMOUNT, true, 0)?;
+
+            let book_after = exchange.books.at(book_key).read()?;
+            assert_eq!(book_after.base, base_token);
+
+            // Verify PairCreated event was emitted (along with OrderPlaced)
+            let events = exchange.emited_events();
+            assert_eq!(events.len(), 2);
+            assert_eq!(
+                events[0],
+                StablecoinExchangeEvents::PairCreated(IStablecoinExchange::PairCreated {
+                    key: book_key,
+                    base: base_token,
+                    quote: quote_token,
+                })
+                .into_log_data()
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_place_flip_auto_creates_pair_post_allegretto() -> Result<()> {
+        let mut storage = HashMapStorageProvider::new(1).with_spec(TempoHardfork::Allegretto);
+        StorageContext::enter(&mut storage, || {
+            let mut exchange = StablecoinExchange::new();
+            exchange.initialize()?;
+
+            let admin = Address::random();
+            let user = Address::random();
+
+            // Setup tokens
+            let (base_token, quote_token) =
+                setup_test_tokens(admin, user, exchange.address, 100_000_000)?;
+
+            // Before placing flip order, verify pair doesn't exist
+            let book_key = compute_book_key(base_token, quote_token);
+            let book_before = exchange.books.at(book_key).read()?;
+            assert!(book_before.base.is_zero(),);
+
+            // Transfer tokens to exchange first
+            let mut base = TIP20Token::new(1);
+            base.transfer(
+                user,
+                ITIP20::transferCall {
+                    to: exchange.address,
+                    amount: U256::from(MIN_ORDER_AMOUNT),
+                },
+            )
+            .expect("Base token transfer failed");
+
+            // Place a flip order which should also create the pair
+            exchange.place_flip(user, base_token, MIN_ORDER_AMOUNT, true, 0, 10)?;
+
+            let book_after = exchange.books.at(book_key).read()?;
+            assert_eq!(book_after.base, base_token);
+
+            // Verify PairCreated event was emitted (along with FlipOrderPlaced)
+            let events = exchange.emited_events();
+            assert_eq!(events.len(), 2);
+            assert_eq!(
+                events[0],
+                StablecoinExchangeEvents::PairCreated(IStablecoinExchange::PairCreated {
+                    key: book_key,
+                    base: base_token,
+                    quote: quote_token,
+                })
+                .into_log_data()
+            );
+
+            Ok(())
+        })
+    }
 }
