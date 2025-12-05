@@ -12,7 +12,7 @@ use revm::{
     interpreter::interpreter::EthInterpreter,
 };
 use tempo_chainspec::hardfork::TempoHardfork;
-// use tempo_precompiles::extend_tempo_precompiles;
+use tempo_precompiles::extend_tempo_precompiles;
 
 /// The Tempo EVM context type.
 pub type TempoContext<DB> = Context<TempoBlockEnv, TempoTxEnv, CfgEnv<TempoHardfork>, DB>;
@@ -39,7 +39,7 @@ impl<DB: Database, I> TempoEvm<DB, I> {
     /// Create a new Tempo EVM.
     pub fn new(ctx: TempoContext<DB>, inspector: I) -> Self {
         let mut precompiles = PrecompilesMap::from_static(EthPrecompiles::default().precompiles);
-        // extend_tempo_precompiles(&mut precompiles, &ctx.cfg);
+        extend_tempo_precompiles(&mut precompiles, &ctx.cfg);
 
         Self::new_inner(Evm {
             ctx,
@@ -204,17 +204,31 @@ mod tests {
         let db = CacheDB::new(EmptyDB::new());
         let mut tempo_evm = TempoEvmFactory::default().create_evm(db, Default::default());
 
-        // HACK: initialize default fee token and linkingUSD so that fee token validation passes
+        // HACK: initialize default fee token and pathUSD so that fee token validation passes
         let ctx = tempo_evm.ctx_mut();
         let mut storage = EvmPrecompileStorageProvider::new_max_gas(
             EvmInternals::new(&mut ctx.journaled_state, &ctx.block),
             &ctx.cfg,
         );
-        TIP20Token::new(0)
-            .initialize("USD", "USD", "USD", Address::ZERO, Address::ZERO)
+        TIP20Token::new(0, &mut storage)
+            .initialize(
+                "USD",
+                "USD",
+                "USD",
+                Address::ZERO,
+                Address::ZERO,
+                Address::ZERO,
+            )
             .unwrap();
-        TIP20Token::new(1)
-            .initialize("USD", "USD", "USD", PATH_USD_ADDRESS, Address::ZERO)
+        TIP20Token::new(1, &mut storage)
+            .initialize(
+                "USD",
+                "USD",
+                "USD",
+                PATH_USD_ADDRESS,
+                Address::ZERO,
+                Address::ZERO,
+            )
             .unwrap();
         drop(storage);
 
@@ -247,11 +261,25 @@ mod tests {
             EvmInternals::new(&mut ctx.journaled_state, &ctx.block),
             &ctx.cfg,
         );
-        TIP20Token::new(0)
-            .initialize("USD", "USD", "USD", Address::ZERO, Address::ZERO)
+        TIP20Token::new(0, &mut storage)
+            .initialize(
+                "USD",
+                "USD",
+                "USD",
+                Address::ZERO,
+                Address::ZERO,
+                Address::ZERO,
+            )
             .unwrap();
-        TIP20Token::new(1)
-            .initialize("USD", "USD", "USD", PATH_USD_ADDRESS, Address::ZERO)
+        TIP20Token::new(1, &mut storage)
+            .initialize(
+                "USD",
+                "USD",
+                "USD",
+                PATH_USD_ADDRESS,
+                Address::ZERO,
+                Address::ZERO,
+            )
             .unwrap();
         drop(storage);
 
