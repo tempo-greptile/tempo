@@ -14,12 +14,12 @@ struct SolcOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ContractOutput {
     #[serde(rename = "storage-layout")]
-    storage_layout: StorableType,
+    storage_layout: StorageLayout,
 }
 
 /// Represents the storage layout for a contract.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub(super) struct StorableType {
+pub(super) struct StorageLayout {
     pub(super) storage: Vec<StorageVariable>,
     pub(super) types: HashMap<String, TypeDefinition>,
 }
@@ -67,7 +67,7 @@ pub(super) struct TypeDefinition {
 /// Loads a storage layout from a Solidity source file by running solc.
 ///
 /// **NOTE:** assumes 1 contract per file.
-pub(super) fn load_solc_layout(sol_file: &Path) -> StorableType {
+pub(super) fn load_solc_layout(sol_file: &Path) -> StorageLayout {
     if sol_file.extension().and_then(|s| s.to_str()) != Some("sol") {
         panic!("expected .sol file, got: {}", sol_file.display());
     }
@@ -135,7 +135,7 @@ pub(super) fn parse_slot(slot_str: &str) -> Result<U256, String> {
 
 /// Compares two storage layouts and returns detailed differences.
 pub(super) fn compare_layouts(
-    solc_layout: &StorableType,
+    solc_layout: &StorageLayout,
     rust_fields: &[RustStorageField],
 ) -> Result<(), Vec<String>> {
     let mut errors = Vec::new();
@@ -212,7 +212,7 @@ pub(super) fn compare_layouts(
 /// This verifies that struct members have the correct relative offsets
 /// from the base slot of the struct.
 pub(super) fn compare_struct_members(
-    solc_layout: &StorableType,
+    solc_layout: &StorageLayout,
     struct_field_name: &str,
     rust_member_slots: &[RustStorageField],
 ) -> Result<(), Vec<String>> {
@@ -241,7 +241,7 @@ pub(super) fn compare_struct_members(
         )]
     })?;
 
-    // Handle direct struct fields, mappings with struct values, and dynamic arrays of structs
+    // Handle direct struct fields, mappings with struct values, and arrays of structs
     let struct_type_def = if type_def.encoding == "mapping" {
         // It's a mapping - get the value type
         let value_type_name = type_def.value.as_ref().ok_or_else(|| {
@@ -262,7 +262,7 @@ pub(super) fn compare_struct_members(
         // It's a dynamic array - get the base (element) type
         let base_type_name = type_def.base.as_ref().ok_or_else(|| {
             vec![format!(
-                "Dynamic array type '{}' does not have a base type",
+                "Array type '{}' does not have a base type",
                 struct_var.ty
             )]
         })?;
@@ -270,7 +270,8 @@ pub(super) fn compare_struct_members(
         // Get the struct type definition from the base type
         solc_layout.types.get(base_type_name).ok_or_else(|| {
             vec![format!(
-                "Base type '{base_type_name}' not found in type definitions",
+                "Base type '{}' not found in type definitions",
+                base_type_name
             )]
         })?
     } else {
@@ -356,4 +357,28 @@ pub(super) fn compare_struct_members(
     } else {
         Err(errors)
     }
+}
+
+/// Panics with a detailed error message when a storage layout mismatch is detected.
+///
+/// Includes instructions for updating the Solidity test file when the spec changes.
+pub(super) fn panic_layout_mismatch(context: &str, errors: Vec<String>, sol_path: &Path) -> ! {
+    let json_path = sol_path.with_extension("layout.json");
+    panic!(
+        "{context} mismatch:\n{errors}\n\n\
+         To fix this mismatch:\n\n\
+         1. Update the Solidity file: {sol_path}\n\
+            - Add any new fields to match the Rust contract storage layout\n\
+            - Use the same field order and types as the Rust definition\n\n\
+         2. Update the Rust test (if needed):\n\
+            - Add new fields to the `layout_fields!()` macro call\n\
+            - For new structs, add a `compare_struct_members()` check using:\n\
+              `struct_fields!(slots::FIELD_NAME, member1, member2, ...)`\n\n\
+         3. Delete the cached layout: {json_path}\n\n\
+         4. Re-run the tests",
+        context = context,
+        errors = errors.join("\n"),
+        sol_path = sol_path.display(),
+        json_path = json_path.display(),
+    )
 }

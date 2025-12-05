@@ -4,7 +4,11 @@
 
 pub mod error;
 pub use error::Result;
-
+use tempo_chainspec::hardfork::TempoHardfork;
+pub mod account_keychain;
+pub mod nonce;
+pub mod path_usd;
+pub mod stablecoin_exchange;
 pub mod storage;
 
 // use tempo_chainspec::hardfork::TempoHardfork;
@@ -19,8 +23,21 @@ pub mod storage;
 // pub mod tip_fee_manager;
 // pub mod validator_config;
 
-// #[cfg(any(test, feature = "test-utils"))]
-// pub mod test_util;
+use crate::{
+    account_keychain::AccountKeychain,
+    nonce::NonceManager,
+    path_usd::PathUSD,
+    stablecoin_exchange::StablecoinExchange,
+    storage::{PrecompileStorageProvider, evm::EvmPrecompileStorageProvider},
+    tip_account_registrar::TipAccountRegistrar,
+    tip_fee_manager::TipFeeManager,
+    tip20::{TIP20Token, address_to_token_id_unchecked, is_tip20},
+    tip20_factory::TIP20Factory,
+    tip20_rewards_registry::TIP20RewardsRegistry,
+    tip403_registry::TIP403Registry,
+    validator_config::ValidatorConfig,
+};
+pub use error::IntoPrecompileResult;
 
 // use crate::{
 //     linking_usd::LinkingUSD,
@@ -37,31 +54,20 @@ pub mod storage;
 // };
 // pub use error::IntoPrecompileResult;
 
-// #[cfg(test)]
-// use alloy::sol_types::SolInterface;
-// use alloy::{
-//     primitives::{Address, Bytes},
-//     sol_types::{
-//         SolCall,
-// SolError
-//     },
-// };
-// use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
-// use revm::{
-// context::CfgEnv,
-// precompile::{
-// PrecompileError,
-// PrecompileId,
-// PrecompileOutput,
-// PrecompileResult,
-// },
-// };
+pub use tempo_contracts::precompiles::{
+    ACCOUNT_KEYCHAIN_ADDRESS, DEFAULT_FEE_TOKEN_POST_ALLEGRETTO, DEFAULT_FEE_TOKEN_PRE_ALLEGRETTO,
+    NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS, STABLECOIN_EXCHANGE_ADDRESS, TIP_ACCOUNT_REGISTRAR,
+    TIP_FEE_MANAGER_ADDRESS, TIP20_FACTORY_ADDRESS, TIP20_REWARDS_REGISTRY_ADDRESS,
+    TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS,
+};
 
-// pub use tempo_contracts::precompiles::{
-//     DEFAULT_FEE_TOKEN, LINKING_USD_ADDRESS, NONCE_PRECOMPILE_ADDRESS, STABLECOIN_EXCHANGE_ADDRESS,
-//     TIP_ACCOUNT_REGISTRAR, TIP_FEE_MANAGER_ADDRESS, TIP20_FACTORY_ADDRESS,
-//     TIP20_REWARDS_REGISTRY_ADDRESS, TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS,
-// };
+// Re-export storage layout helpers for read-only contexts (e.g., pool validation)
+pub use account_keychain::{AuthorizedKey, compute_keys_slot};
+
+/// Input per word cost. It covers abi decoding and cloning of input into call data.
+///
+/// Being careful and pricing it twice as COPY_COST to mitigate different abi decodings.
+pub const INPUT_PER_WORD_COST: u64 = 6;
 
 // /// Input per word cost. It covers abi decoding and cloning of input into call data.
 // ///
@@ -73,9 +79,41 @@ pub mod storage;
 //     revm::interpreter::gas::cost_per_word(calldata_len, INPUT_PER_WORD_COST).unwrap_or(u64::MAX)
 // }
 
-// pub trait Precompile {
-//     fn call(&mut self, calldata: &[u8], msg_sender: Address) -> PrecompileResult;
-// }
+pub fn extend_tempo_precompiles(precompiles: &mut PrecompilesMap, cfg: &CfgEnv<TempoHardfork>) {
+    let chain_id = cfg.chain_id;
+    let spec = cfg.spec;
+    precompiles.set_precompile_lookup(move |address: &Address| {
+        if is_tip20(*address) {
+            let token_id = address_to_token_id_unchecked(*address);
+            if token_id == 0 {
+                Some(PathUSDPrecompile::create(chain_id, spec))
+            } else {
+                Some(TIP20Precompile::create(*address, chain_id, spec))
+            }
+        } else if *address == TIP20_FACTORY_ADDRESS {
+            Some(TIP20FactoryPrecompile::create(chain_id, spec))
+        } else if *address == TIP20_REWARDS_REGISTRY_ADDRESS {
+            Some(TIP20RewardsRegistryPrecompile::create(chain_id, spec))
+        } else if *address == TIP403_REGISTRY_ADDRESS {
+            Some(TIP403RegistryPrecompile::create(chain_id, spec))
+        } else if *address == TIP_FEE_MANAGER_ADDRESS {
+            Some(TipFeeManagerPrecompile::create(chain_id, spec))
+        } else if *address == TIP_ACCOUNT_REGISTRAR {
+            Some(TipAccountRegistrarPrecompile::create(chain_id, spec))
+        } else if *address == STABLECOIN_EXCHANGE_ADDRESS {
+            Some(StablecoinExchangePrecompile::create(chain_id, spec))
+        } else if *address == NONCE_PRECOMPILE_ADDRESS {
+            Some(NoncePrecompile::create(chain_id, spec))
+        } else if *address == VALIDATOR_CONFIG_ADDRESS {
+            Some(ValidatorConfigPrecompile::create(chain_id, spec))
+        } else if *address == ACCOUNT_KEYCHAIN_ADDRESS && spec.is_allegretto() {
+            // AccountKeychain is only available after Allegretto hardfork
+            Some(AccountKeychainPrecompile::create(chain_id, spec))
+        } else {
+            None
+        }
+    });
+}
 
 // pub fn extend_tempo_precompiles(precompiles: &mut PrecompilesMap, cfg: &CfgEnv<TempoHardfork>) {
 // let chain_id = cfg.chain_id;
@@ -203,14 +241,23 @@ pub mod storage;
 //     }
 // }
 
-// pub struct NoncePrecompile;
-// impl NoncePrecompile {
-//     pub fn create(chain_id: u64, spec: TempoHardfork) -> DynPrecompile {
-//         tempo_precompile!("NonceManager", |input| NonceManager::new(
-//             &mut EvmPrecompileStorageProvider::new(input.internals, input.gas, chain_id, spec)
-//         ))
-//     }
-// }
+pub struct AccountKeychainPrecompile;
+impl AccountKeychainPrecompile {
+    pub fn create(chain_id: u64, spec: TempoHardfork) -> DynPrecompile {
+        tempo_precompile!("AccountKeychain", |input| AccountKeychain::new(
+            &mut EvmPrecompileStorageProvider::new(input.internals, input.gas, chain_id, spec)
+        ))
+    }
+}
+
+pub struct PathUSDPrecompile;
+impl PathUSDPrecompile {
+    pub fn create(chain_id: u64, spec: TempoHardfork) -> DynPrecompile {
+        tempo_precompile!("PathUSD", |input| PathUSD::new(
+            &mut EvmPrecompileStorageProvider::new(input.internals, input.gas, chain_id, spec),
+        ))
+    }
+}
 
 // pub struct LinkingUSDPrecompile;
 // impl LinkingUSDPrecompile {
@@ -256,17 +303,33 @@ pub mod storage;
 //     f(sender, call).into_precompile_result(0, |ret| T::abi_encode_returns(&ret).into())
 // }
 
-// #[inline]
-// fn mutate_void<T: SolCall>(
-//     calldata: &[u8],
-//     sender: Address,
-//     f: impl FnOnce(Address, T) -> Result<()>,
-// ) -> PrecompileResult {
-//     let Ok(call) = T::abi_decode(calldata) else {
-//         return Ok(PrecompileOutput::new_reverted(0, Bytes::new()));
-//     };
-//     f(sender, call).into_precompile_result(0, |()| Bytes::new())
-// }
+#[inline]
+fn fill_precompile_output(
+    mut output: PrecompileOutput,
+    storage: &mut impl PrecompileStorageProvider,
+) -> PrecompileOutput {
+    output.gas_used = storage.gas_used();
+
+    // add refund only if it is not reverted
+    if !output.reverted && storage.spec().is_allegretto() {
+        output.gas_refunded = storage.gas_refunded();
+    }
+    output
+}
+
+/// Helper function to return an unknown function selector error
+///
+/// Before Moderato: Returns a generic PrecompileError::Other
+/// Moderato onwards: Returns an ABI-encoded UnknownFunctionSelector error with the selector
+#[inline]
+pub fn unknown_selector(selector: [u8; 4], gas: u64, spec: TempoHardfork) -> PrecompileResult {
+    if spec.is_moderato() {
+        error::TempoPrecompileError::UnknownFunctionSelector(selector)
+            .into_precompile_result(gas, |_: ()| Bytes::new())
+    } else {
+        Err(PrecompileError::Other("Unknown function selector".into()))
+    }
+}
 
 // /// Helper function to return an unknown function selector error
 // ///

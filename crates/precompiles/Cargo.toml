@@ -27,10 +27,6 @@ tracing.workspace = true
 thiserror.workspace = true
 derive_more.workspace = true
 scoped-tls = "1.0"
-fqdn = { version = "0.4.6", features = [
-  "domain-label-length-limited-to-63",
-  "domain-name-length-limited-to-255",
-] }
 
 [dev-dependencies]
 tempo-precompiles = { path = ".", features = ["test-utils"] }
@@ -43,7 +39,7 @@ rand.workspace = true
 proptest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# tempo-evm.workspace = true
+tempo-evm.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [[bench]]

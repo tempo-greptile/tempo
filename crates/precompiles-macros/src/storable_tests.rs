@@ -154,6 +154,7 @@ fn gen_rust_unsigned_tests() -> TokenStream {
                     StorageContext::enter(&mut storage, || {
                         let mut slot = Slot::<#type_name>::new(base_slot, address);
 
+<<<<<<< HEAD
                         // Verify store → load roundtrip
                         slot.write(value).unwrap();
                         let loaded = slot.read().unwrap();
@@ -163,6 +164,17 @@ fn gen_rust_unsigned_tests() -> TokenStream {
                         slot.delete().unwrap();
                         let after_delete = slot.read().unwrap();
                         assert_eq!(after_delete, 0, concat!(#label, " not zero after delete"));
+=======
+                    // Storage roundtrip
+                    value.store(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                    let loaded = #type_name::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                    assert_eq!(value, loaded, concat!(#label, " storage roundtrip failed"));
+
+                    // Delete
+                    #type_name::delete(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                    let after_delete = #type_name::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                    assert_eq!(after_delete, 0, concat!(#label, " not zero after delete"));
+>>>>>>> af11552c365533e0e81c739e4fc8e741031831cd
 
                         // EVM word roundtrip
                         let word = value.to_word();
@@ -203,6 +215,7 @@ fn gen_rust_signed_tests() -> TokenStream {
                         StorageContext::enter(&mut storage, || {
                             let mut slot = Slot::<#type_name>::new(base_slot, address);
 
+<<<<<<< HEAD
                             // Verify store → load roundtrip
                             slot.write(value).unwrap();
                             let loaded = slot.read().unwrap();
@@ -212,6 +225,17 @@ fn gen_rust_signed_tests() -> TokenStream {
                             slot.delete().unwrap();
                             let after_delete = slot.read().unwrap();
                             assert_eq!(after_delete, 0, concat!(#label, " not zero after delete"));
+=======
+                        // Storage roundtrip
+                        value.store(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        let loaded = #type_name::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        assert_eq!(value, loaded, concat!(#label, " positive storage roundtrip failed"));
+
+                        // Delete
+                        #type_name::delete(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        let after_delete = #type_name::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        assert_eq!(after_delete, 0, concat!(#label, " not zero after delete"));
+>>>>>>> af11552c365533e0e81c739e4fc8e741031831cd
 
                             // EVM word roundtrip
                             let word = value.to_word();
@@ -228,6 +252,7 @@ fn gen_rust_signed_tests() -> TokenStream {
                         StorageContext::enter(&mut storage, || {
                             let mut slot = Slot::<#type_name>::new(base_slot, address);
 
+<<<<<<< HEAD
                             // Verify store → load roundtrip
                             slot.write(value).unwrap();
                             let loaded = slot.read().unwrap();
@@ -237,6 +262,17 @@ fn gen_rust_signed_tests() -> TokenStream {
                             slot.delete().unwrap();
                             let after_delete = slot.read().unwrap();
                             assert_eq!(after_delete, 0, concat!(#label, " not zero after delete"));
+=======
+                        // Storage roundtrip
+                        value.store(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        let loaded = #type_name::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        assert_eq!(value, loaded, concat!(#label, " negative storage roundtrip failed"));
+
+                        // Delete
+                        #type_name::delete(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        let after_delete = #type_name::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        assert_eq!(after_delete, 0, concat!(#label, " not zero after delete"));
+>>>>>>> af11552c365533e0e81c739e4fc8e741031831cd
 
                             // EVM word roundtrip
                             let word = value.to_word();
@@ -275,6 +311,7 @@ fn gen_alloy_unsigned_tests() -> TokenStream {
                     StorageContext::enter(&mut storage, || {
                         let mut slot = Slot::<::alloy::primitives::#type_name>::new(base_slot, address);
 
+<<<<<<< HEAD
                         // Verify store → load roundtrip
                         slot.write(value).unwrap();
                         let loaded = slot.read().unwrap();
@@ -288,6 +325,21 @@ fn gen_alloy_unsigned_tests() -> TokenStream {
                             ::alloy::primitives::#type_name::ZERO,
                             concat!(#label, " not zero after delete")
                         );
+=======
+                    // Storage roundtrip
+                    value.store(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                    let loaded = ::alloy::primitives::#type_name::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                    assert_eq!(value, loaded, concat!(#label, " storage roundtrip failed"));
+
+                    // Delete
+                    ::alloy::primitives::#type_name::delete(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                    let after_delete = ::alloy::primitives::#type_name::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                    assert_eq!(
+                        after_delete,
+                        ::alloy::primitives::#type_name::ZERO,
+                        concat!(#label, " not zero after delete")
+                    );
+>>>>>>> af11552c365533e0e81c739e4fc8e741031831cd
 
                         // EVM word roundtrip
                         let word = value.to_word();
@@ -330,6 +382,7 @@ fn gen_alloy_signed_tests() -> TokenStream {
                         StorageContext::enter(&mut storage, || {
                             let mut slot = Slot::<::alloy::primitives::#type_name>::new(base_slot, address);
 
+<<<<<<< HEAD
                             // Verify store → load roundtrip
                             slot.write(value).unwrap();
                             let loaded = slot.read().unwrap();
@@ -343,6 +396,21 @@ fn gen_alloy_signed_tests() -> TokenStream {
                                 ::alloy::primitives::#type_name::ZERO,
                                 concat!(#label, " not zero after delete")
                             );
+=======
+                        // Storage roundtrip
+                        value.store(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        let loaded = ::alloy::primitives::#type_name::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        assert_eq!(value, loaded, concat!(#label, " positive storage roundtrip failed"));
+
+                        // Delete
+                        ::alloy::primitives::#type_name::delete(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        let after_delete = ::alloy::primitives::#type_name::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        assert_eq!(
+                            after_delete,
+                            ::alloy::primitives::#type_name::ZERO,
+                            concat!(#label, " not zero after delete")
+                        );
+>>>>>>> af11552c365533e0e81c739e4fc8e741031831cd
 
                             // EVM word roundtrip
                             let word = value.to_word();
@@ -359,6 +427,7 @@ fn gen_alloy_signed_tests() -> TokenStream {
                         StorageContext::enter(&mut storage, || {
                             let mut slot = Slot::<::alloy::primitives::#type_name>::new(base_slot, address);
 
+<<<<<<< HEAD
                             // Verify store → load roundtrip
                             slot.write(value).unwrap();
                             let loaded = slot.read().unwrap();
@@ -372,6 +441,21 @@ fn gen_alloy_signed_tests() -> TokenStream {
                                 ::alloy::primitives::#type_name::ZERO,
                                 concat!(#label, " not zero after delete")
                             );
+=======
+                        // Storage roundtrip
+                        value.store(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        let loaded = ::alloy::primitives::#type_name::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        assert_eq!(value, loaded, concat!(#label, " negative storage roundtrip failed"));
+
+                        // Delete
+                        ::alloy::primitives::#type_name::delete(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        let after_delete = ::alloy::primitives::#type_name::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                        assert_eq!(
+                            after_delete,
+                            ::alloy::primitives::#type_name::ZERO,
+                            concat!(#label, " not zero after delete")
+                        );
+>>>>>>> af11552c365533e0e81c739e4fc8e741031831cd
 
                             // EVM word roundtrip
                             let word = value.to_word();
@@ -408,6 +492,7 @@ fn gen_fixed_bytes_tests() -> TokenStream {
                     StorageContext::enter(&mut storage, || {
                         let mut slot = Slot::<::alloy::primitives::FixedBytes<#size>>::new(base_slot, address);
 
+<<<<<<< HEAD
                         // Verify store → load roundtrip
                         slot.write(value).unwrap();
                         let loaded = slot.read().unwrap();
@@ -424,6 +509,24 @@ fn gen_fixed_bytes_tests() -> TokenStream {
                             ::alloy::primitives::FixedBytes::<#size>::ZERO,
                             concat!("FixedBytes<", stringify!(#size), "> not zero after delete")
                         );
+=======
+                    // Storage roundtrip
+                    value.store(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                    let loaded = ::alloy::primitives::FixedBytes::<#size>::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                    assert_eq!(
+                        value, loaded,
+                        concat!("FixedBytes<", stringify!(#size), "> storage roundtrip failed")
+                    );
+
+                    // Delete
+                    ::alloy::primitives::FixedBytes::<#size>::delete(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                    let after_delete = ::alloy::primitives::FixedBytes::<#size>::load(&mut contract, slot, crate::storage::LayoutCtx::FULL)?;
+                    assert_eq!(
+                        after_delete,
+                        ::alloy::primitives::FixedBytes::<#size>::ZERO,
+                        concat!("FixedBytes<", stringify!(#size), "> not zero after delete")
+                    );
+>>>>>>> af11552c365533e0e81c739e4fc8e741031831cd
 
                         // EVM word roundtrip
                         let word = value.to_word();
