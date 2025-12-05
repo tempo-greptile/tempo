@@ -418,7 +418,7 @@ impl StablecoinExchange {
     }
 
     /// Get all book keys
-    pub fn get_book_keys(&mut self) -> Result<Vec<B256>> {
+    pub fn get_book_keys(&self) -> Result<Vec<B256>> {
         self.book_keys.read()
     }
 
