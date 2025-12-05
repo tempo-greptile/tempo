@@ -839,7 +839,7 @@ impl AA2dPool {
             // Independent transactions must be pending
             let tx_in_pool = self.by_id.get(&tx_id).unwrap();
             assert!(
-                tx_in_pool.is_pending(),
+                tx_in_pool.is_independent(),
                 "Independent transaction {tx_id:?} is not pending"
             );
 
@@ -908,7 +908,7 @@ impl AA2dPool {
                 && independent_tx.transaction.hash() == tx.inner.transaction.hash()
             {
                 assert!(
-                    tx.is_pending(),
+                    tx.is_independent(),
                     "Transaction {id:?} is in independent set but not pending"
                 );
             }
@@ -1083,6 +1083,7 @@ mod tests {
     use crate::transaction::TempoPooledTransaction;
     use alloy_consensus::Transaction;
     use alloy_primitives::{Address, Signature, TxKind, U256};
+    use rand::seq::SliceRandom;
     use reth_primitives_traits::Recovered;
     use reth_transaction_pool::{PoolTransaction, ValidPoolTransaction};
     use std::{collections::HashSet, time::Instant};
@@ -1101,6 +1102,23 @@ mod tests {
         create_aa_tx_with_gas(sender, nonce_key, nonce, 1_000_000_000, 2_000_000_000)
     }
 
+    /// Helper to create a test AA transaction with a valid_after timestamp
+    fn create_aa_tx_with_valid_after(
+        sender: Address,
+        nonce_key: U256,
+        nonce: u64,
+        valid_after: u64,
+    ) -> TempoPooledTransaction {
+        create_aa_tx_with_gas_and_valid_after(
+            sender,
+            nonce_key,
+            nonce,
+            1_000_000_000,
+            2_000_000_000,
+            Some(valid_after),
+        )
+    }
+
     /// Helper to create a test AA transaction with custom gas prices
     fn create_aa_tx_with_gas(
         sender: Address,
@@ -1108,6 +1126,25 @@ mod tests {
         nonce: u64,
         max_priority_fee: u128,
         max_fee: u128,
+    ) -> TempoPooledTransaction {
+        create_aa_tx_with_gas_and_valid_after(
+            sender,
+            nonce_key,
+            nonce,
+            max_priority_fee,
+            max_fee,
+            None,
+        )
+    }
+
+    /// Helper to create a test AA transaction with custom gas prices
+    fn create_aa_tx_with_gas_and_valid_after(
+        sender: Address,
+        nonce_key: U256,
+        nonce: u64,
+        max_priority_fee: u128,
+        max_fee: u128,
+        valid_after: Option<u64>,
     ) -> TempoPooledTransaction {
         let tx = TempoTransaction {
             max_priority_fee_per_gas: max_priority_fee,
@@ -1122,6 +1159,7 @@ mod tests {
             nonce,
             fee_token: None,
             fee_payer_signature: None,
+            valid_after,
             ..Default::default()
         };
 
@@ -2417,6 +2455,279 @@ mod tests {
 
         // After inserting tx4, we should have [3, 4, 5] all in the pool
         let (_pending_count_after, _queued_count_after) = pool.pending_and_queued_txn_count();
+        pool.assert_invariants();
+    }
+
+    #[test_case::test_case(U256::ZERO)]
+    #[test_case::test_case(U256::random())]
+    fn delayed_transaction_single(nonce_key: U256) {
+        let mut pool = AA2dPool::default();
+        let sender = Address::random();
+        let seq_id = AASequenceId {
+            address: sender,
+            nonce_key,
+        };
+
+        // Create a single transaction with a valid_after timestamp
+        let tx = create_aa_tx_with_valid_after(sender, nonce_key, 0, 1000);
+
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx.clone(), TransactionOrigin::Local)),
+            0,
+        )
+        .unwrap();
+
+        let mut time = 0;
+        loop {
+            // Assert that the inserted transaction is not pending
+            assert!(
+                !pool
+                    .by_id
+                    .get(&AA2dTransactionId::new(seq_id, 0))
+                    .unwrap()
+                    .is_pending()
+            );
+            assert!(pool.best_transactions().next_tx_and_priority().is_none());
+
+            time += 100;
+
+            // Simulate the timestamp updates
+            let promoted = pool.on_timestamp_update(time);
+            if time < 1000 {
+                assert_eq!(promoted.len(), 0);
+            } else {
+                // Assert that our transaction got promoted
+                assert_eq!(promoted.len(), 1);
+                assert_eq!(promoted[0].hash(), tx.hash());
+                break;
+            }
+        }
+
+        assert_eq!(
+            pool.best_transactions()
+                .next_tx_and_priority()
+                .unwrap()
+                .0
+                .hash(),
+            tx.hash()
+        );
+
+        pool.assert_invariants();
+    }
+
+    #[test_case::test_case(U256::ZERO)]
+    #[test_case::test_case(U256::random())]
+    fn delayed_transaction_blocking_others(nonce_key: U256) {
+        let mut pool = AA2dPool::default();
+        let sender = Address::random();
+        let seq_id = AASequenceId {
+            address: sender,
+            nonce_key,
+        };
+
+        // Create an AA tx blocking 1 other
+        let tx1 = create_aa_tx_with_valid_after(sender, nonce_key, 0, 1000);
+        let tx2 = create_aa_tx(sender, nonce_key, 1);
+        let tx3 = create_aa_tx(sender, nonce_key, 2);
+
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1.clone(), TransactionOrigin::Local)),
+            0,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx3.clone(), TransactionOrigin::Local)),
+            0,
+        )
+        .unwrap();
+
+        // Assert that both transactions are queued
+        let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending_count, 0);
+        assert_eq!(queued_count, 2);
+
+        // Insert the second tx to fill the nonce gap
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2.clone(), TransactionOrigin::Local)),
+            0,
+        )
+        .unwrap();
+
+        // Assert that all 3 transactions are still queued
+        let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending_count, 0);
+        assert_eq!(queued_count, 3);
+        let second = pool.by_id.get(&AA2dTransactionId::new(seq_id, 1)).unwrap();
+        assert!(!second.is_pending());
+        assert!(second.has_queued_ancestors_or_nonce_gap);
+
+        let promoted = pool.on_timestamp_update(1000);
+
+        // Assert that all transactions are pending now
+        assert_eq!(promoted.len(), 3);
+        let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending_count, 3);
+        assert_eq!(queued_count, 0);
+
+        assert!(
+            pool.by_id
+                .get(&AA2dTransactionId::new(seq_id, 0))
+                .unwrap()
+                .is_independent()
+        );
+        assert!(pool.independent_transactions.contains_key(&seq_id));
+
+        // Assert that all transactions are getting emitted in best transactions in correct order
+        assert_eq!(
+            pool.best_transactions()
+                .map(|tx| *tx.hash())
+                .collect::<Vec<_>>(),
+            vec![*tx1.hash(), *tx2.hash(), *tx3.hash()]
+        );
+
+        pool.assert_invariants();
+    }
+
+    #[test_case::test_case(U256::ZERO)]
+    #[test_case::test_case(U256::random())]
+    fn delayed_transaction_nonce_gap(nonce_key: U256) {
+        let mut pool = AA2dPool::default();
+        let sender = Address::random();
+        let seq_id = AASequenceId {
+            address: sender,
+            nonce_key,
+        };
+
+        // Create 2 gapped delayed transactions
+        let tx2 = create_aa_tx_with_valid_after(sender, nonce_key, 1, 1000);
+        let tx3 = create_aa_tx_with_valid_after(sender, nonce_key, 2, 2000);
+
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx3.clone(), TransactionOrigin::Local)),
+            0,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2.clone(), TransactionOrigin::Local)),
+            0,
+        )
+        .unwrap();
+
+        // Assert that both transactions are queued
+        let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending_count, 0);
+        assert_eq!(queued_count, 2);
+
+        // Simulate the nonce change to 1 filling the nonce gap.
+        let (promoted, _) = pool.on_nonce_changes(HashMap::from_iter([(seq_id, 1)]));
+        assert!(promoted.is_empty());
+        // Assert that transactions are still queued
+        let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending_count, 0);
+        assert_eq!(queued_count, 2);
+
+        let first = pool.by_id.get(&AA2dTransactionId::new(seq_id, 1)).unwrap();
+        assert!(!first.is_pending());
+        assert!(!first.has_queued_ancestors_or_nonce_gap);
+        assert!(first.is_delayed);
+
+        // Bump timestamp.
+        let promoted = pool.on_timestamp_update(1000);
+        // Assert that tx with nonce 1 got promoted
+        assert!(promoted.len() == 1);
+        assert!(promoted[0].hash() == tx2.hash());
+        assert!(
+            pool.by_id
+                .get(&AA2dTransactionId::new(seq_id, 1))
+                .unwrap()
+                .is_independent()
+        );
+
+        let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending_count, 1);
+        assert_eq!(queued_count, 1);
+        let second = pool.by_id.get(&AA2dTransactionId::new(seq_id, 2)).unwrap();
+        assert!(!second.is_pending());
+        assert!(!second.has_queued_ancestors_or_nonce_gap);
+        assert!(second.is_delayed);
+
+        pool.assert_invariants();
+    }
+
+    #[test]
+    fn many_delayed_transactions() {
+        let mut pool = AA2dPool::default();
+
+        // Create 10 random sequences
+        let mut ids = std::iter::repeat_with(|| {
+            let seq_id = AASequenceId {
+                address: Address::random(),
+                nonce_key: U256::random(),
+            };
+
+            (0..100u64).map(move |nonce| (seq_id, nonce))
+        })
+        .take(10)
+        .flatten()
+        .collect::<Vec<_>>();
+
+        ids.shuffle(&mut rand::thread_rng());
+
+        // Insert a bunch of txs from random senders with random valid_after timestamps
+        let num_txs = ids.len();
+        for (seq_id, nonce) in ids {
+            let tx = if let Some(valid_after) = rand::random::<Option<u64>>() {
+                create_aa_tx_with_valid_after(seq_id.address, seq_id.nonce_key, nonce, valid_after % 1000)
+            } else {
+                create_aa_tx(seq_id.address, seq_id.nonce_key, nonce)
+            };
+            pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx.clone(), TransactionOrigin::Local)),
+                0,
+            )
+            .unwrap();
+        }
+
+        let mut time = 0;
+        let mut included_txs = 0;
+        let mut ready = pool.pending_transactions().collect::<Vec<_>>();
+        loop {
+            let mut nonce_changes = HashMap::default();
+
+            for tx in &ready {
+                let nonce_after = tx.transaction.nonce() + 1;
+                match nonce_changes.entry(tx.transaction.aa_transaction_id().seq_id) {
+                    hash_map::Entry::Vacant(v) => {
+                        v.insert(nonce_after);
+                    }
+                    hash_map::Entry::Occupied(mut o) => {
+                        if *o.get() < nonce_after {
+                            o.insert(nonce_after);
+                        }
+                    }
+                }
+            }
+
+            included_txs += ready.len();
+
+            let (pending_before, _) = pool.pending_and_queued_txn_count();
+            let (mut promoted, _) = pool.on_nonce_changes(nonce_changes.clone());
+            let promoted_time = pool.on_timestamp_update(time);
+            promoted.extend(promoted_time);
+            let (pending_after, _) = pool.pending_and_queued_txn_count();
+            assert_eq!(pending_after, pending_before - ready.len() + promoted.len());
+
+            ready = promoted;
+
+            if time > 1000 {
+                break;
+            }
+
+            time += 10;
+        }
+
+        assert_eq!(included_txs, num_txs);
+
         pool.assert_invariants();
     }
 }

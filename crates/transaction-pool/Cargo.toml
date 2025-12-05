@@ -47,3 +47,4 @@ alloy-eips.workspace = true
 alloy-consensus.workspace = true
 tokio.workspace = true
 test-case.workspace = true
+rand.workspace = true
