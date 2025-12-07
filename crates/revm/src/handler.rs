@@ -31,9 +31,7 @@ use revm::{
 };
 use tempo_contracts::{
     DEFAULT_7702_DELEGATE_ADDRESS,
-    precompiles::{
-        IAccountKeychain::SignatureType as PrecompileSignatureType, NonceError, TIPFeeAMMError,
-    },
+    precompiles::{IAccountKeychain::SignatureType as PrecompileSignatureType, TIPFeeAMMError},
 };
 use tempo_precompiles::{
     account_keychain::{AccountKeychain, TokenLimit, authorizeKeyCall},
@@ -563,38 +561,50 @@ where
 
                 if !cfg.is_nonce_check_disabled() {
                     let tx_nonce = tx.nonce();
-                    let state = nonce_manager.get_nonce(getNonceCall {
-                        account: tx.caller(),
-                        nonceKey: nonce_key,
-                    })?;
+                    let state = nonce_manager
+                        .get_nonce(getNonceCall {
+                            account: tx.caller(),
+                            nonceKey: nonce_key,
+                        })
+                        .map_err(|err| match err {
+                            TempoPrecompileError::Fatal(err) => EVMError::Custom(err),
+                            err => {
+                                TempoInvalidTransaction::NonceManagerError(err.to_string()).into()
+                            }
+                        })?;
 
                     match tx_nonce.cmp(&state) {
-                        Ordering::Greater => Err(NonceError::nonce_too_high(tx_nonce, state))?,
-                        Ordering::Less => Err(NonceError::nonce_too_low(tx_nonce, state))?,
+                        Ordering::Greater => {
+                            return Err(TempoInvalidTransaction::EthInvalidTransaction(
+                                InvalidTransaction::NonceTooHigh {
+                                    tx: tx_nonce,
+                                    state,
+                                },
+                            )
+                            .into());
+                        }
+                        Ordering::Less => {
+                            return Err(TempoInvalidTransaction::EthInvalidTransaction(
+                                InvalidTransaction::NonceTooLow {
+                                    tx: tx_nonce,
+                                    state,
+                                },
+                            )
+                            .into());
+                        }
                         _ => {}
                     }
                 }
 
                 // Always increment nonce for AA transactions with non-zero nonce keys.
-                nonce_manager.increment_nonce(tx.caller(), nonce_key)?;
+                nonce_manager
+                    .increment_nonce(tx.caller(), nonce_key)
+                    .map_err(|err| match err {
+                        TempoPrecompileError::Fatal(err) => EVMError::Custom(err),
+                        err => TempoInvalidTransaction::NonceManagerError(err.to_string()).into(),
+                    })?;
 
-                Ok(())
-            })
-            .map_err(|err| match err {
-                TempoPrecompileError::Fatal(err) => EVMError::Custom(err),
-                TempoPrecompileError::NonceError(NonceError::NonceTooHigh(
-                    tempo_precompiles::nonce::INonce::NonceTooHigh { tx, state },
-                )) => TempoInvalidTransaction::EthInvalidTransaction(
-                    InvalidTransaction::NonceTooHigh { tx, state },
-                )
-                .into(),
-                TempoPrecompileError::NonceError(NonceError::NonceTooLow(
-                    tempo_precompiles::nonce::INonce::NonceTooLow { tx, state },
-                )) => TempoInvalidTransaction::EthInvalidTransaction(
-                    InvalidTransaction::NonceTooLow { tx, state },
-                )
-                .into(),
-                err => TempoInvalidTransaction::NonceManagerError(err.to_string()).into(),
+                Result::<(), EVMError<DB::Error, TempoInvalidTransaction>>::Ok(())
             })?;
         } else {
             // Bump the nonce for calls. Nonce for CREATE will be bumped in `make_create_frame`.
