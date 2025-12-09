@@ -655,8 +655,10 @@ where
         // Note: Transaction parameter validation (priority fee, time window) happens in validate_env()
 
         // If the transaction includes a KeyAuthorization, validate and authorize the key
+        // Skip validation during gas estimation (signature_hash is zero for mock signatures)
         if let Some(tempo_tx_env) = tx.tempo_tx_env.as_ref()
             && let Some(key_auth) = &tempo_tx_env.key_authorization
+            && tempo_tx_env.signature_hash != alloy_primitives::B256::ZERO
         {
             // Check if this TX is using a Keychain signature (access key)
             // Access keys cannot authorize new keys UNLESS it's the same key being authorized (same-tx auth+use)
@@ -790,8 +792,10 @@ where
 
         // For Keychain signatures, validate that the keychain is authorized in the precompile
         // UNLESS this transaction also includes a KeyAuthorization (same-tx auth+use case)
+        // Skip validation during gas estimation (signature_hash is zero for mock signatures)
         if let Some(tempo_tx_env) = tx.tempo_tx_env.as_ref()
             && let Some(keychain_sig) = tempo_tx_env.signature.as_keychain()
+            && tempo_tx_env.signature_hash != alloy_primitives::B256::ZERO
         {
             // The user_address is the root account this transaction is being executed for
             // This should match tx.caller (which comes from recover_signer on the outer signature)
