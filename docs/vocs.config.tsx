@@ -110,6 +110,11 @@ export default defineConfig({
             ],
           },
           {
+            text: 'Use Tempo Transactions',
+            link: '/guide/tempo-transaction',
+          },
+
+          {
             text: 'Make Payments',
             collapsed: true,
             items: [
