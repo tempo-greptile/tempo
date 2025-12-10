@@ -93,15 +93,25 @@ fn primitive_signature_verification_gas(signature: &PrimitiveSignature) -> u64 {
 
 /// Calculates the gas cost for verifying an AA signature.
 ///
-/// For Keychain signatures, adds key validation overhead to the inner signature cost.
+/// For Keychain signatures, adds key validation overhead to the inner signature cost
+/// (only post-AllegroModerato hardfork).
 /// Returns the additional gas required beyond the base transaction cost.
 #[inline]
-fn tempo_signature_verification_gas(signature: &TempoSignature) -> u64 {
+fn tempo_signature_verification_gas(
+    signature: &TempoSignature,
+    spec: tempo_chainspec::hardfork::TempoHardfork,
+) -> u64 {
     match signature {
         TempoSignature::Primitive(prim_sig) => primitive_signature_verification_gas(prim_sig),
         TempoSignature::Keychain(keychain_sig) => {
             // Keychain = inner signature + key validation overhead (SLOAD + processing)
-            primitive_signature_verification_gas(&keychain_sig.signature) + KEYCHAIN_VALIDATION_GAS
+            // Post-AllegroModerato: add KEYCHAIN_VALIDATION_GAS for key validation
+            let base_gas = primitive_signature_verification_gas(&keychain_sig.signature);
+            if spec.is_allegro_moderato() {
+                base_gas + KEYCHAIN_VALIDATION_GAS
+            } else {
+                base_gas
+            }
         }
     }
 }
@@ -1126,7 +1136,7 @@ where
 ///   - Initcode analysis gas (2 per 32-byte chunk, Shanghai+)
 /// - Check that value transfer is zero.
 /// - Access list costs (shared across batch)
-/// - Key authorization costs (if present): 30k/32k base + 22k per spending limit
+/// - Key authorization costs (if present, post-AllegroModerato): 30k/32k base + 22k per spending limit
 /// - Floor gas calculation (EIP-7623, Prague+)
 fn calculate_aa_batch_intrinsic_gas<'a>(
     calls: &[tempo_primitives::transaction::Call],
@@ -1134,6 +1144,7 @@ fn calculate_aa_batch_intrinsic_gas<'a>(
     access_list: Option<impl Iterator<Item = &'a AccessListItem>>,
     authorization_list: &[RecoveredTempoAuthorization],
     key_authorization: Option<&tempo_primitives::transaction::SignedKeyAuthorization>,
+    spec: tempo_chainspec::hardfork::TempoHardfork,
 ) -> Result<InitialAndFloorGas, TempoInvalidTransaction> {
     let mut gas = InitialAndFloorGas::default();
 
@@ -1141,7 +1152,7 @@ fn calculate_aa_batch_intrinsic_gas<'a>(
     gas.initial_gas += 21_000;
 
     // 2. Signature verification gas
-    gas.initial_gas += tempo_signature_verification_gas(signature);
+    gas.initial_gas += tempo_signature_verification_gas(signature, spec);
 
     // 3. Per-call overhead: cold account access
     // if the `to` address has not appeared in the call batch before.
@@ -1151,12 +1162,14 @@ fn calculate_aa_batch_intrinsic_gas<'a>(
     gas.initial_gas += authorization_list.len() as u64 * eip7702::PER_EMPTY_ACCOUNT_COST;
     // Add signature verification costs for each authorization
     for auth in authorization_list {
-        gas.initial_gas += tempo_signature_verification_gas(auth.signature());
+        gas.initial_gas += tempo_signature_verification_gas(auth.signature(), spec);
     }
 
-    // 5. Key authorization costs (if present)
-    if let Some(key_auth) = key_authorization {
-        gas.initial_gas += calculate_key_authorization_gas(key_auth);
+    // 5. Key authorization costs (if present, post-AllegroModerato)
+    if spec.is_allegro_moderato() {
+        if let Some(key_auth) = key_authorization {
+            gas.initial_gas += calculate_key_authorization_gas(key_auth);
+        }
     }
 
     // 6. Per-call costs
@@ -1245,12 +1258,14 @@ where
     }
 
     // Calculate batch intrinsic gas using helper
+    let spec = evm.ctx_ref().cfg().spec();
     let mut batch_gas = calculate_aa_batch_intrinsic_gas(
         calls,
         &aa_env.signature,
         tx.access_list(),
         &aa_env.tempo_authorization_list,
         aa_env.key_authorization.as_ref(),
+        spec,
     )?;
 
     if evm.ctx.cfg.is_eip7623_disabled() {
@@ -1526,6 +1541,7 @@ mod tests {
             None::<std::iter::Empty<&AccessListItem>>, // no access list
             &aa_env.tempo_authorization_list,
             None, // no key authorization
+            spec,
         )
         .unwrap();
 
@@ -1591,6 +1607,7 @@ mod tests {
             None::<std::iter::Empty<&AccessListItem>>,
             &aa_env.tempo_authorization_list,
             None, // no key authorization
+            spec,
         )
         .unwrap();
 
@@ -1642,12 +1659,14 @@ mod tests {
             ..Default::default()
         };
 
+        let tempo_spec = tempo_chainspec::hardfork::TempoHardfork::default();
         let gas = calculate_aa_batch_intrinsic_gas(
             &aa_env.aa_calls,
             &aa_env.signature,
             None::<std::iter::Empty<&AccessListItem>>,
             &aa_env.tempo_authorization_list,
             None, // no key authorization
+            tempo_spec,
         )
         .unwrap();
 
@@ -1688,12 +1707,14 @@ mod tests {
             ..Default::default()
         };
 
+        let tempo_spec = tempo_chainspec::hardfork::TempoHardfork::default();
         let gas = calculate_aa_batch_intrinsic_gas(
             &aa_env.aa_calls,
             &aa_env.signature,
             None::<std::iter::Empty<&AccessListItem>>,
             &aa_env.tempo_authorization_list,
             None, // no key authorization
+            tempo_spec,
         )
         .unwrap();
 
@@ -1732,12 +1753,14 @@ mod tests {
             ..Default::default()
         };
 
+        let spec = tempo_chainspec::hardfork::TempoHardfork::default();
         let res = calculate_aa_batch_intrinsic_gas(
             &aa_env.aa_calls,
             &aa_env.signature,
             None::<std::iter::Empty<&AccessListItem>>,
             &aa_env.tempo_authorization_list,
             None, // no key authorization
+            spec,
         );
 
         assert_eq!(
@@ -1773,12 +1796,14 @@ mod tests {
         };
 
         // Test without access list
+        let tempo_spec = tempo_chainspec::hardfork::TempoHardfork::default();
         let gas = calculate_aa_batch_intrinsic_gas(
             &aa_env.aa_calls,
             &aa_env.signature,
             None::<std::iter::Empty<&AccessListItem>>,
             &aa_env.tempo_authorization_list,
             None, // no key authorization
+            tempo_spec,
         )
         .unwrap();
 
@@ -1879,12 +1904,14 @@ mod tests {
             ..Default::default()
         };
 
+        let tempo_spec = tempo_chainspec::hardfork::TempoHardfork::default();
         let gas = calculate_aa_batch_intrinsic_gas(
             &aa_env.aa_calls,
             &aa_env.signature,
             None::<std::iter::Empty<&AccessListItem>>,
             &aa_env.tempo_authorization_list,
             None, // no key authorization
+            tempo_spec,
         )
         .unwrap();
 
@@ -2047,6 +2074,9 @@ mod tests {
             ..Default::default()
         };
 
+        // Use AllegroModerato to test the key authorization gas schedule
+        let spec = tempo_chainspec::hardfork::TempoHardfork::AllegroModerato;
+
         // Calculate gas WITH key authorization
         let gas_with_key_auth = calculate_aa_batch_intrinsic_gas(
             &aa_env.aa_calls,
@@ -2054,6 +2084,7 @@ mod tests {
             None::<std::iter::Empty<&AccessListItem>>,
             &aa_env.tempo_authorization_list,
             aa_env.key_authorization.as_ref(),
+            spec,
         )
         .unwrap();
 
@@ -2064,6 +2095,7 @@ mod tests {
             None::<std::iter::Empty<&AccessListItem>>,
             &aa_env.tempo_authorization_list,
             None,
+            spec,
         )
         .unwrap();
 
@@ -2078,7 +2110,6 @@ mod tests {
         );
 
         // Also verify absolute values
-        let spec = tempo_chainspec::hardfork::TempoHardfork::default();
         let base_tx_gas = calculate_initial_tx_gas(spec.into(), &calldata, false, 0, 0, 0);
         let expected_without = base_tx_gas.initial_gas + COLD_ACCOUNT_ACCESS_COST;
         let expected_with = expected_without + expected_key_auth_gas;
