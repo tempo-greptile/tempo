@@ -1372,13 +1372,14 @@ mod tests {
         let expected_balance = U256::random();
 
         // Set up initial balance
-        let balance_slot = TIP20Token::from_address(token)?.balances.at(account).slot();
+        let token_id = tip20::address_to_token_id_unchecked(token);
+        let balance_slot = TIP20Token::new(token_id).balances.at(account).slot();
         journal.load_account(token)?;
         journal
             .sstore(token, balance_slot, expected_balance)
             .unwrap();
 
-        let balance = get_token_balance(&mut journal, token, account).unwrap();
+        let balance = get_token_balance(&mut journal, token, account)?;
         assert_eq!(balance, expected_balance);
 
         Ok(())

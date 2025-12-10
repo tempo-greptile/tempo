@@ -1059,18 +1059,16 @@ pub(crate) mod tests {
         let mut factory = TIP20Factory::new();
         factory.initialize()?;
 
-        let token_address = factory
-            .create_token(
+        let token_address = factory.create_token(
+            admin,
+            ITIP20Factory::createTokenCall {
+                name: name.to_string(),
+                symbol: symbol.to_string(),
+                currency: "USD".to_string(),
+                quoteToken: PATH_USD_ADDRESS,
                 admin,
-                ITIP20Factory::createTokenCall {
-                    name: name.to_string(),
-                    symbol: symbol.to_string(),
-                    currency: "USD".to_string(),
-                    quoteToken: PATH_USD_ADDRESS,
-                    admin,
-                },
-            )
-            .unwrap();
+            },
+        )?;
 
         Ok(address_to_token_id_unchecked(token_address))
     }
@@ -1121,17 +1119,13 @@ pub(crate) mod tests {
             initialize_path_usd(admin)?;
             let mut token = TIP20Token::new(token_id);
             // Initialize with admin
-            token
-                .initialize("Test", "TST", "USD", PATH_USD_ADDRESS, admin, Address::ZERO)
-                .unwrap();
+            token.initialize("Test", "TST", "USD", PATH_USD_ADDRESS, admin, Address::ZERO)?;
 
             // Grant issuer role to admin
             token.grant_role_internal(admin, *ISSUER_ROLE)?;
 
             let amount = U256::random().min(U256::from(u128::MAX)) % token.supply_cap()?;
-            token
-                .mint(admin, ITIP20::mintCall { to: addr, amount })
-                .unwrap();
+            token.mint(admin, ITIP20::mintCall { to: addr, amount })?;
 
             assert_eq!(token.get_balance(addr)?, amount);
             assert_eq!(token.total_supply()?, amount);
@@ -1159,16 +1153,12 @@ pub(crate) mod tests {
         StorageContext::enter(&mut storage, || {
             initialize_path_usd(admin)?;
             let mut token = TIP20Token::new(token_id);
-            token
-                .initialize("Test", "TST", "USD", PATH_USD_ADDRESS, admin, Address::ZERO)
-                .unwrap();
+            token.initialize("Test", "TST", "USD", PATH_USD_ADDRESS, admin, Address::ZERO)?;
             token.grant_role_internal(admin, *ISSUER_ROLE)?;
 
             let amount = U256::random().min(U256::from(u128::MAX)) % token.supply_cap()?;
             token.mint(admin, ITIP20::mintCall { to: from, amount })?;
-            token
-                .transfer(from, ITIP20::transferCall { to, amount })
-                .unwrap();
+            token.transfer(from, ITIP20::transferCall { to, amount })?;
 
             assert_eq!(token.get_balance(from)?, U256::ZERO);
             assert_eq!(token.get_balance(to)?, amount);
@@ -1498,9 +1488,7 @@ pub(crate) mod tests {
             token.grant_role_internal(admin, *ISSUER_ROLE)?;
 
             let amount = U256::from(100);
-            token
-                .mint(admin, ITIP20::mintCall { to: user, amount })
-                .unwrap();
+            token.mint(admin, ITIP20::mintCall { to: user, amount })?;
 
             let fee_amount = U256::from(50);
             token
@@ -1560,7 +1548,7 @@ pub(crate) mod tests {
             assert_eq!(token.get_balance(TIP_FEE_MANAGER_ADDRESS)?, U256::from(70));
 
             assert_eq!(
-                token.emitted_events().last().unwrap(),
+                token.emitted_events().last()?,
                 &TIP20Event::Transfer(ITIP20::Transfer {
                     from: user,
                     to: TIP_FEE_MANAGER_ADDRESS,
@@ -1621,7 +1609,7 @@ pub(crate) mod tests {
 
             assert!(token.system_transfer_from(from, to, amount).is_ok());
             assert_eq!(
-                token.emitted_events().last().unwrap(),
+                token.emitted_events().last()?,
                 &TIP20Event::Transfer(ITIP20::Transfer { from, to, amount }).into_log_data()
             );
 
@@ -1670,7 +1658,7 @@ pub(crate) mod tests {
 
             // Verify event was emitted
             assert_eq!(
-                token.emitted_events().last().unwrap(),
+                token.emitted_events().last()?,
                 &TIP20Event::NextQuoteTokenSet(ITIP20::NextQuoteTokenSet {
                     updater: admin,
                     nextQuoteToken: quote_token_address,
@@ -1801,7 +1789,7 @@ pub(crate) mod tests {
 
             // Verify event was emitted
             assert_eq!(
-                token.emitted_events().last().unwrap(),
+                token.emitted_events().last()?,
                 &TIP20Event::QuoteTokenUpdate(ITIP20::QuoteTokenUpdate {
                     updater: admin,
                     newQuoteToken: quote_token_address,
@@ -1834,14 +1822,12 @@ pub(crate) mod tests {
 
             // Now try to set token_a as the next quote token for token_b (would create A -> B -> A loop)
             let mut token_b = TIP20Token::new(token_b_id);
-            token_b
-                .set_next_quote_token(
-                    admin,
-                    ITIP20::setNextQuoteTokenCall {
-                        newQuoteToken: token_a_address,
-                    },
-                )
-                .unwrap();
+            token_b.set_next_quote_token(
+                admin,
+                ITIP20::setNextQuoteTokenCall {
+                    newQuoteToken: token_a_address,
+                },
+            )?;
 
             // Try to complete the update - should fail due to loop detection
             let result =
