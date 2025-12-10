@@ -1,3 +1,6 @@
+import RewardWatchRewardRecipientSetParams from '../../../../snippets/sdk/params/reward.watchRewardRecipientSet.mdx'
+import RewardWatchRewardRecipientSetReturns from '../../../../snippets/sdk/returns/reward.watchRewardRecipientSet.mdx'
+
 # `reward.watchRewardRecipientSet`
 
 Watches for reward recipient set events when token holders change their reward recipient.
@@ -29,48 +32,8 @@ unwatch()
 
 ## Return Type
 
-```ts
-type ReturnType = () => void
-```
-
-Returns a function to unsubscribe from the event.
+<RewardWatchRewardRecipientSetReturns />
 
 ## Parameters
 
-### onRewardRecipientSet
-
-- **Type:**
-
-```ts
-declare function onRewardRecipientSet(args: Args, log: Log): void
-
-type Args = {
-  /** Token holder address who set their reward recipient */
-  holder: Address
-  /** New reward recipient address (zero address indicates opt-out) */
-  recipient: Address
-}
-```
-
-Callback to invoke when a reward recipient is set.
-
-### token
-
-- **Type:** `Address`
-
-Address of the TIP-20 token to watch.
-
-### args (optional)
-
-- **Type:** `object`
-
-```ts
-type Args = {
-  /** Filter events by holder address */
-  holder?: Address
-  /** Filter events by recipient address */
-  recipient?: Address
-}
-```
-
-Optional filters for the event.
+<RewardWatchRewardRecipientSetParams />

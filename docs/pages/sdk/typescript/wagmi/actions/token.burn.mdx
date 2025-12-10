@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import TokenBurnParams from '../../../../../snippets/sdk/params/token.burn.wagmi.mdx'
+import TokenBurnReturns from '../../../../../snippets/sdk/returns/token.burn.mdx'
 
 # `token.burn`
 
@@ -54,36 +56,8 @@ const { args }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Amount of tokens burned */
-  amount: bigint
-  /** Address tokens were burned from */
-  from: Address
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-}
-```
+<TokenBurnReturns />
 
 ## Parameters
 
-### amount
-
-- **Type:** `bigint`
-
-Amount of tokens to burn.
-
-### memo (optional)
-
-- **Type:** `Hex`
-
-Memo to include in the transfer.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token.
-
-<WriteParameters wagmi />
-
+<TokenBurnParams />

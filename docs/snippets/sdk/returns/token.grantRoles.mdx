@@ -1,0 +1,16 @@
+### `grantRoles`
+
+```ts
+type ReturnType = 0x${string}
+```
+
+Returns a transaction hash.
+
+### `grantRolesSync`
+
+```ts
+type ReturnType = {
+  receipt: TransactionReceipt
+  value: readonly { role: 0x${string}; account: 0x${string}; sender: 0x${string}; hasRole: boolean; }[]
+}
+```

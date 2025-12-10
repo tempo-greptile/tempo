@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import DexWithdrawParams from '../../../../../snippets/sdk/params/dex.withdraw.wagmi.mdx'
+import DexWithdrawReturns from '../../../../../snippets/sdk/returns/dex.withdraw.mdx'
 
 # `dex.withdraw`
 
@@ -49,26 +51,8 @@ const receipt = await waitForTransactionReceipt(config, { hash })
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-}
-```
+<DexWithdrawReturns />
 
 ## Parameters
 
-### amount
-
-- **Type:** `bigint`
-
-Amount of tokens to withdraw.
-
-### token
-
-- **Type:** `Address`
-
-Address of the token to withdraw.
-
-<WriteParameters wagmi />
-
+<DexWithdrawParams />

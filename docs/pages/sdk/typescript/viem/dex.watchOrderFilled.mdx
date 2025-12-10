@@ -1,3 +1,6 @@
+import DexWatchOrderFilledParams from '../../../../snippets/sdk/params/dex.watchOrderFilled.mdx'
+import DexWatchOrderFilledReturns from '../../../../snippets/sdk/returns/dex.watchOrderFilled.mdx'
+
 # `dex.watchOrderFilled`
 
 Watches for order filled events on the Stablecoin DEX.
@@ -30,78 +33,8 @@ unwatch()
 
 ## Return Type
 
-```ts
-type ReturnType = () => void
-```
-
-Returns a function to unsubscribe from the event.
+<DexWatchOrderFilledReturns />
 
 ## Parameters
 
-### onOrderFilled
-
-- **Type:** `function`
-
-```ts
-declare function onOrderFilled(args: Args, log: Log): void
-
-type Args = {
-  /** ID of the filled order */
-  orderId: bigint
-  /** Address that placed the order */
-  maker: Address
-  /** Amount of tokens filled */
-  amountFilled: bigint
-  /** Whether the order was partially filled */
-  partialFill: boolean
-}
-```
-
-Callback to invoke when an order is filled.
-
-### maker (optional)
-
-- **Type:** `Address`
-
-Address of the maker to filter events.
-
-### orderId (optional)
-
-- **Type:** `bigint`
-
-Order ID to filter events.
-
-### taker (optional)
-
-- **Type:** `Address`
-
-Address of the taker to filter events.
-
-### fromBlock (optional)
-
-- **Type:** `bigint`
-
-Block to start listening from.
-
-### onError (optional)
-
-- **Type:** `function`
-
-```ts
-declare function onError(error: Error): void
-```
-
-The callback to call when an error occurred when trying to get for a new block.
-
-### poll (optional)
-
-- **Type:** `true`
-
-Whether to use polling.
-
-### pollingInterval (optional)
-
-- **Type:** `number`
-
-Polling frequency (in ms). Defaults to Client's pollingInterval config.
-
+<DexWatchOrderFilledParams />

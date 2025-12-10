@@ -1,4 +1,6 @@
-import ReadParameters from '../../../../../snippets/read-parameters.mdx'
+
+import RewardGetUserRewardInfoParams from '../../../../../snippets/sdk/params/reward.getUserRewardInfo.wagmi.mdx'
+import RewardGetUserRewardInfoReturns from '../../../../../snippets/sdk/returns/reward.getUserRewardInfo.mdx'
 
 # `reward.getUserRewardInfo`
 
@@ -35,29 +37,8 @@ console.log('Reward per token:', rewardPerToken)
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Accumulated reward balance claimable by the account */
-  rewardBalance: bigint
-  /** Reward per token checkpoint for the account */
-  rewardPerToken: bigint
-  /** Current reward recipient address (zero address if opted out) */
-  rewardRecipient: Address
-}
-```
+<RewardGetUserRewardInfoReturns />
 
 ## Parameters
 
-### account
-
-- **Type:** `Address`
-
-Address of the account to get reward info for.
-
-### token
-
-- **Type:** `Address`
-
-Address of the TIP-20 token.
-
-<ReadParameters wagmi />
+<RewardGetUserRewardInfoParams />

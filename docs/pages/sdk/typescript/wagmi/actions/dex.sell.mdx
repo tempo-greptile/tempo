@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import DexSellParams from '../../../../../snippets/sdk/params/dex.sell.wagmi.mdx'
+import DexSellReturns from '../../../../../snippets/sdk/returns/dex.sell.mdx'
 
 # `dex.sell`
 
@@ -53,38 +55,8 @@ const receipt = await waitForTransactionReceipt(config, { hash })
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-}
-```
+<DexSellReturns />
 
 ## Parameters
 
-### amountIn
-
-- **Type:** `bigint`
-
-Amount of tokenIn to sell.
-
-### minAmountOut
-
-- **Type:** `bigint`
-
-Minimum amount of tokenOut to receive.
-
-### tokenIn
-
-- **Type:** `Address`
-
-Address of the token to sell.
-
-### tokenOut
-
-- **Type:** `Address`
-
-Address of the token to receive.
-
-<WriteParameters wagmi />
-
+<DexSellParams />

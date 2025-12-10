@@ -1,4 +1,6 @@
-import ReadParameters from '../../../../snippets/read-parameters.mdx'
+
+import DexGetOrderParams from '../../../../snippets/sdk/params/dex.getOrder.mdx'
+import DexGetOrderReturns from '../../../../snippets/sdk/returns/dex.getOrder.mdx'
 
 # `dex.getOrder`
 
@@ -27,41 +29,8 @@ console.log('Order details:', order)
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Original order amount */
-  amount: bigint
-  /** Orderbook key (identifies the trading pair) */
-  bookKey: Hex
-  /** Tick to flip to when fully filled (for flip orders). For bid flips: must be > tick. For ask flips: must be < tick */
-  flipTick: number
-  /** Whether this is a bid (true) or ask (false) order */
-  isBid: boolean
-  /** Whether this is a flip order */
-  isFlip: boolean
-  /** Address of the user who placed this order */
-  maker: Address
-  /** Next order ID in the doubly linked list (0 if tail) */
-  next: bigint
-  /** The order ID */
-  orderId: bigint
-  /** Previous order ID in the doubly linked list (0 if head) */
-  prev: bigint
-  /** Remaining amount to be filled */
-  remaining: bigint
-  /** Price tick */
-  tick: number
-}
-```
-
-Returns the complete order details including the maker's address, order amounts, price tick, linked list pointers, and flip order information.
+<DexGetOrderReturns />
 
 ## Parameters
 
-### orderId
-
-- **Type:** `bigint`
-
-Order ID to query.
-
-<ReadParameters />
+<DexGetOrderParams />

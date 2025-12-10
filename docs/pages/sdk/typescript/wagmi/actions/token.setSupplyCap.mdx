@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import TokenSetSupplyCapParams from '../../../../../snippets/sdk/params/token.setSupplyCap.wagmi.mdx'
+import TokenSetSupplyCapReturns from '../../../../../snippets/sdk/returns/token.setSupplyCap.mdx'
 
 # `token.setSupplyCap`
 
@@ -54,30 +56,8 @@ const { args }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** New supply cap value */
-  newSupplyCap: bigint
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Address that updated the supply cap */
-  updater: Address
-}
-```
+<TokenSetSupplyCapReturns />
 
 ## Parameters
 
-### supplyCap
-
-- **Type:** `bigint`
-
-Maximum total supply allowed for the token.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token.
-
-<WriteParameters wagmi />
-
+<TokenSetSupplyCapParams />

@@ -18,5 +18,8 @@ tmp
 .claude/settings.local.json
 .claude/sdk-types
 
+# SDK types used in docs generation
+snippets/sdk/types
+
 # Sonda bundle diagnostic files
 .sonda

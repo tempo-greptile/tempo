@@ -1,4 +1,6 @@
-import ReadParameters from '../../../../../snippets/read-parameters.mdx'
+
+import RewardGetTotalPerSecondParams from '../../../../../snippets/sdk/params/reward.getTotalPerSecond.wagmi.mdx'
+import RewardGetTotalPerSecondReturns from '../../../../../snippets/sdk/returns/reward.getTotalPerSecond.mdx'
 
 # `reward.getTotalPerSecond`
 
@@ -29,22 +31,8 @@ console.log('Total rate per second:', rate)
 
 ## Return Type
 
-```ts
-type ReturnValue = bigint
-```
-
-Returns the current aggregate per-second emission rate scaled by `ACC_PRECISION` (1e18). This value represents the sum of all active reward streams' emission rates.
-
-:::tip
-The rate decreases when streams end (via `finalizeStreams`) or are canceled.
-:::
+<RewardGetTotalPerSecondReturns />
 
 ## Parameters
 
-### token
-
-- **Type:** `Address`
-
-Address of the TIP-20 token.
-
-<ReadParameters wagmi />
+<RewardGetTotalPerSecondParams />

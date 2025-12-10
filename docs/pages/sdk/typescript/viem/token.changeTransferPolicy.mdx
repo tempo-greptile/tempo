@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../snippets/write-parameters.mdx'
+
+import TokenChangeTransferPolicyParams from '../../../../snippets/sdk/params/token.changeTransferPolicy.mdx'
+import TokenChangeTransferPolicyReturns from '../../../../snippets/sdk/returns/token.changeTransferPolicy.mdx'
 
 # `token.changeTransferPolicy`
 
@@ -48,30 +50,8 @@ const { args }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** ID of the new transfer policy */
-  newPolicyId: bigint
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Address that updated the policy */
-  updater: Address
-}
-```
+<TokenChangeTransferPolicyReturns />
 
 ## Parameters
 
-### policyId
-
-- **Type:** `bigint`
-
-New transfer policy ID.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token.
-
-<WriteParameters />
-
+<TokenChangeTransferPolicyParams />

@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../snippets/write-parameters.mdx'
+
+import PolicySetAdminParams from '../../../../snippets/sdk/params/policy.setAdmin.mdx'
+import PolicySetAdminReturns from '../../../../snippets/sdk/returns/policy.setAdmin.mdx'
 
 # `policy.setAdmin`
 
@@ -48,32 +50,8 @@ const { args }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Address of the new admin */
-  admin: Address
-  /** ID of the policy */
-  policyId: bigint
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Address that updated the admin */
-  updater: Address
-}
-```
+<PolicySetAdminReturns />
 
 ## Parameters
 
-### admin
-
-- **Type:** `Address`
-
-Address to set as the new policy admin.
-
-### policyId
-
-- **Type:** `bigint`
-
-ID of the policy to update.
-
-<WriteParameters />
-
+<PolicySetAdminParams />

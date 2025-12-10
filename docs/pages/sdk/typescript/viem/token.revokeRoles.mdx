@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../snippets/write-parameters.mdx'
+
+import TokenRevokeRolesParams from '../../../../snippets/sdk/params/token.revokeRoles.mdx'
+import TokenRevokeRolesReturns from '../../../../snippets/sdk/returns/token.revokeRoles.mdx'
 
 # `token.revokeRoles`
 
@@ -49,43 +51,8 @@ const events = Actions.token.revokeRoles.extractEvents(receipt.logs)
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Array of role membership update events */
-  value: readonly {
-    /** Role identifier */
-    role: Hex
-    /** Address that had role revoked */
-    account: Address
-    /** Address that revoked the role */
-    sender: Address
-    /** Whether the role was granted (true) or revoked (false) */
-    hasRole: boolean
-  }[]
-}
-```
+<TokenRevokeRolesReturns />
 
 ## Parameters
 
-### from
-
-- **Type:** `Address`
-
-Address to revoke the role from.
-
-### role
-
-- **Type:** `"defaultAdmin" | "pause" | "unpause" | "issuer" | "burnBlocked"`
-
-Role to revoke.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token.
-
-<WriteParameters />
-
+<TokenRevokeRolesParams />

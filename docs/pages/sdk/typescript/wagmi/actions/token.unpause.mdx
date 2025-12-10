@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import TokenUnpauseParams from '../../../../../snippets/sdk/params/token.unpause.wagmi.mdx'
+import TokenUnpauseReturns from '../../../../../snippets/sdk/returns/token.unpause.mdx'
 
 # `token.unpause`
 
@@ -50,24 +52,8 @@ const { args }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Whether the token is paused */
-  isPaused: boolean
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Address that unpaused the token */
-  updater: Address
-}
-```
+<TokenUnpauseReturns />
 
 ## Parameters
 
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token.
-
-<WriteParameters wagmi />
-
+<TokenUnpauseParams />

@@ -1,0 +1,10 @@
+```ts
+type ReturnType = {
+  /** Order ID of the first order at this tick (0 if empty) */
+  head: bigint
+  /** Order ID of the last order at this tick (0 if empty) */
+  tail: bigint
+  /** Total liquidity available at this tick level */
+  totalLiquidity: bigint
+}
+```

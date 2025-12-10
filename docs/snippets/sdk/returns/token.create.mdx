@@ -1,0 +1,23 @@
+### `create`
+
+```ts
+type ReturnType = 0x${string}
+```
+
+Returns a transaction hash.
+
+### `createSync`
+
+```ts
+type ReturnType = {
+  admin: 0x${string}
+  currency: string
+  name: string
+  quoteToken: 0x${string}
+  /** Transaction receipt. */
+  receipt: TransactionReceipt
+  symbol: string
+  token: 0x${string}
+  tokenId: bigint
+}
+```

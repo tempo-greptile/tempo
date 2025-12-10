@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import TokenGrantRolesParams from '../../../../../snippets/sdk/params/token.grantRoles.wagmi.mdx'
+import TokenGrantRolesReturns from '../../../../../snippets/sdk/returns/token.grantRoles.mdx'
 
 # `token.grantRoles`
 
@@ -53,43 +55,8 @@ const events = viem_Actions.token.grantRoles.extractEvents(receipt.logs)
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Array of role membership update events */
-  value: readonly {
-    /** Role identifier */
-    role: Hex
-    /** Address that received the role */
-    account: Address
-    /** Address that granted the role */
-    sender: Address
-    /** Whether the role was granted (true) or revoked (false) */
-    hasRole: boolean
-  }[]
-}
-```
+<TokenGrantRolesReturns />
 
 ## Parameters
 
-### role
-
-- **Type:** `"defaultAdmin" | "pause" | "unpause" | "issuer" | "burnBlocked"`
-
-Role to grant.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP20 token.
-
-### to
-
-- **Type:** `Address`
-
-Address to grant the role to.
-
-<WriteParameters wagmi />
-
+<TokenGrantRolesParams />

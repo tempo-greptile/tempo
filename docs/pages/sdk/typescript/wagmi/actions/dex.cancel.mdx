@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import DexCancelParams from '../../../../../snippets/sdk/params/dex.cancel.wagmi.mdx'
+import DexCancelReturns from '../../../../../snippets/sdk/returns/dex.cancel.mdx'
 
 # `dex.cancel`
 
@@ -50,22 +52,8 @@ const { args: { orderId } }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** ID of the cancelled order */
-  orderId: bigint
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-}
-```
+<DexCancelReturns />
 
 ## Parameters
 
-### orderId
-
-- **Type:** `bigint`
-
-ID of the order to cancel.
-
-<WriteParameters wagmi />
-
+<DexCancelParams />

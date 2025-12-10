@@ -1,4 +1,6 @@
-import ReadParameters from '../../../../../snippets/read-parameters.mdx'
+
+import TokenHasRoleParams from '../../../../../snippets/sdk/params/token.hasRole.wagmi.mdx'
+import TokenHasRoleReturns from '../../../../../snippets/sdk/returns/token.hasRole.mdx'
 
 # `token.hasRole`
 
@@ -31,29 +33,8 @@ console.log('Has issuer role:', hasRole)
 
 ## Return Type
 
-```ts
-type ReturnType = boolean // Whether the account has the role
-```
+<TokenHasRoleReturns />
 
 ## Parameters
 
-### account
-
-- **Type:** `Address`
-
-Address to check for the role.
-
-### role
-
-- **Type:** `"defaultAdmin" | "pause" | "unpause" | "issuer" | "burnBlocked"`
-
-Role to check.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token.
-
-<ReadParameters wagmi />
-
+<TokenHasRoleParams />

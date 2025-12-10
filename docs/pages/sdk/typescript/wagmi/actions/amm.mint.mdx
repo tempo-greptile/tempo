@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import AmmMintParams from '../../../../../snippets/sdk/params/amm.mint.wagmi.mdx'
+import AmmMintReturns from '../../../../../snippets/sdk/returns/amm.mint.mdx'
 
 # `amm.mint`
 
@@ -58,50 +60,8 @@ const { args: { liquidity } }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Amount of user tokens provided */
-  amountUserToken: bigint
-  /** Amount of validator tokens provided */
-  amountValidatorToken: bigint
-  /** Amount of liquidity tokens minted */
-  liquidity: bigint
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Address that initiated the mint */
-  sender: Address
-  /** Address of the user token */
-  userToken: Address
-  /** Address of the validator token */
-  validatorToken: Address
-}
-```
+<AmmMintReturns />
 
 ## Parameters
 
-### to
-
-- **Type:** `Address`
-
-Address to mint the liquidity tokens to.
-
-### userTokenAddress
-
-- **Type:** `Address | bigint`
-
-User token address.
-
-### validatorTokenAddress
-
-- **Type:** `Address | bigint`
-
-Validator token address.
-
-### validatorTokenAmount
-
-- **Type:** `bigint`
-
-Amount of validator tokens to provide.
-
-<WriteParameters wagmi />
-
+<AmmMintParams />

@@ -1,0 +1,19 @@
+### `modifyWhitelist`
+
+```ts
+type ReturnType = 0x${string}
+```
+
+Returns a transaction hash.
+
+### `modifyWhitelistSync`
+
+```ts
+type ReturnType = {
+  account: 0x${string}
+  allowed: boolean
+  policyId: bigint
+  receipt: TransactionReceipt
+  updater: 0x${string}
+}
+```

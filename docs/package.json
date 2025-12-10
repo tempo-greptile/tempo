@@ -8,6 +8,7 @@
     "check:types": "tsc --noEmit",
     "dev": "vocs dev",
     "extract-sdk-types": "tsx scripts/extract-sdk-types.ts",
+    "gen:sdk-docs": "tsx scripts/gen:sdk-docs.ts",
     "gen:specs": "node scripts/gen:specs.ts",
     "prepare": "simple-git-hooks",
     "preview": "vocs preview"

@@ -1,4 +1,6 @@
-import ReadParameters from '../../../../snippets/read-parameters.mdx'
+
+import DexGetBalanceParams from '../../../../snippets/sdk/params/dex.getBalance.mdx'
+import DexGetBalanceReturns from '../../../../snippets/sdk/returns/dex.getBalance.mdx'
 
 # `dex.getBalance`
 
@@ -28,22 +30,8 @@ console.log('DEX balance:', balance)
 
 ## Return Type
 
-```ts
-type ReturnType = bigint
-```
+<DexGetBalanceReturns />
 
 ## Parameters
 
-### account
-
-- **Type:** `Address`
-
-Address of the account.
-
-### token
-
-- **Type:** `Address`
-
-Address of the token.
-
-<ReadParameters />
+<DexGetBalanceParams />

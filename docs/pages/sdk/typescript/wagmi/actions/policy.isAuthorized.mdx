@@ -1,4 +1,6 @@
-import ReadParameters from '../../../../../snippets/read-parameters.mdx'
+
+import PolicyIsAuthorizedParams from '../../../../../snippets/sdk/params/policy.isAuthorized.wagmi.mdx'
+import PolicyIsAuthorizedReturns from '../../../../../snippets/sdk/returns/policy.isAuthorized.mdx'
 
 # `policy.isAuthorized`
 
@@ -30,22 +32,8 @@ console.log('Is authorized:', isAuthorized)
 
 ## Return Type
 
-```ts
-type ReturnType = boolean
-```
+<PolicyIsAuthorizedReturns />
 
 ## Parameters
 
-### policyId
-
-- **Type:** `bigint`
-
-Policy ID.
-
-### user
-
-- **Type:** `Address`
-
-User address to check.
-
-<ReadParameters wagmi />
+<PolicyIsAuthorizedParams />

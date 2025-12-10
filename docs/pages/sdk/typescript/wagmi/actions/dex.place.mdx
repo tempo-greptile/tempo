@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import DexPlaceParams from '../../../../../snippets/sdk/params/dex.place.wagmi.mdx'
+import DexPlaceReturns from '../../../../../snippets/sdk/returns/dex.place.mdx'
 
 # `dex.place`
 
@@ -60,50 +62,8 @@ const { args: { orderId } }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** ID of the placed order */
-  orderId: bigint
-  /** Address of the order maker */
-  maker: Address
-  /** Address of the base token */
-  token: Address
-  /** Amount of tokens in the order */
-  amount: bigint
-  /** Whether this is a buy order */
-  isBid: boolean
-  /** Price tick for the order */
-  tick: number
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-}
-```
+<DexPlaceReturns />
 
 ## Parameters
 
-### amount
-
-- **Type:** `bigint`
-
-Amount of tokens to place in the order.
-
-### tick
-
-- **Type:** `number`
-
-Price tick for the order. Use `Tick.fromPrice()` to convert from a price string.
-
-### token
-
-- **Type:** `Address`
-
-Address of the base token.
-
-### type
-
-- **Type:** `OrderType`
-
-Order type - `'buy'` to buy the token, `'sell'` to sell it.
-
-<WriteParameters wagmi />
-
+<DexPlaceParams />

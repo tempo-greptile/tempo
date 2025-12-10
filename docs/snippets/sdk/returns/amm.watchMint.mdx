@@ -1,0 +1,18 @@
+### Return Value
+
+```ts
+type ReturnType = () => void
+```
+
+Returns an unsubscribe function to stop watching.
+
+### Callback Arguments
+
+```ts
+type CallbackArgs = {
+  liquidity: bigint
+  sender: 0x${string}
+  userToken: { address: 0x${string}; amount: bigint; }
+  validatorToken: { address: 0x${string}; amount: bigint; }
+}
+```

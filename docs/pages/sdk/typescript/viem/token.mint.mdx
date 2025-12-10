@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../snippets/write-parameters.mdx'
+
+import TokenMintParams from '../../../../snippets/sdk/params/token.mint.mdx'
+import TokenMintReturns from '../../../../snippets/sdk/returns/token.mint.mdx'
 
 # `token.mint`
 
@@ -52,42 +54,8 @@ const { args }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Amount of tokens minted */
-  amount: bigint
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Address tokens were minted to */
-  to: Address
-}
-```
+<TokenMintReturns />
 
 ## Parameters
 
-### amount
-
-- **Type:** `bigint`
-
-Amount of tokens to mint.
-
-### memo (optional)
-
-- **Type:** `Hex`
-
-Memo to include in the mint.
-
-### to
-
-- **Type:** `Address`
-
-Address to mint tokens to.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token.
-
-<WriteParameters />
-
+<TokenMintParams />

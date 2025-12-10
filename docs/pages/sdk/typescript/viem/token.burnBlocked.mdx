@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../snippets/write-parameters.mdx'
+
+import TokenBurnBlockedParams from '../../../../snippets/sdk/params/token.burnBlocked.mdx'
+import TokenBurnBlockedReturns from '../../../../snippets/sdk/returns/token.burnBlocked.mdx'
 
 # `token.burnBlocked`
 
@@ -52,36 +54,8 @@ const { args }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Amount of tokens burned */
-  amount: bigint
-  /** Address tokens were burned from */
-  from: Address
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-}
-```
+<TokenBurnBlockedReturns />
 
 ## Parameters
 
-### amount
-
-- **Type:** `bigint`
-
-Amount of tokens to burn.
-
-### from
-
-- **Type:** `Address`
-
-Address to burn tokens from.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token.
-
-<WriteParameters />
-
+<TokenBurnBlockedParams />

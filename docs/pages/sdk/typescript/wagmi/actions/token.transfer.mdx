@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import TokenTransferParams from '../../../../../snippets/sdk/params/token.transfer.wagmi.mdx'
+import TokenTransferReturns from '../../../../../snippets/sdk/returns/token.transfer.mdx'
 
 # `token.transfer`
 
@@ -56,50 +58,8 @@ const { args }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Amount of tokens transferred */
-  amount: bigint
-  /** Address tokens were transferred from */
-  from: Address
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Address tokens were transferred to */
-  to: Address
-}
-```
+<TokenTransferReturns />
 
 ## Parameters
 
-### amount
-
-- **Type:** `bigint`
-
-Amount of tokens to transfer.
-
-### to
-
-- **Type:** `Address`
-
-Address to transfer tokens to.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token.
-
-### memo (optional)
-
-- **Type:** `Hex`
-
-Optional memo to attach to the transfer event.
-
-### from (optional)
-
-- **Type:** `Address`
-
-Address to transfer tokens from. When specified, transfers tokens from the given address (requires prior approval). Defaults to the caller's address.
-
-<WriteParameters wagmi />
-
+<TokenTransferParams />

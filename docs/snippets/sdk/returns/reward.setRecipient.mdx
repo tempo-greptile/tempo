@@ -1,0 +1,20 @@
+### `setRecipient`
+
+```ts
+type ReturnType = 0x${string}
+```
+
+Returns a transaction hash.
+
+### `setRecipientSync`
+
+```ts
+type ReturnType = {
+  /** The token holder address who set their reward recipient */
+  holder: 0x${string}
+  /** The transaction receipt */
+  receipt: TransactionReceipt
+  /** The reward recipient address (zero address indicates opt-out) */
+  recipient: 0x${string}
+}
+```

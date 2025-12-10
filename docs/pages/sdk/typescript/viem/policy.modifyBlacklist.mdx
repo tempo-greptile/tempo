@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../snippets/write-parameters.mdx'
+
+import PolicyModifyBlacklistParams from '../../../../snippets/sdk/params/policy.modifyBlacklist.mdx'
+import PolicyModifyBlacklistReturns from '../../../../snippets/sdk/returns/policy.modifyBlacklist.mdx'
 
 # `policy.modifyBlacklist`
 
@@ -50,40 +52,8 @@ const { args }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Address that was added/removed from blacklist */
-  account: Address
-  /** ID of the policy */
-  policyId: bigint
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Whether the address is restricted */
-  restricted: boolean
-  /** Address that modified the blacklist */
-  updater: Address
-}
-```
+<PolicyModifyBlacklistReturns />
 
 ## Parameters
 
-### address
-
-- **Type:** `Address`
-
-Target account address to add or remove from the blacklist.
-
-### policyId
-
-- **Type:** `bigint`
-
-ID of the blacklist policy to modify.
-
-### restricted
-
-- **Type:** `boolean`
-
-Whether the address should be restricted (`true`) or unrestricted (`false`).
-
-<WriteParameters />
-
+<PolicyModifyBlacklistParams />

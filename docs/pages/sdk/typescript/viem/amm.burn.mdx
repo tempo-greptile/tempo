@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../snippets/write-parameters.mdx'
+
+import AmmBurnParams from '../../../../snippets/sdk/params/amm.burn.mdx'
+import AmmBurnReturns from '../../../../snippets/sdk/returns/amm.burn.mdx'
 
 # `amm.burn`
 
@@ -57,52 +59,8 @@ const { args: { amountUserToken, amountValidatorToken } }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Amount of user tokens received */
-  amountUserToken: bigint
-  /** Amount of validator tokens received */
-  amountValidatorToken: bigint
-  /** Amount of liquidity tokens burned */
-  liquidity: bigint
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Address that initiated the burn */
-  sender: Address
-  /** Address that received the underlying tokens */
-  to: Address
-  /** Address of the user token */
-  userToken: Address
-  /** Address of the validator token */
-  validatorToken: Address
-}
-```
+<AmmBurnReturns />
 
 ## Parameters
 
-### liquidity
-
-- **Type:** `bigint`
-
-Amount of LP tokens to burn.
-
-### to
-
-- **Type:** `Address`
-
-Address to send tokens to.
-
-### userToken
-
-- **Type:** `Address | bigint`
-
-Address or ID of the user token.
-
-### validatorToken
-
-- **Type:** `Address | bigint`
-
-Address or ID of the validator token.
-
-<WriteParameters />
-
+<AmmBurnParams />

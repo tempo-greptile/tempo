@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import FeeSetUserTokenParams from '../../../../../snippets/sdk/params/fee.setUserToken.wagmi.mdx'
+import FeeSetUserTokenReturns from '../../../../../snippets/sdk/returns/fee.setUserToken.mdx'
 
 # `fee.setUserToken`
 
@@ -50,24 +52,8 @@ const { args }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Address of the user */
-  user: Address
-  /** Address of the token set */
-  token: Address
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-}
-```
+<FeeSetUserTokenReturns />
 
 ## Parameters
 
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token to use for fees.
-
-<WriteParameters wagmi />
-
+<FeeSetUserTokenParams />

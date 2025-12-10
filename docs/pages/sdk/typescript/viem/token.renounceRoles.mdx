@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../snippets/write-parameters.mdx'
+
+import TokenRenounceRolesParams from '../../../../snippets/sdk/params/token.renounceRoles.mdx'
+import TokenRenounceRolesReturns from '../../../../snippets/sdk/returns/token.renounceRoles.mdx'
 
 # `token.renounceRoles`
 
@@ -47,37 +49,8 @@ const events = Actions.token.renounceRoles.extractEvents(receipt.logs)
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Array of role membership update events */
-  value: readonly {
-    /** Address that renounced the role */
-    account: Address
-    /** Whether the role was granted (true) or revoked (false) */
-    hasRole: boolean
-    /** Role identifier */
-    role: Hex
-    /** Address that initiated the change */
-    sender: Address
-  }[]
-}
-```
+<TokenRenounceRolesReturns />
 
 ## Parameters
 
-### role
-
-- **Type:** `"defaultAdmin" | "pause" | "unpause" | "issuer" | "burnBlocked"`
-
-Role to renounce.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token.
-
-<WriteParameters />
-
+<TokenRenounceRolesParams />

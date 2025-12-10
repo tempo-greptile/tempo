@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../snippets/write-parameters.mdx'
+
+import RewardClaimParams from '../../../../snippets/sdk/params/reward.claim.mdx'
+import RewardClaimReturns from '../../../../snippets/sdk/returns/reward.claim.mdx'
 
 # `reward.claim`
 
@@ -44,19 +46,8 @@ const receipt = await client.waitForTransactionReceipt({ hash })
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-}
-```
+<RewardClaimReturns />
 
 ## Parameters
 
-### token
-
-- **Type:** `Address`
-
-Address of the TIP-20 token.
-
-<WriteParameters />
+<RewardClaimParams />

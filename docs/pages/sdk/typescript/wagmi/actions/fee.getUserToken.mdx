@@ -1,4 +1,6 @@
-import ReadParameters from '../../../../../snippets/read-parameters.mdx'
+
+import FeeGetUserTokenParams from '../../../../../snippets/sdk/params/fee.getUserToken.wagmi.mdx'
+import FeeGetUserTokenReturns from '../../../../../snippets/sdk/returns/fee.getUserToken.mdx'
 
 # `fee.getUserToken`
 
@@ -31,24 +33,8 @@ console.log('Fee token ID:', id)
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Address of the fee token */
-  address: Address
-  /** ID of the fee token */
-  id: bigint
-} | null
-```
-
-Returns `null` if the user has not set a default fee token.
+<FeeGetUserTokenReturns />
 
 ## Parameters
 
-### account
-
-- **Type:** `Address`
-
-Account address.
-
-<ReadParameters wagmi />
-
+<FeeGetUserTokenParams />

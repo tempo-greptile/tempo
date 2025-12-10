@@ -1,0 +1,23 @@
+### `placeFlip`
+
+```ts
+type ReturnType = 0x${string}
+```
+
+Returns a transaction hash.
+
+### `placeFlipSync`
+
+```ts
+type ReturnType = {
+  amount: bigint
+  flipTick: number
+  isBid: boolean
+  maker: 0x${string}
+  orderId: bigint
+  /** Transaction receipt. */
+  receipt: TransactionReceipt
+  tick: number
+  token: 0x${string}
+}
+```

@@ -1,4 +1,6 @@
-import ReadParameters from '../../../../snippets/read-parameters.mdx'
+
+import AmmGetPoolParams from '../../../../snippets/sdk/params/amm.getPool.mdx'
+import AmmGetPoolReturns from '../../../../snippets/sdk/returns/amm.getPool.mdx'
 
 # `amm.getPool`
 
@@ -32,30 +34,8 @@ console.log('Total supply:', pool.totalSupply)
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Reserve of user token */
-  reserveUserToken: bigint
-  /** Reserve of validator token */
-  reserveValidatorToken: bigint
-  /** Total supply of LP tokens */
-  totalSupply: bigint
-}
-```
+<AmmGetPoolReturns />
 
 ## Parameters
 
-### userToken
-
-- **Type:** `Address | bigint`
-
-Address or ID of the user token.
-
-### validatorToken
-
-- **Type:** `Address | bigint`
-
-Address or ID of the validator token.
-
-<ReadParameters />
-
+<AmmGetPoolParams />

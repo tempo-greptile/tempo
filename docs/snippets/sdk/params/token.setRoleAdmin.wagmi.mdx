@@ -1,0 +1,87 @@
+### adminRole
+
+- **Type:** `"defaultAdmin" | "pause" | "unpause" | "issuer" | "burnBlocked"`
+
+New admin role.
+
+### feeToken
+
+- **Type:** `TokenIdOrAddress | null`
+
+Fee token for the transaction. Can be a TIP-20 token address or ID.
+
+### role
+
+- **Type:** `"defaultAdmin" | "pause" | "unpause" | "issuer" | "burnBlocked"`
+
+Role to set admin for.
+
+### token
+
+- **Type:** `TokenIdOrAddress`
+
+Address or ID of the TIP20 token.
+
+### account (optional)
+
+- **Type:** `0x${string} | Account | null`
+
+Account that will be used to send the transaction. Defaults to connected Wagmi account.
+
+### chain (optional)
+
+- **Type:** `Chain | null`
+
+### feePayer (optional)
+
+- **Type:** `true | Account`
+
+Fee payer for the transaction. Can be a [Viem Account](https://viem.sh/docs/accounts/local/privateKeyToAccount), or `true` if a [Fee Payer Service](/sdk/typescript/server/handler.feePayer) will be used.
+
+### gas (optional)
+
+- **Type:** `bigint`
+
+Gas limit for the transaction.
+
+### maxFeePerGas (optional)
+
+- **Type:** `bigint`
+
+Max fee per gas for the transaction.
+
+### maxPriorityFeePerGas (optional)
+
+- **Type:** `bigint`
+
+Max priority fee per gas for the transaction.
+
+### nonce (optional)
+
+- **Type:** `number`
+
+Nonce for the transaction.
+
+### nonceKey (optional)
+
+- **Type:** `bigint | "random"`
+
+Nonce key for the transaction. Use `'random'` to generate a random nonce key.
+
+### throwOnReceiptRevert (optional)
+
+- **Type:** `boolean`
+
+Whether to throw an error if the transaction receipt indicates a revert. Only applicable to `*Sync` actions.
+
+### validAfter (optional)
+
+- **Type:** `number`
+
+Unix timestamp after which the transaction can be included.
+
+### validBefore (optional)
+
+- **Type:** `number`
+
+Unix timestamp before which the transaction must be included.

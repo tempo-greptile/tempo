@@ -1,4 +1,6 @@
-import ReadParameters from '../../../../../snippets/read-parameters.mdx'
+
+import TokenGetBalanceParams from '../../../../../snippets/sdk/params/token.getBalance.wagmi.mdx'
+import TokenGetBalanceReturns from '../../../../../snippets/sdk/returns/token.getBalance.mdx'
 
 # `token.getBalance`
 
@@ -30,23 +32,8 @@ console.log('Balance:', balance)
 
 ## Return Type
 
-```ts
-type ReturnType = bigint // Balance amount
-```
+<TokenGetBalanceReturns />
 
 ## Parameters
 
-### account
-
-- **Type:** `Address`
-
-Account address.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP20 token.
-
-<ReadParameters wagmi />
-
+<TokenGetBalanceParams />

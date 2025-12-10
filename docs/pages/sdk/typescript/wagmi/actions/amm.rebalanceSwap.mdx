@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import AmmRebalanceSwapParams from '../../../../../snippets/sdk/params/amm.rebalanceSwap.wagmi.mdx'
+import AmmRebalanceSwapReturns from '../../../../../snippets/sdk/returns/amm.rebalanceSwap.mdx'
 
 # `amm.rebalanceSwap`
 
@@ -58,48 +60,8 @@ const { args: { amountIn } }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Amount of tokens required for the swap */
-  amountIn: bigint
-  /** Amount of output tokens received */
-  amountOut: bigint
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Address that initiated the swap */
-  swapper: Address
-  /** Address of the user token */
-  userToken: Address
-  /** Address of the validator token */
-  validatorToken: Address
-}
-```
+<AmmRebalanceSwapReturns />
 
 ## Parameters
 
-### amountOut
-
-- **Type:** `bigint`
-
-Amount of user token to receive.
-
-### to
-
-- **Type:** `Address`
-
-Address to send the user token to.
-
-### userToken
-
-- **Type:** `Address | bigint`
-
-Address or ID of the user token.
-
-### validatorToken
-
-- **Type:** `Address | bigint`
-
-Address or ID of the validator token.
-
-<WriteParameters wagmi />
-
+<AmmRebalanceSwapParams />

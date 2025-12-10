@@ -1,0 +1,18 @@
+### Return Value
+
+```ts
+type ReturnType = () => void
+```
+
+Returns an unsubscribe function to stop watching.
+
+### Callback Arguments
+
+```ts
+type CallbackArgs = {
+  amountFilled: bigint
+  maker: 0x${string}
+  orderId: bigint
+  partialFill: boolean
+}
+```

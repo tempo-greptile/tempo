@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import DexCreatePairParams from '../../../../../snippets/sdk/params/dex.createPair.wagmi.mdx'
+import DexCreatePairReturns from '../../../../../snippets/sdk/returns/dex.createPair.mdx'
 
 # `dex.createPair`
 
@@ -51,26 +53,8 @@ const { args: { base, quote } }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Key of the trading pair */
-  key: Hex
-  /** Address of the base token */
-  base: Address
-  /** Address of the quote token */
-  quote: Address
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-}
-```
+<DexCreatePairReturns />
 
 ## Parameters
 
-### base
-
-- **Type:** `Address`
-
-Address of the base token for the pair. The quote token is determined by the base token's quote token.
-
-<WriteParameters wagmi />
-
+<DexCreatePairParams />

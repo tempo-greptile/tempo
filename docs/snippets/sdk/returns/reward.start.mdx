@@ -1,0 +1,24 @@
+### `start`
+
+```ts
+type ReturnType = 0x${string}
+```
+
+Returns a transaction hash.
+
+### `startSync`
+
+```ts
+type ReturnType = {
+  /** The total amount allocated to the stream */
+  amount: bigint
+  /** The duration of the stream in seconds (0 for immediate distributions) */
+  durationSeconds: number
+  /** The address that funded the stream */
+  funder: 0x${string}
+  /** The unique stream ID (0 for immediate distributions, >0 for streaming distributions) */
+  id: bigint
+  /** The transaction receipt */
+  receipt: TransactionReceipt
+}
+```

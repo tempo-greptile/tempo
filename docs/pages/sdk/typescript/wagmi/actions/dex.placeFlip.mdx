@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import DexPlaceFlipParams from '../../../../../snippets/sdk/params/dex.placeFlip.wagmi.mdx'
+import DexPlaceFlipReturns from '../../../../../snippets/sdk/returns/dex.placeFlip.mdx'
 
 # `dex.placeFlip`
 
@@ -62,58 +64,8 @@ const { args: { orderId } }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** ID of the placed flip order */
-  orderId: bigint
-  /** Address of the order maker */
-  maker: Address
-  /** Address of the base token */
-  token: Address
-  /** Amount of tokens in the order */
-  amount: bigint
-  /** Whether this is a buy order */
-  isBid: boolean
-  /** Price tick for the order */
-  tick: number
-  /** Target tick to flip to when order is filled */
-  flipTick: number
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-}
-```
+<DexPlaceFlipReturns />
 
 ## Parameters
 
-### amount
-
-- **Type:** `bigint`
-
-Amount of tokens to place in the order.
-
-### flipTick
-
-- **Type:** `number`
-
-Target tick to flip to when order is filled. Must be greater than `tick` for buy orders, less than `tick` for sell orders.
-
-### tick
-
-- **Type:** `number`
-
-Price tick for the order. Use `Tick.fromPrice()` to convert from a price string.
-
-### token
-
-- **Type:** `Address`
-
-Address of the base token.
-
-### type
-
-- **Type:** `'buy' | 'sell'`
-
-Order type - `'buy'` to buy the token, `'sell'` to sell it.
-
-<WriteParameters wagmi />
-
+<DexPlaceFlipParams />

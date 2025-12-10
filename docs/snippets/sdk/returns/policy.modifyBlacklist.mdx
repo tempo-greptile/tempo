@@ -1,0 +1,19 @@
+### `modifyBlacklist`
+
+```ts
+type ReturnType = 0x${string}
+```
+
+Returns a transaction hash.
+
+### `modifyBlacklistSync`
+
+```ts
+type ReturnType = {
+  account: 0x${string}
+  policyId: bigint
+  receipt: TransactionReceipt
+  restricted: boolean
+  updater: 0x${string}
+}
+```

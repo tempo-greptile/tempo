@@ -1,3 +1,6 @@
+import AmmWatchMintParams from '../../../../../snippets/sdk/params/amm.watchMint.wagmi.mdx'
+import AmmWatchMintReturns from '../../../../../snippets/sdk/returns/amm.watchMint.mdx'
+
 # `amm.watchMint`
 
 Watches for liquidity mint events on the Fee AMM.  
@@ -32,84 +35,8 @@ unwatch()
 
 ## Return Type
 
-```ts
-type ReturnType = () => void
-```
-
-Returns a function to unsubscribe from the event.
+<AmmWatchMintReturns />
 
 ## Parameters
 
-### onMint
-
-- **Type:**
-
-```ts
-declare function onMint(args: Args, log: Log): void
-
-type Args = {
-  /** Amount of LP tokens minted */
-  liquidity: bigint
-  /** Address that added liquidity */
-  sender: Address
-  /** User token details */
-  userToken: {
-    /** Address of the user token */
-    address: Address
-    /** Amount of user token added */
-    amount: bigint
-  }
-  /** Validator token details */
-  validatorToken: {
-    /** Address of the validator token */
-    address: Address
-    /** Amount of validator token added */
-    amount: bigint
-  }
-}
-```
-
-Callback to invoke when liquidity is added.
-
-### sender (optional)
-
-- **Type:** `Address | bigint`
-
-Address or ID of the sender to filter events.
-
-### userToken (optional)
-
-- **Type:** `Address | bigint`
-
-Address or ID of the user token to filter events.
-
-### validatorToken (optional)
-
-- **Type:** `Address | bigint`
-
-Address or ID of the validator token to filter events.
-
-### fromBlock (optional)
-
-- **Type:** `bigint`
-
-Block to start listening from.
-
-### onError (optional)
-
-- **Type:** `(error: Error) => void`
-
-The callback to call when an error occurred when trying to get for a new block.
-
-### poll (optional)
-
-- **Type:** `true`
-
-Enable polling mode for watching events.
-
-### pollingInterval (optional)
-
-- **Type:** `number`
-
-Polling frequency (in ms). Defaults to Client's pollingInterval config.
-
+<AmmWatchMintParams />

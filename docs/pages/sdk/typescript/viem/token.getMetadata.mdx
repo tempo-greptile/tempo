@@ -1,4 +1,6 @@
-import ReadParameters from '../../../../snippets/read-parameters.mdx'
+
+import TokenGetMetadataParams from '../../../../snippets/sdk/params/token.getMetadata.mdx'
+import TokenGetMetadataReturns from '../../../../snippets/sdk/returns/token.getMetadata.mdx'
 
 # `token.getMetadata`
 
@@ -35,27 +37,8 @@ console.log('Total Supply:', metadata.totalSupply)
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  currency: string
-  decimals: number
-  name: string
-  paused?: boolean
-  quoteToken?: Address
-  supplyCap?: bigint
-  symbol: string
-  totalSupply: bigint
-  transferPolicyId?: bigint
-}
-```
+<TokenGetMetadataReturns />
 
 ## Parameters
 
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token.
-
-<ReadParameters />
-
+<TokenGetMetadataParams />

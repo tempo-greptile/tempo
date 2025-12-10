@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import PolicyCreateParams from '../../../../../snippets/sdk/params/policy.create.wagmi.mdx'
+import PolicyCreateReturns from '../../../../../snippets/sdk/returns/policy.create.mdx'
 
 # `policy.create`
 
@@ -62,37 +64,8 @@ const { args: { policyId } }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** ID of the created policy */
-  policyId: bigint
-  /** Type of the policy (0 = whitelist, 1 = blacklist) */
-  policyType: number
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Address that created the policy */
-  updater: Address
-}
-```
+<PolicyCreateReturns />
 
 ## Parameters
 
-### type
-
-- **Type:** `'whitelist' | 'blacklist'`
-
-Type of policy to create. A `whitelist` policy only allows listed addresses, while a `blacklist` policy allows all except listed addresses.
-
-### addresses (optional)
-
-- **Type:** `Address[]`
-
-Optional array of addresses to initialize the policy with.
-
-### admin
-
-- **Type:** `Address`
-
-Address of the policy admin.
-
-<WriteParameters wagmi />
+<PolicyCreateParams />

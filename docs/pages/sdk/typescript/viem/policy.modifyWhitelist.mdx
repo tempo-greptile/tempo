@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../snippets/write-parameters.mdx'
+
+import PolicyModifyWhitelistParams from '../../../../snippets/sdk/params/policy.modifyWhitelist.mdx'
+import PolicyModifyWhitelistReturns from '../../../../snippets/sdk/returns/policy.modifyWhitelist.mdx'
 
 # `policy.modifyWhitelist`
 
@@ -50,40 +52,8 @@ const { args }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Address that was added/removed from whitelist */
-  account: Address
-  /** Whether the address is allowed */
-  allowed: boolean
-  /** ID of the policy */
-  policyId: bigint
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Address that modified the whitelist */
-  updater: Address
-}
-```
+<PolicyModifyWhitelistReturns />
 
 ## Parameters
 
-### address
-
-- **Type:** `Address`
-
-Target account address to add or remove from the whitelist.
-
-### allowed
-
-- **Type:** `boolean`
-
-Whether the address should be allowed (`true`) or disallowed (`false`).
-
-### policyId
-
-- **Type:** `bigint`
-
-ID of the whitelist policy to modify.
-
-<WriteParameters />
-
+<PolicyModifyWhitelistParams />

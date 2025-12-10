@@ -1,0 +1,22 @@
+```ts
+type ReturnType = {
+  /** Currency (e.g. "USD"). */
+  currency: string
+  /** Decimals of the token. */
+  decimals: number
+  /** Name of the token. */
+  name: string
+  /** Whether the token is paused. Returns `undefined` for the default quote token (`0x20c...0000`). */
+  paused: boolean | undefined
+  /** Quote token. Returns `undefined` for the default quote token (`0x20c...0000`). */
+  quoteToken: 0x${string} | undefined
+  /** Supply cap. Returns `undefined` for the default quote token (`0x20c...0000`). */
+  supplyCap: bigint | undefined
+  /** Symbol of the token. */
+  symbol: string
+  /** Total supply of the token. */
+  totalSupply: bigint
+  /** Transfer policy ID. 0="always-reject", 1="always-allow", >2=custom policy Returns `undefined` for the default quote token (`0x20c...0000`). */
+  transferPolicyId: bigint | undefined
+}
+```

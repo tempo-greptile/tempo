@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../snippets/write-parameters.mdx'
+
+import TokenApproveParams from '../../../../snippets/sdk/params/token.approve.mdx'
+import TokenApproveReturns from '../../../../snippets/sdk/returns/token.approve.mdx'
 
 # `token.approve`
 
@@ -52,38 +54,8 @@ const { args }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Address of the token owner */
-  owner: Address
-  /** Address of the spender */
-  spender: Address
-  /** Amount of tokens approved */
-  amount: bigint
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-}
-```
+<TokenApproveReturns />
 
 ## Parameters
 
-### amount
-
-- **Type:** `bigint`
-
-Amount of tokens to approve.
-
-### spender
-
-- **Type:** `Address`
-
-Address of the spender.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP-20 token.
-
-<WriteParameters />
-
+<TokenApproveParams />

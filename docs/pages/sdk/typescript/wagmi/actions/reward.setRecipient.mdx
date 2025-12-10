@@ -1,4 +1,6 @@
-import WriteParameters from '../../../../../snippets/write-parameters.mdx'
+
+import RewardSetRecipientParams from '../../../../../snippets/sdk/params/reward.setRecipient.wagmi.mdx'
+import RewardSetRecipientReturns from '../../../../../snippets/sdk/returns/reward.setRecipient.mdx'
 
 # `reward.setRecipient`
 
@@ -82,33 +84,8 @@ const { args: { holder, recipient } }
 
 ## Return Type
 
-```ts
-type ReturnType = {
-  /** Token holder address who set their reward recipient */
-  holder: Address
-  /** Transaction receipt */
-  receipt: TransactionReceipt
-  /** Reward recipient address (zero address indicates opt-out) */
-  recipient: Address
-}
-```
-
-:::tip
-Rewards are automatically distributed to the current recipient before changing. This happens during any balance-changing operation (transfers, mints, burns).
-:::
+<RewardSetRecipientReturns />
 
 ## Parameters
 
-### recipient
-
-- **Type:** `Address`
-
-The reward recipient address. Use zero address to opt out of rewards.
-
-### token
-
-- **Type:** `Address`
-
-The TIP20 token address.
-
-<WriteParameters wagmi />
+<RewardSetRecipientParams />

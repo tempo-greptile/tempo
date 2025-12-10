@@ -1,0 +1,43 @@
+### onFlipOrderPlaced
+
+- **Type:** `(args: { orderId: bigint; maker: 0x${string}; token: 0x${string}; amount: bigint; isBid: boolean; tick: number; flipTick: number; }, log: Log) => void`
+
+Callback to invoke when a flip order is placed.
+
+### args (optional)
+
+- **Type:** `{ orderId?: bigint | bigint[] | null; maker?: 0x${string} | 0x${string}[] | null | undefined; token?: 0x${string} | 0x${string}[] | null | undefined; } | undefined`
+
+### fromBlock (optional)
+
+- **Type:** `bigint`
+
+Block to start listening from.
+
+### maker (optional)
+
+- **Type:** `0x${string}`
+
+Address of the maker to filter events.
+
+### onError (optional)
+
+- **Type:** `((error: Error) => void)`
+
+The callback to call when an error occurred when trying to get for a new block.
+
+### poll (optional)
+
+- **Type:** `true`
+
+### pollingInterval (optional)
+
+- **Type:** `number`
+
+Polling frequency (in ms). Defaults to Client's pollingInterval config.
+
+### token (optional)
+
+- **Type:** `0x${string}`
+
+Address of the token to filter events.

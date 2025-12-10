@@ -1,4 +1,6 @@
-import ReadParameters from '../../../../snippets/read-parameters.mdx'
+
+import DexGetSellQuoteParams from '../../../../snippets/sdk/params/dex.getSellQuote.mdx'
+import DexGetSellQuoteReturns from '../../../../snippets/sdk/returns/dex.getSellQuote.mdx'
 
 # `dex.getSellQuote`
 
@@ -30,30 +32,8 @@ console.log('Amount received:', amountOut)
 
 ## Return Type
 
-```ts
-type ReturnType = bigint
-```
-
-Returns the amount of `tokenOut` received for selling the specified `amountIn` of `tokenIn`.
+<DexGetSellQuoteReturns />
 
 ## Parameters
 
-### amountIn
-
-- **Type:** `bigint`
-
-Amount of tokenIn to sell.
-
-### tokenIn
-
-- **Type:** `Address`
-
-Address of the token to sell.
-
-### tokenOut
-
-- **Type:** `Address`
-
-Address of the token to receive.
-
-<ReadParameters />
+<DexGetSellQuoteParams />

@@ -1,0 +1,18 @@
+### `create`
+
+```ts
+type ReturnType = 0x${string}
+```
+
+Returns a transaction hash.
+
+### `createSync`
+
+```ts
+type ReturnType = {
+  policyId: bigint
+  policyType: number
+  receipt: TransactionReceipt
+  updater: 0x${string}
+}
+```

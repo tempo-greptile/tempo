@@ -1,4 +1,6 @@
-import ReadParameters from '../../../../../snippets/read-parameters.mdx'
+
+import TokenGetAllowanceParams from '../../../../../snippets/sdk/params/token.getAllowance.wagmi.mdx'
+import TokenGetAllowanceReturns from '../../../../../snippets/sdk/returns/token.getAllowance.mdx'
 
 # `token.getAllowance`
 
@@ -31,29 +33,8 @@ console.log('Allowance:', allowance)
 
 ## Return Type
 
-```ts
-type ReturnType = bigint // Allowance amount
-```
+<TokenGetAllowanceReturns />
 
 ## Parameters
 
-### account
-
-- **Type:** `Address`
-
-Account address.
-
-### spender
-
-- **Type:** `Address`
-
-Address of the spender.
-
-### token
-
-- **Type:** `Address | bigint`
-
-Address or ID of the TIP20 token.
-
-<ReadParameters wagmi />
-
+<TokenGetAllowanceParams />

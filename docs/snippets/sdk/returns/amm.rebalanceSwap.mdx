@@ -1,0 +1,21 @@
+### `rebalanceSwap`
+
+```ts
+type ReturnType = 0x${string}
+```
+
+Returns a transaction hash.
+
+### `rebalanceSwapSync`
+
+```ts
+type ReturnType = {
+  amountIn: bigint
+  amountOut: bigint
+  /** Transaction receipt. */
+  receipt: TransactionReceipt
+  swapper: 0x${string}
+  userToken: 0x${string}
+  validatorToken: 0x${string}
+}
+```
