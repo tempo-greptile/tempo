@@ -136,6 +136,7 @@ export function AnimatedDiagram(props: AnimatedDiagramProps) {
   const initializedRef = useRef(false)
   const isReplayingRef = useRef(false)
   const hasStartedRef = useRef(false) // Track if animation has started (for in-view trigger)
+  const isInViewRef = useRef(false) // Track if already triggered to prevent double-firing
   const pathAnimationFrameRef = useRef<number | undefined>(undefined)
   const lastTapRef = useRef<number>(0)
   const pathAnimationStartPositions = useRef<Map<string, { x: number; y: number }>>(new Map())
@@ -382,11 +383,12 @@ export function AnimatedDiagram(props: AnimatedDiagramProps) {
       const hash = window.location.hash.slice(1) // Remove the #
       const expectedHash = title.toLowerCase().replace(/\s+/g, '-')
       
-      if (hash === expectedHash) {
+      if (hash === expectedHash && !isInViewRef.current) {
         // Slight delay to ensure the component is fully mounted and positioned
         setTimeout(() => {
+          isInViewRef.current = true
           setIsInView(true)
-        }, 100)
+        }, 300)
       }
     }
     
@@ -401,12 +403,13 @@ export function AnimatedDiagram(props: AnimatedDiagramProps) {
   // IntersectionObserver to start animation when approaching middle of viewport
   useEffect(() => {
     const element = wrapperRef.current
-    if (!element || isInView) return // Already triggered
+    if (!element) return
     
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          if (entry.isIntersecting) {
+          if (entry.isIntersecting && !isInViewRef.current) {
+            isInViewRef.current = true
             setIsInView(true)
             observer.disconnect() // Only need to trigger once
           }
@@ -421,7 +424,7 @@ export function AnimatedDiagram(props: AnimatedDiagramProps) {
     observer.observe(element)
     
     return () => observer.disconnect()
-  }, [isInView])
+  }, [])
 
   // Auto-play when switching to animated tab in lightbox
   useEffect(() => {
