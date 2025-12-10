@@ -374,6 +374,30 @@ export function AnimatedDiagram(props: AnimatedDiagramProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src])
 
+  // Check if page loaded with anchor link to this section
+  useEffect(() => {
+    if (!title) return
+    
+    const checkHash = () => {
+      const hash = window.location.hash.slice(1) // Remove the #
+      const expectedHash = title.toLowerCase().replace(/\s+/g, '-')
+      
+      if (hash === expectedHash) {
+        // Slight delay to ensure the component is fully mounted and positioned
+        setTimeout(() => {
+          setIsInView(true)
+        }, 100)
+      }
+    }
+    
+    // Check on mount
+    checkHash()
+    
+    // Check when hash changes
+    window.addEventListener('hashchange', checkHash)
+    return () => window.removeEventListener('hashchange', checkHash)
+  }, [title])
+
   // IntersectionObserver to start animation when approaching middle of viewport
   useEffect(() => {
     const element = wrapperRef.current
