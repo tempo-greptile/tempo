@@ -611,7 +611,7 @@ impl AA2dPool {
         if !mined.is_empty() {
             self.metrics.inc_removed(mined.len());
         }
-        self.update_metrics();
+        // self.update_metrics();
 
         (promoted, mined)
     }
