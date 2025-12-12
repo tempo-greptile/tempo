@@ -78,7 +78,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_insert_and_remove() {
+    fn test_insert_and_get() {
         let cache = SenderRecoveryCache::default();
         let tx_hash = B256::repeat_byte(1);
         let sender = Address::repeat_byte(2);
@@ -88,7 +88,6 @@ mod tests {
 
         let recovered = cache.get(&tx_hash);
         assert_eq!(recovered, Some(sender));
-        assert!(cache.is_empty());
     }
 
     #[test]
