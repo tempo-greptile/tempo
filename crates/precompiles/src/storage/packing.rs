@@ -133,7 +133,9 @@ pub fn insert_packed_value<T: Packable>(
 
     // Calculate shift and mask
     let shift_bits = offset * 8;
-    let mask = create_element_mask(bytes);
+
+    // we know bytes is less than 32 here because of the invariant above
+    let mask = (U256::ONE << (bytes * 8)) - U256::ONE;
 
     // Clear the bits for this field in the current slot value
     let clear_mask = !(mask << shift_bits);
@@ -160,7 +162,8 @@ pub fn zero_packed_value(current: U256, offset: usize, bytes: usize) -> Result<U
         )));
     }
 
-    let mask = create_element_mask(bytes);
+    // we know bytes is less than 32 here because of the invariant above
+    let mask = (U256::ONE << (bytes * 8)) - U256::ONE;
     let shifted_mask = mask << (offset * 8);
     Ok(current & !shifted_mask)
 }
@@ -190,7 +193,8 @@ pub const fn calc_element_loc(idx: usize, elem_bytes: usize) -> FieldLocation {
 /// Calculate the total number of slots needed for an array.
 #[inline]
 pub const fn calc_packed_slot_count(n: usize, elem_bytes: usize) -> usize {
-    (n * elem_bytes).div_ceil(32)
+    let total = n * elem_bytes;
+    (total + 31) >> 5
 }
 
 /// Test helper function for constructing EVM words from hex string literals.
