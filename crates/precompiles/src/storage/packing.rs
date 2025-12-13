@@ -161,7 +161,6 @@ pub fn zero_packed_value(current: U256, offset: usize, bytes: usize) -> Result<U
         )));
     }
 
-    // we know bytes is less than 32 here because of the invariant above
     let mask =  create_element_mask(bytes);
     let shifted_mask = mask << (offset * 8);
     Ok(current & !shifted_mask)
@@ -182,14 +181,14 @@ pub const fn calc_element_offset(idx: usize, elem_bytes: usize) -> usize {
 /// Calculate the byte offset within a slot for an array element at index `idx` and which slot an array element at index `idx` starts in .
 #[inline]
 pub const fn calc_element_offset_and_slot(idx: usize, elem_bytes: usize) -> (usize, usize) {
-   let total =  (idx * elem_bytes);
+   let total =  idx * elem_bytes;
    ((total / 32), (total % 32))
 }
 
 /// Calculate the element location within a slot for an array element at index `idx`.
 #[inline]
 pub const fn calc_element_loc(idx: usize, elem_bytes: usize) -> FieldLocation {
-    let (slots, offset) = idx * elem_bytes;
+    let (slots, offset) = calc_element_offset_and_slot(idx, elem_bytes);
     FieldLocation::new(
         slots,
         offset,
