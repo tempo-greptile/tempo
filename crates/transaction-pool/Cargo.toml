@@ -37,6 +37,7 @@ alloy-evm.workspace = true
 futures.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
+rayon.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 thiserror.workspace = true
 metrics.workspace = true
@@ -47,5 +48,5 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 reth-ethereum-primitives.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 test-case.workspace = true

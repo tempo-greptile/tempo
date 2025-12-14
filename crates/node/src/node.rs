@@ -35,6 +35,7 @@ use reth_rpc_eth_api::{
 };
 use reth_tracing::tracing::{debug, info};
 use reth_transaction_pool::{TransactionValidationTaskExecutor, blobstore::InMemoryBlobStore};
+use reth_transaction_pool::{TransactionListenerKind, TransactionPool};
 use std::{default::Default, sync::Arc};
 use tempo_chainspec::spec::{TEMPO_BASE_FEE, TempoChainSpec};
 use tempo_consensus::TempoConsensus;
@@ -64,6 +65,7 @@ impl TempoNodeArgs {
     pub fn pool_builder(&self) -> TempoPoolBuilder {
         TempoPoolBuilder {
             aa_valid_after_max_secs: self.aa_valid_after_max_secs,
+            follower: false
         }
     }
 }
@@ -85,6 +87,12 @@ impl TempoNode {
             pool_builder: args.pool_builder(),
             validator_key,
         }
+    }
+
+    /// Configures whether this is a follower node
+    pub const fn set_follower(mut self, follow: bool) -> Self {
+        self.pool_builder.follower = follow;
+        self
     }
 
     /// Returns a [`ComponentsBuilder`] configured for a regular Tempo node.
@@ -358,6 +366,8 @@ where
 pub struct TempoPoolBuilder {
     /// Maximum allowed `valid_after` offset for AA txs.
     pub aa_valid_after_max_secs: u64,
+    /// Whether this is a follower node
+    pub follower: bool,
 }
 
 impl TempoPoolBuilder {
@@ -372,6 +382,7 @@ impl Default for TempoPoolBuilder {
     fn default() -> Self {
         Self {
             aa_valid_after_max_secs: DEFAULT_AA_VALID_AFTER_MAX_SECS,
+            follower: false,
         }
     }
 }
@@ -440,6 +451,7 @@ where
             "txpool maintenance - 2d nonce AA txs",
             tempo_transaction_pool::maintain::maintain_2d_nonce_pool(transaction_pool.clone()),
         );
+        debug!(target: "reth::cli", "Spawned txpool maintenance task");
 
         // Spawn AMM liquidity cache maintenance task
         ctx.task_executor().spawn_critical(
@@ -447,8 +459,19 @@ where
             tempo_transaction_pool::maintain::maintain_amm_cache(transaction_pool.clone()),
         );
 
+        if !self.follower {
+            let pending = transaction_pool.new_transactions_listener_for(TransactionListenerKind::All);
+            ctx.task_executor().spawn_critical(
+                "txpool preparation",
+               Box::pin(
+                   tempo_transaction_pool::prepare::prepare_pooled_transactions(pending),
+               )
+            );
+            debug!(target: "reth::cli", "Spawned txpool prepare task");
+        }
+
         info!(target: "reth::cli", "Transaction pool initialized");
-        debug!(target: "reth::cli", "Spawned txpool maintenance task");
+
 
         Ok(transaction_pool)
     }
