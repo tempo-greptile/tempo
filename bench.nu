@@ -56,9 +56,13 @@ def "main node" [
     --features: string = $DEFAULT_FEATURES # Cargo features
     --logs: string = ""         # Tail logs: "all" or comma-separated node indices (e.g., "0,1,2")
     --silent                    # Suppress WARN/ERROR log output
+    --node-args: string = ""    # Additional node arguments (space-separated)
 ] {
     # Check for dangling processes
     check-dangling-processes
+
+    # Parse custom node args
+    let extra_args = if $node_args == "" { [] } else { $node_args | split row " " }
 
     # Build first
     let build_cmd = ["cargo" "build" "--bin" "tempo" "--profile" $profile "--features" $features]
@@ -68,16 +72,16 @@ def "main node" [
     }
 
     if $mode == "dev" {
-        run-dev-node $accounts $samply $reset $profile
+        run-dev-node $accounts $samply $reset $profile $extra_args
     } else if $mode == "consensus" {
-        run-consensus-nodes $nodes $accounts $samply $reset $profile $logs $silent
+        run-consensus-nodes $nodes $accounts $samply $reset $profile $logs $silent $extra_args
     } else {
         print $"Unknown mode: ($mode). Use 'dev' or 'consensus'."
         exit 1
     }
 }
 
-def run-dev-node [accounts: int, samply: bool, reset: bool, profile: string] {
+def run-dev-node [accounts: int, samply: bool, reset: bool, profile: string, extra_args: list<string>] {
     let genesis_path = $"($LOCALNET_DIR)/genesis.json"
     let needs_generation = $reset or (not ($genesis_path | path exists))
 
@@ -99,18 +103,17 @@ def run-dev-node [accounts: int, samply: bool, reset: bool, profile: string] {
 
     let base = (build-base-args $genesis_path $datadir $log_dir 8545 9001)
     let dev = (build-dev-args)
-    let args = ($base | append $dev)
+    let args = ($base | append $dev | append $extra_args)
 
+    mut cmd = [$tempo_bin ...$args];
     if $samply {
-        print "Running dev node with samply profiling..."
-        samply record -o $"($LOCALNET_DIR)/tempo-dev.samply" -- $tempo_bin ...$args
-    } else {
-        print "Running dev node..."
-        run-external $tempo_bin ...$args
+        $cmd = ["samply" "record" "--" ...$cmd];
     }
+    print $"Running dev node: `($cmd | str join ' ')`..."
+    run-external ($cmd | first) ...($cmd | skip 1)
 }
 
-def run-consensus-nodes [nodes: int, accounts: int, samply: bool, reset: bool, profile: string, logs: string, silent: bool] {
+def run-consensus-nodes [nodes: int, accounts: int, samply: bool, reset: bool, profile: string, logs: string, silent: bool, extra_args: list<string>] {
     # Check if we need to generate localnet
     let needs_generation = $reset or (not ($LOCALNET_DIR | path exists)) or (
         (ls $LOCALNET_DIR | where type == "dir" | get name | where { |d| ($d | path basename) =~ '^\d+\.\d+\.\d+\.\d+:\d+$' } | length) == 0
@@ -169,26 +172,12 @@ def run-consensus-nodes [nodes: int, accounts: int, samply: bool, reset: bool, p
         let actual_index = $node.index + 1
         let tail_logs = ($actual_index in $log_indices)
         let show_errors = not $silent
-        start-node-job $node.item $genesis_path $trusted_peers $tempo_bin $tail_logs $samply $show_errors
+        start-node-job $node.item $genesis_path $trusted_peers $tempo_bin $tail_logs false $show_errors $extra_args
     }
 
-    # Run node 0 in foreground
-    let tail_logs = (0 in $log_indices)
-    run-node-foreground $foreground_node $genesis_path $trusted_peers $tempo_bin $tail_logs $samply
-
-    # Foreground node exited, cleanup background jobs
-    print "\nStopping background nodes..."
-    cleanup-jobs
-}
-
-def cleanup-jobs [] {
-    let jobs = (job list | get id)
-    if ($jobs | length) > 0 {
-        print $"Killing ($jobs | length) background jobs..."
-        for id in $jobs {
-            job kill $id
-        }
-    }
+    # Run node 0 in foreground (show logs by default unless --silent)
+    let tail_logs = not $silent
+    run-node-foreground $foreground_node $genesis_path $trusted_peers $tempo_bin $tail_logs $samply $extra_args
 }
 
 def check-dangling-processes [] {
@@ -208,7 +197,7 @@ def check-dangling-processes [] {
     }
 }
 
-def start-node-job [node_dir: string, genesis_path: string, trusted_peers: string, tempo_bin: string, tail_logs: bool, samply: bool, show_errors: bool] {
+def start-node-job [node_dir: string, genesis_path: string, trusted_peers: string, tempo_bin: string, tail_logs: bool, samply: bool, show_errors: bool, extra_args: list<string>] {
     let addr = ($node_dir | path basename)
     let port = ($addr | split row ":" | get 1 | into int)
     let node_index = (($port - 8000) / 100 | into int)
@@ -222,7 +211,7 @@ def start-node-job [node_dir: string, genesis_path: string, trusted_peers: strin
         if $tail_logs { [] }
         else if $show_errors { ["--log.stdout.filter" "WARN"] }
         else { ["--log.stdout.filter" "off"] }
-    )
+    ) | append $extra_args
 
     # Build command (with or without samply)
     let cmd = if $samply {
@@ -241,7 +230,7 @@ def start-node-job [node_dir: string, genesis_path: string, trusted_peers: strin
 }
 
 # Run a node in the foreground (receives Ctrl+C directly)
-def run-node-foreground [node_dir: string, genesis_path: string, trusted_peers: string, tempo_bin: string, tail_logs: bool, samply: bool] {
+def run-node-foreground [node_dir: string, genesis_path: string, trusted_peers: string, tempo_bin: string, tail_logs: bool, samply: bool, extra_args: list<string>] {
     let addr = ($node_dir | path basename)
     let port = ($addr | split row ":" | get 1 | into int)
     let node_index = (($port - 8000) / 100 | into int)
@@ -253,7 +242,7 @@ def run-node-foreground [node_dir: string, genesis_path: string, trusted_peers: 
     # Build args with appropriate log filter
     let args = (build-node-args $node_dir $genesis_path $trusted_peers $port $log_dir) | append (
         if $tail_logs { [] } else { ["--log.stdout.filter" "off"] }
-    )
+    ) | append $extra_args
 
     # Build command (with or without samply)
     let cmd = if $samply {
@@ -261,16 +250,15 @@ def run-node-foreground [node_dir: string, genesis_path: string, trusted_peers: 
     } else {
         [$tempo_bin] | append $args
     }
-    let cmd_str = $cmd | str join " "
 
     if $tail_logs {
         print $"  Node ($addr) -> http://localhost:($http_port) \(foreground, logs to stdout\)"
     } else {
         print $"  Node ($addr) -> http://localhost:($http_port) \(foreground\)"
     }
+    print $"  Running foreground consensus node: ($cmd | str join ' ')"
 
-    # Use shell wrapper to print PID then wait
-    sh -c $"($cmd_str) & pid=$!; echo \"  PID: $pid\"; wait $pid"
+    run-external ($cmd | first) ...($cmd | skip 1)
 }
 
 # Build base node arguments shared between dev and consensus modes
@@ -353,12 +341,13 @@ def main [] {
     print "  --mode <dev|consensus>   Mode (default: dev)"
     print "  --nodes <N>              Number of validators for consensus (default: 3)"
     print "  --accounts <N>           Genesis accounts (default: 1000)"
-    print "  --samply                 Enable samply profiling"
+    print "  --samply                 Enable samply profiling (foreground node only)"
     print "  --logs <spec>            Tail logs: 'all' or comma-separated indices (e.g., '1,2')"
     print "  --silent                 Suppress WARN/ERROR log output"
     print "  --reset                  Wipe and regenerate localnet"
     print $"  --profile <P>            Cargo profile \(default: ($DEFAULT_PROFILE)\)"
     print $"  --features <F>           Cargo features \(default: ($DEFAULT_FEATURES)\)"
+    print "  --node-args <ARGS>       Additional node arguments (space-separated)"
     print ""
     print "Examples:"
     print "  nu bench.nu stack up"
