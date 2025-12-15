@@ -33,9 +33,9 @@ def log-filter-args [loud: bool] {
 }
 
 # Wrap command with samply if enabled
-def wrap-samply [cmd: list<string>, samply: bool] {
+def wrap-samply [cmd: list<string>, samply: bool, samply_args: list<string>] {
     if $samply {
-        ["samply" "record" "--" ...$cmd]
+        ["samply" "record" ...$samply_args "--" ...$cmd]
     } else {
         $cmd
     }
@@ -133,6 +133,7 @@ def "main node" [
     --nodes: int = 3            # Number of validators (consensus mode)
     --accounts: int = 1000      # Number of genesis accounts
     --samply                    # Enable samply profiling (foreground node only)
+    --samply-args: string = ""  # Additional samply arguments (space-separated)
     --reset                     # Wipe and regenerate localnet data
     --profile: string = $DEFAULT_PROFILE # Cargo build profile
     --features: string = $DEFAULT_FEATURES # Cargo features
@@ -149,8 +150,9 @@ def "main node" [
         main kill --prompt=($force | not $in)
     }
 
-    # Parse custom node args
+    # Parse custom args
     let extra_args = if $node_args == "" { [] } else { $node_args | split row " " }
+    let samply_args_list = if $samply_args == "" { [] } else { $samply_args | split row " " }
 
     # Build first (unless skipped)
     if not $skip_build {
@@ -162,9 +164,9 @@ def "main node" [
             print "Error: --nodes is only valid with --mode consensus"
             exit 1
         }
-        run-dev-node $accounts $samply $reset $profile $loud $extra_args
+        run-dev-node $accounts $samply $samply_args_list $reset $profile $loud $extra_args
     } else {
-        run-consensus-nodes $nodes $accounts $samply $reset $profile $loud $extra_args
+        run-consensus-nodes $nodes $accounts $samply $samply_args_list $reset $profile $loud $extra_args
     }
 }
 
@@ -172,7 +174,7 @@ def "main node" [
 # Dev mode
 # ============================================================================
 
-def run-dev-node [accounts: int, samply: bool, reset: bool, profile: string, loud: bool, extra_args: list<string>] {
+def run-dev-node [accounts: int, samply: bool, samply_args: list<string>, reset: bool, profile: string, loud: bool, extra_args: list<string>] {
     let genesis_path = $"($LOCALNET_DIR)/genesis.json"
     let needs_generation = $reset or (not ($genesis_path | path exists))
 
@@ -197,7 +199,7 @@ def run-dev-node [accounts: int, samply: bool, reset: bool, profile: string, lou
         | append (log-filter-args $loud)
         | append $extra_args
 
-    let cmd = wrap-samply [$tempo_bin ...$args] $samply
+    let cmd = wrap-samply [$tempo_bin ...$args] $samply $samply_args
     print $"Running dev node: `($cmd | str join ' ')`..."
     run-external ($cmd | first) ...($cmd | skip 1)
 }
@@ -236,7 +238,7 @@ def build-dev-args [] {
 # Consensus mode
 # ============================================================================
 
-def run-consensus-nodes [nodes: int, accounts: int, samply: bool, reset: bool, profile: string, loud: bool, extra_args: list<string>] {
+def run-consensus-nodes [nodes: int, accounts: int, samply: bool, samply_args: list<string>, reset: bool, profile: string, loud: bool, extra_args: list<string>] {
     # Check if we need to generate localnet
     let needs_generation = $reset or (not ($LOCALNET_DIR | path exists)) or (
         (ls $LOCALNET_DIR | where type == "dir" | get name | where { |d| ($d | path basename) =~ '^\d+\.\d+\.\d+\.\d+:\d+$' } | length) == 0
@@ -283,11 +285,11 @@ def run-consensus-nodes [nodes: int, accounts: int, samply: bool, reset: bool, p
     let background_nodes = $validator_dirs | skip 1
 
     for node in $background_nodes {
-        run-consensus-node $node $genesis_path $trusted_peers $tempo_bin $loud false $extra_args true
+        run-consensus-node $node $genesis_path $trusted_peers $tempo_bin $loud false [] $extra_args true
     }
 
     # Run node 0 in foreground (receives Ctrl+C directly)
-    run-consensus-node $foreground_node $genesis_path $trusted_peers $tempo_bin $loud $samply $extra_args false
+    run-consensus-node $foreground_node $genesis_path $trusted_peers $tempo_bin $loud $samply $samply_args $extra_args false
 }
 
 # Run a single consensus node (foreground or background)
@@ -298,6 +300,7 @@ def run-consensus-node [
     tempo_bin: string
     loud: bool
     samply: bool
+    samply_args: list<string>
     extra_args: list<string>
     background: bool
 ] {
@@ -313,7 +316,7 @@ def run-consensus-node [
         | append (log-filter-args $loud)
         | append $extra_args
 
-    let cmd = wrap-samply [$tempo_bin ...$args] $samply
+    let cmd = wrap-samply [$tempo_bin ...$args] $samply $samply_args
 
     print $"  Node ($addr) -> http://localhost:($http_port)(if $background { '' } else { ' (foreground)' })"
 
@@ -372,6 +375,7 @@ def "main bench" [
     --accounts: int = 1000                          # Number of accounts
     --nodes: int = 3                                # Number of consensus nodes (consensus mode only)
     --samply                                        # Profile nodes with samply
+    --samply-args: string = ""                      # Additional samply arguments (space-separated)
     --reset                                         # Reset localnet before starting
     --loud                                          # Show node logs (silent by default)
     --profile: string = $DEFAULT_PROFILE            # Cargo build profile
@@ -428,6 +432,7 @@ def "main bench" [
     | append (if $mode == "consensus" { ["--nodes" $"($nodes)"] } else { [] })
     | append (if $reset { ["--reset"] } else { [] })
     | append (if $samply { ["--samply"] } else { [] })
+    | append (if $samply_args != "" { ["--samply-args" $samply_args] } else { [] })
     | append (if $loud { ["--loud"] } else { [] })
     | append (if $node_args != "" { ["--node-args" $node_args] } else { [] })
 
@@ -551,6 +556,7 @@ def main [] {
     print "  --accounts <N>           Number of accounts (default: 1000)"
     print "  --nodes <N>              Number of consensus nodes (default: 3, consensus mode only)"
     print "  --samply                 Profile nodes with samply"
+    print "  --samply-args <ARGS>     Additional samply arguments (space-separated)"
     print "  --reset                  Reset localnet before starting"
     print "  --loud                   Show all node logs (WARN/ERROR shown by default)"
     print $"  --profile <P>            Cargo profile \(default: ($DEFAULT_PROFILE)\)"
@@ -563,6 +569,7 @@ def main [] {
     print "  --nodes <N>              Number of validators for consensus (default: 3)"
     print "  --accounts <N>           Genesis accounts (default: 1000)"
     print "  --samply                 Enable samply profiling (foreground node only)"
+    print "  --samply-args <ARGS>     Additional samply arguments (space-separated)"
     print "  --loud                   Show all node logs (WARN/ERROR shown by default)"
     print "  --reset                  Wipe and regenerate localnet"
     print $"  --profile <P>            Cargo profile \(default: ($DEFAULT_PROFILE)\)"
