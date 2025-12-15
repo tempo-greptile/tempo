@@ -18,6 +18,56 @@ const PRESETS = {
     "tempo-mix": [0.8, 0, 0.19, 0.01]
 }
 
+# ============================================================================
+# Helper functions
+# ============================================================================
+
+# Convert consensus port to node index (e.g., 8000 -> 0, 8100 -> 1)
+def port-to-node-index [port: int] {
+    ($port - 8000) / 100 | into int
+}
+
+# Build log filter args based on --loud flag
+def log-filter-args [loud: bool] {
+    if $loud { [] } else { ["--log.stdout.filter" "warn"] }
+}
+
+# Wrap command with samply if enabled
+def wrap-samply [cmd: list<string>, samply: bool] {
+    if $samply {
+        ["samply" "record" "--" ...$cmd]
+    } else {
+        $cmd
+    }
+}
+
+# Validate mode is either "dev" or "consensus"
+def validate-mode [mode: string] {
+    if $mode != "dev" and $mode != "consensus" {
+        print $"Unknown mode: ($mode). Use 'dev' or 'consensus'."
+        exit 1
+    }
+}
+
+# Build tempo binary with cargo
+def build-tempo [bins: list<string>, profile: string, features: string] {
+    let bin_args = ($bins | each { |bin| ["--bin" $bin] } | flatten)
+    let build_cmd = ["cargo" "build" "--profile" $profile "--features" $features] | append $bin_args
+    print $"Building ($bins | str join ', '): `($build_cmd | str join ' ')`..."
+    with-env { RUSTFLAGS: $RUSTFLAGS } {
+        run-external ($build_cmd | first) ...($build_cmd | skip 1)
+    }
+}
+
+# Find tempo process PIDs (excluding tempo-bench)
+def find-tempo-pids [] {
+    ps | where name =~ "tempo" | where name !~ "tempo-bench" | get pid
+}
+
+# ============================================================================
+# Stack commands
+# ============================================================================
+
 # Start the observability stack (Grafana + Prometheus)
 def "main stack up" [] {
     print "Starting observability stack..."
@@ -32,20 +82,37 @@ def "main stack down" [] {
     docker compose -f $"($BENCH_DIR)/docker-compose.yml" down
 }
 
+# ============================================================================
+# Kill command
+# ============================================================================
+
 # Kill any running tempo processes and cleanup
-def "main kill" [] {
-    print "Killing tempo processes..."
+def "main kill" [
+    --prompt    # Prompt before killing (for interactive use)
+] {
+    let pids = (find-tempo-pids)
+    if ($pids | length) == 0 {
+        print "No tempo processes found."
+        return
+    }
 
-    # Get samply PIDs first
-    let samply_pids = (ps | where name =~ "samply" | get pid)
+    print $"Found ($pids | length) running tempo process\(es\)."
 
-    # Kill tempo processes with SIGINT (2) for graceful shutdown
-    let tempo_pids = (ps | where name =~ "tempo" | where name !~ "tempo-bench" | get pid)
-    if ($tempo_pids | length) > 0 {
-        print $"Sending SIGINT to ($tempo_pids | length) tempo processes..."
-        for pid in $tempo_pids {
-            kill -s 2 $pid
-        }
+    let should_kill = if $prompt {
+        let answer = (input "Kill them? [Y/n] " | str trim | str downcase)
+        $answer == "" or $answer == "y" or $answer == "yes"
+    } else {
+        true
+    }
+
+    if not $should_kill {
+        print "Aborting."
+        exit 1
+    }
+
+    print $"Sending SIGINT to ($pids | length) tempo processes..."
+    for pid in $pids {
+        kill -s 2 $pid
     }
 
     # Remove stale IPC socket
@@ -55,6 +122,10 @@ def "main kill" [] {
     }
     print "Done."
 }
+
+# ============================================================================
+# Node command
+# ============================================================================
 
 # Run Tempo node(s) for benchmarking
 def "main node" [
@@ -70,19 +141,20 @@ def "main node" [
     --skip-build                # Skip building (assumes binary is already built)
     --force                     # Kill dangling processes without prompting
 ] {
+    validate-mode $mode
+
     # Check for dangling processes
-    check-dangling-processes $force
+    let pids = (find-tempo-pids)
+    if ($pids | length) > 0 {
+        main kill --prompt=($force | not $in)
+    }
 
     # Parse custom node args
     let extra_args = if $node_args == "" { [] } else { $node_args | split row " " }
 
     # Build first (unless skipped)
     if not $skip_build {
-        let build_cmd = ["cargo" "build" "--bin" "tempo" "--profile" $profile "--features" $features]
-        print $"Building tempo: `($build_cmd | str join ' ')`..."
-        with-env { RUSTFLAGS: $RUSTFLAGS } {
-            run-external ($build_cmd | first) ...($build_cmd | skip 1)
-        }
+        build-tempo ["tempo"] $profile $features
     }
 
     if $mode == "dev" {
@@ -91,13 +163,14 @@ def "main node" [
             exit 1
         }
         run-dev-node $accounts $samply $reset $profile $loud $extra_args
-    } else if $mode == "consensus" {
-        run-consensus-nodes $nodes $accounts $samply $reset $profile $loud $extra_args
     } else {
-        print $"Unknown mode: ($mode). Use 'dev' or 'consensus'."
-        exit 1
+        run-consensus-nodes $nodes $accounts $samply $reset $profile $loud $extra_args
     }
 }
+
+# ============================================================================
+# Dev mode
+# ============================================================================
 
 def run-dev-node [accounts: int, samply: bool, reset: bool, profile: string, loud: bool, extra_args: list<string>] {
     let genesis_path = $"($LOCALNET_DIR)/genesis.json"
@@ -119,19 +192,49 @@ def run-dev-node [accounts: int, samply: bool, reset: bool, profile: string, lou
     let datadir = $"($LOCALNET_DIR)/reth"
     let log_dir = $"($LOCALNET_DIR)/logs"
 
-    let base = (build-base-args $genesis_path $datadir $log_dir 8545 9001)
-    let dev = (build-dev-args)
-    # Apply log filter (WARN by default, all if --loud)
-    let log_filter = if $loud { [] } else { ["--log.stdout.filter" "warn"] }
-    let args = ($base | append $dev | append $log_filter | append $extra_args)
+    let args = (build-base-args $genesis_path $datadir $log_dir 8545 9001)
+        | append (build-dev-args)
+        | append (log-filter-args $loud)
+        | append $extra_args
 
-    mut cmd = [$tempo_bin ...$args];
-    if $samply {
-        $cmd = ["samply" "record" "--" ...$cmd];
-    }
+    let cmd = wrap-samply [$tempo_bin ...$args] $samply
     print $"Running dev node: `($cmd | str join ' ')`..."
     run-external ($cmd | first) ...($cmd | skip 1)
 }
+
+# Build base node arguments shared between dev and consensus modes
+def build-base-args [genesis_path: string, datadir: string, log_dir: string, http_port: int, reth_metrics_port: int] {
+    [
+        "node"
+        "--chain" $genesis_path
+        "--datadir" $datadir
+        "--http"
+        "--http.addr" "0.0.0.0"
+        "--http.port" $"($http_port)"
+        "--http.api" "all"
+        "--metrics" $"0.0.0.0:($reth_metrics_port)"
+        "--log.file.directory" $log_dir
+        "--faucet.enabled"
+        "--faucet.private-key" "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+        "--faucet.amount" "1000000000000"
+        "--faucet.address" "0x20c0000000000000000000000000000000000001"
+    ]
+}
+
+# Build dev mode specific arguments
+def build-dev-args [] {
+    [
+        "--dev"
+        "--dev.block-time" "1sec"
+        "--builder.gaslimit" "3000000000"
+        "--builder.max-tasks" "8"
+        "--builder.deadline" "3"
+    ]
+}
+
+# ============================================================================
+# Consensus mode
+# ============================================================================
 
 def run-consensus-nodes [nodes: int, accounts: int, samply: bool, reset: bool, profile: string, loud: bool, extra_args: list<string>] {
     # Check if we need to generate localnet
@@ -179,122 +282,57 @@ def run-consensus-nodes [nodes: int, accounts: int, samply: bool, reset: bool, p
     let foreground_node = $validator_dirs | first
     let background_nodes = $validator_dirs | skip 1
 
-    for node in ($background_nodes | enumerate) {
-        start-node-job $node.item $genesis_path $trusted_peers $tempo_bin $loud false $extra_args
+    for node in $background_nodes {
+        run-consensus-node $node $genesis_path $trusted_peers $tempo_bin $loud false $extra_args true
     }
 
-    # Run node 0 in foreground (show logs only if --loud)
-    run-node-foreground $foreground_node $genesis_path $trusted_peers $tempo_bin $loud $samply $extra_args
+    # Run node 0 in foreground (receives Ctrl+C directly)
+    run-consensus-node $foreground_node $genesis_path $trusted_peers $tempo_bin $loud $samply $extra_args false
 }
 
-def check-dangling-processes [force: bool] {
-    let pids = (ps | where name =~ "tempo" | where name !~ "tempo-bench" | get pid)
-    if ($pids | length) > 0 {
-        print $"Found ($pids | length) running tempo process\(es\)."
-        let should_kill = if $force {
-            true
-        } else {
-            let answer = (input "Kill them? [Y/n] " | str trim | str downcase)
-            $answer == "" or $answer == "y" or $answer == "yes"
-        }
-        if $should_kill {
-            for pid in $pids {
-                kill -s 2 $pid
-            }
-            print "Sent SIGINT."
-        } else {
-            print "Aborting."
-            exit 1
-        }
-    }
-}
-
-def start-node-job [node_dir: string, genesis_path: string, trusted_peers: string, tempo_bin: string, loud: bool, samply: bool, extra_args: list<string>] {
+# Run a single consensus node (foreground or background)
+def run-consensus-node [
+    node_dir: string
+    genesis_path: string
+    trusted_peers: string
+    tempo_bin: string
+    loud: bool
+    samply: bool
+    extra_args: list<string>
+    background: bool
+] {
     let addr = ($node_dir | path basename)
     let port = ($addr | split row ":" | get 1 | into int)
-    let node_index = (($port - 8000) / 100 | into int)
+    let node_index = (port-to-node-index $port)
     let http_port = 8545 + $node_index
 
     let log_dir = $"($LOGS_DIR)/($addr)"
     mkdir $log_dir
 
-    # Build args with appropriate log filter (WARN by default, all if --loud)
-    let args = (build-node-args $node_dir $genesis_path $trusted_peers $port $log_dir) | append (
-        if $loud { [] } else { ["--log.stdout.filter" "warn"] }
-    ) | append $extra_args
+    let args = (build-consensus-node-args $node_dir $genesis_path $trusted_peers $port $log_dir)
+        | append (log-filter-args $loud)
+        | append $extra_args
 
-    # Build command (with or without samply)
-    let cmd = if $samply {
-        ["samply" "record" "--" $tempo_bin] | append $args
+    let cmd = wrap-samply [$tempo_bin ...$args] $samply
+
+    print $"  Node ($addr) -> http://localhost:($http_port)(if $background { '' } else { ' (foreground)' })"
+
+    if $background {
+        job spawn { sh -c $"($cmd | str join ' ') 2>&1" | lines | each { |line| print $"[($addr)] ($line)" } }
     } else {
-        [$tempo_bin] | append $args
+        print $"  Running: ($cmd | str join ' ')"
+        run-external ($cmd | first) ...($cmd | skip 1)
     }
-
-    print $"  Node ($addr) -> http://localhost:($http_port)"
-    # Always prefix output with node address
-    job spawn { sh -c $"($cmd | str join ' ') 2>&1" | lines | each { |line| print $"[($addr)] ($line)" } }
 }
 
-# Run a node in the foreground (receives Ctrl+C directly)
-def run-node-foreground [node_dir: string, genesis_path: string, trusted_peers: string, tempo_bin: string, loud: bool, samply: bool, extra_args: list<string>] {
-    let addr = ($node_dir | path basename)
-    let port = ($addr | split row ":" | get 1 | into int)
-    let node_index = (($port - 8000) / 100 | into int)
+# Build full node arguments for consensus mode
+def build-consensus-node-args [node_dir: string, genesis_path: string, trusted_peers: string, port: int, log_dir: string] {
+    let node_index = (port-to-node-index $port)
     let http_port = 8545 + $node_index
+    let reth_metrics_port = 9001 + $node_index
 
-    let log_dir = $"($LOGS_DIR)/($addr)"
-    mkdir $log_dir
-
-    # Build args with appropriate log filter (WARN by default, all if --loud)
-    let args = (build-node-args $node_dir $genesis_path $trusted_peers $port $log_dir) | append (
-        if $loud { [] } else { ["--log.stdout.filter" "warn"] }
-    ) | append $extra_args
-
-    # Build command (with or without samply)
-    let cmd = if $samply {
-        ["samply" "record" "--" $tempo_bin] | append $args
-    } else {
-        [$tempo_bin] | append $args
-    }
-
-    if $loud {
-        print $"  Node ($addr) -> http://localhost:($http_port) \(foreground, logs to stdout\)"
-    } else {
-        print $"  Node ($addr) -> http://localhost:($http_port) \(foreground\)"
-    }
-    print $"  Running foreground consensus node: ($cmd | str join ' ')"
-
-    run-external ($cmd | first) ...($cmd | skip 1)
-}
-
-# Build base node arguments shared between dev and consensus modes
-def build-base-args [genesis_path: string, datadir: string, log_dir: string, http_port: int, reth_metrics_port: int] {
-    [
-        "node"
-        "--chain" $genesis_path
-        "--datadir" $datadir
-        "--http"
-        "--http.addr" "0.0.0.0"
-        "--http.port" $"($http_port)"
-        "--http.api" "all"
-        "--metrics" $"0.0.0.0:($reth_metrics_port)"
-        "--log.file.directory" $log_dir
-        "--faucet.enabled"
-        "--faucet.private-key" "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-        "--faucet.amount" "1000000000000"
-        "--faucet.address" "0x20c0000000000000000000000000000000000001"
-    ]
-}
-
-# Build dev mode specific arguments
-def build-dev-args [] {
-    [
-        "--dev"
-        "--dev.block-time" "1sec"
-        "--builder.gaslimit" "3000000000"
-        "--builder.max-tasks" "8"
-        "--builder.deadline" "3"
-    ]
+    (build-base-args $genesis_path $node_dir $log_dir $http_port $reth_metrics_port)
+        | append (build-consensus-args $node_dir $trusted_peers $port)
 }
 
 # Build consensus mode specific arguments
@@ -321,17 +359,9 @@ def build-consensus-args [node_dir: string, trusted_peers: string, port: int] {
     ]
 }
 
-# Build full node arguments for consensus mode
-def build-node-args [node_dir: string, genesis_path: string, trusted_peers: string, port: int, log_dir: string] {
-    let node_index = (($port - 8000) / 100 | into int)
-    let http_port = 8545 + $node_index
-    let reth_metrics_port = 9001 + $node_index
-
-    let base = (build-base-args $genesis_path $node_dir $log_dir $http_port $reth_metrics_port)
-    let consensus = (build-consensus-args $node_dir $trusted_peers $port)
-
-    $base | append $consensus
-}
+# ============================================================================
+# Bench command
+# ============================================================================
 
 # Run a full benchmark: start stack, nodes, and tempo-bench
 def "main bench" [
@@ -349,11 +379,7 @@ def "main bench" [
     --node-args: string = ""                        # Additional node arguments (space-separated)
     --bench-args: string = ""                       # Additional tempo-bench arguments (space-separated)
 ] {
-    # Validate mode
-    if $mode != "dev" and $mode != "consensus" {
-        print $"Unknown mode: ($mode). Use 'dev' or 'consensus'."
-        exit 1
-    }
+    validate-mode $mode
 
     # Validate --nodes is only used with consensus mode
     if $mode == "dev" and $nodes != 3 {
@@ -381,17 +407,15 @@ def "main bench" [
     docker compose -f $"($BENCH_DIR)/docker-compose.yml" up -d
 
     # Build both binaries first
-    print "Building tempo and tempo-bench..."
-    let build_cmd = ["cargo" "build" "--bin" "tempo" "--bin" "tempo-bench" "--profile" $profile "--features" $features]
-    with-env { RUSTFLAGS: $RUSTFLAGS } {
-        run-external ($build_cmd | first) ...($build_cmd | skip 1)
-    }
+    build-tempo ["tempo" "tempo-bench"] $profile $features
 
     # Start nodes in background (skip build since we already compiled)
     let num_nodes = if $mode == "dev" { 1 } else { $nodes }
     print $"Starting ($num_nodes) ($mode) node\(s\)..."
+
     # Ensure at least as many accounts as validators for genesis generation (+1 for admin account)
     let genesis_accounts = ([$accounts $num_nodes] | math max) + 1
+
     let node_cmd = [
         "nu" "bench.nu" "node"
         "--mode" $mode
@@ -412,7 +436,7 @@ def "main bench" [
     print $"  Command: ($node_cmd_str)"
     job spawn { nu -c $node_cmd_str o+e>| lines | each { |line| print $line } }
 
-    # Wait for nodes to be ready (give them a moment to start)
+    # Wait for nodes to be ready
     sleep 2sec
     print "Waiting for nodes to be ready..."
     let rpc_urls = (0..<$num_nodes | each { |i| $"http://localhost:(8545 + $i)" })
@@ -420,9 +444,6 @@ def "main bench" [
         wait-for-rpc $url
     }
     print "All nodes ready!"
-
-    # Build target URLs
-    let target_urls = ($rpc_urls | str join ",")
 
     # Run tempo-bench
     let tempo_bench_bin = $"./target/($profile)/tempo-bench"
@@ -432,21 +453,22 @@ def "main bench" [
         "--tps" $"($tps)"
         "--duration" $"($duration)"
         "--accounts" $"($accounts)"
-        "--target-urls" $target_urls
+        "--target-urls" ($rpc_urls | str join ",")
         "--faucet"
         "--clear-txpool"
-    ] | append (if $preset != "" {
+    ]
+    | append (if $preset != "" {
         [
             "--tip20-weight" $"($weights | get 0)"
             "--erc20-weight" $"($weights | get 1)"
             "--swap-weight" $"($weights | get 2)"
             "--place-order-weight" $"($weights | get 3)"
         ]
-    } else { [] }) | append (if $bench_args != "" { $bench_args | split row " " } else { [] })
+    } else { [] })
+    | append (if $bench_args != "" { $bench_args | split row " " } else { [] })
 
     print $"Running benchmark: ($bench_cmd | str join ' ')"
     try {
-        # Set file descriptor limit and run benchmark
         sh -c $"ulimit -Sn unlimited && ($bench_cmd | str join ' ')"
     } catch {
         print "Benchmark interrupted or failed."
@@ -505,6 +527,10 @@ def wait-for-rpc [url: string, max_attempts: int = 120] {
         sleep 1sec
     }
 }
+
+# ============================================================================
+# Help
+# ============================================================================
 
 # Show help
 def main [] {
