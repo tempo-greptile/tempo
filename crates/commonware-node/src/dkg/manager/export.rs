@@ -71,14 +71,14 @@ impl DkgExport {
                     .dkg_outcome
                     .participants
                     .iter()
-                    .map(|pk| hex::encode(pk.encode()))
+                    .map(|pk| hex::encode_prefixed(pk.encode()))
                     .collect(),
-                public_polynomial: hex::encode(epoch_state.dkg_outcome.public.encode()),
+                public_polynomial: hex::encode_prefixed(epoch_state.dkg_outcome.public.encode()),
                 private_share: epoch_state
                     .dkg_outcome
                     .share
                     .as_ref()
-                    .map(|share| hex::encode(share.encode())),
+                    .map(|share| hex::encode_prefixed(share.encode())),
             },
         })
     }
