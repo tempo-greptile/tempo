@@ -26,7 +26,7 @@ use tempo_commonware_node_config::{Peers, PublicPolynomial, SigningKey, SigningS
 use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, DEFAULT_7702_DELEGATE_ADDRESS,
     MULTICALL_ADDRESS, PERMIT2_ADDRESS, SAFE_DEPLOYER_ADDRESS,
-    contracts::ARACHNID_CREATE2_FACTORY_BYTECODE,
+    contracts::{ARACHNID_CREATE2_FACTORY_BYTECODE, CREATEX_POST_ALLEGRO_MODERATO_BYTECODE},
     precompiles::{ITIP20Factory, IValidatorConfig},
 };
 use tempo_dkg_onchain_artifacts::PublicOutcome;
@@ -76,7 +76,7 @@ pub(crate) struct GenesisArgs {
     base_fee_per_gas: u128,
 
     /// Genesis block gas limit
-    #[arg(long, default_value_t = 17000000000000)]
+    #[arg(long, default_value_t = 500_000_000)]
     gas_limit: u64,
 
     /// Adagio hardfork activation timestamp (defaults to 0 = active at genesis)
@@ -325,7 +325,7 @@ impl GenesisArgs {
         genesis_alloc.insert(
             CREATEX_ADDRESS,
             GenesisAccount {
-                code: Some(tempo_contracts::CreateX::DEPLOYED_BYTECODE.clone()),
+                code: Some(CREATEX_POST_ALLEGRO_MODERATO_BYTECODE),
                 nonce: Some(1),
                 ..Default::default()
             },
