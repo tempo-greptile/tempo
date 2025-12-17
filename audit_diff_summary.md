@@ -6,6 +6,11 @@
 
 **Total:** 160 files, +32,715 / -19,276 lines (net +13,439)
 
+| Type | Added | Removed | Net |
+|------|-------|---------|-----|
+| **Core code** | +28,837 | -18,348 | +10,489 |
+| **Inline tests** | +3,878 | -928 | +2,950 |
+
 ---
 
 ## Precompiles (+4k net)
