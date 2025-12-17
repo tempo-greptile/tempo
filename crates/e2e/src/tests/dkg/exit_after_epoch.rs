@@ -7,19 +7,20 @@ use commonware_runtime::{
     Clock as _, Runner as _,
     deterministic::{Config, Runner},
 };
+use tempo_commonware_node_config::SigningShare;
 use tracing::info;
 
 use crate::{Setup, setup_validators};
 
 #[test_traced]
-fn single_validator_exits_after_epoch_and_exports_state() {
+fn single_validator_exits_after_epoch_and_exports_share() {
     let _ = tempo_eyre::install();
 
     let epoch_length = 10;
     let target_epoch = 1; // Exit after epoch 1 (blocks 10-19)
 
     let export_dir = tempfile::tempdir().expect("failed to create temp dir");
-    let export_path = export_dir.path().join("dkg_export.json");
+    let export_path = export_dir.path().join("signing_share.txt");
 
     info!(?export_path, "test will look for export file");
 
@@ -60,41 +61,14 @@ fn single_validator_exits_after_epoch_and_exports_state() {
         // Verify the export file was created
         assert!(
             export_path.exists(),
-            "DKG export file should exist at {export_path:?}"
+            "signing share export file should exist at {export_path:?}"
         );
 
-        // Verify the export file contains valid JSON with expected fields
-        let export_content =
-            std::fs::read_to_string(&export_path).expect("should be able to read export file");
-        let export: serde_json::Value =
-            serde_json::from_str(&export_content).expect("export file should contain valid JSON");
+        // Verify the exported file can be read as a valid signing share
+        // (same format as --consensus.signing-share input)
+        let _share = SigningShare::read_from_file(&export_path)
+            .expect("should be able to read exported share");
 
-        // After processing the last block of epoch 1 (block 19), the DB epoch state
-        // is updated to epoch 2. The export captures this NEW epoch state.
-        let expected_epoch = target_epoch + 1; // 2 (the epoch we're about to enter)
-        let expected_exported_at_height = (target_epoch + 1) * epoch_length - 1; // 19 (last block of epoch 1)
-        let expected_floor_height = expected_exported_at_height + 1; // 20 (first block of epoch 2)
-
-        assert_eq!(
-            export["epoch_state"]["epoch"].as_u64(),
-            Some(expected_epoch),
-            "export epoch_state.epoch should be {expected_epoch}"
-        );
-        assert_eq!(
-            export["exported_at_height"].as_u64(),
-            Some(expected_exported_at_height),
-            "export should be at height {expected_exported_at_height}"
-        );
-        assert_eq!(
-            export["floor_height"].as_u64(),
-            Some(expected_floor_height),
-            "floor_height should be {expected_floor_height}"
-        );
-        assert!(
-            export["epoch_state"].is_object(),
-            "export should contain epoch_state"
-        );
-
-        info!("test passed: export file created with valid content");
+        info!("test passed: export file contains valid signing share");
     });
 }

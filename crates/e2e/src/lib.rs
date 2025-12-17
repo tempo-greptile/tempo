@@ -171,11 +171,11 @@ impl Setup {
     }
 
     /// Configure exit-after-epoch behavior for coordinated shutdown testing.
-    pub fn exit_after_epoch(self, epoch: u64, export_file: PathBuf) -> Self {
+    pub fn exit_after_epoch(self, epoch: u64, export_share: PathBuf) -> Self {
         Self {
             exit_args: ExitArgs {
                 exit_after_epoch: Some(epoch),
-                exit_export_file: Some(export_file),
+                exit_export_share: Some(export_share),
             },
             ..self
         }

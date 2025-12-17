@@ -152,18 +152,15 @@ pub struct Args {
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
 pub struct ExitArgs {
     /// Exit after processing the last block of this epoch. When set, the node
-    /// will automatically export DKG state and exit with code 0 after the
-    /// specified epoch boundary is finalized and acknowledged.
-    ///
-    /// Requires `--consensus.exit-export-file` to be set.
-    #[arg(long = "consensus.exit-after-epoch", requires = "exit_export_file")]
+    /// will exit with code 0 after the specified epoch boundary is finalized.
+    #[arg(long = "consensus.exit-after-epoch")]
     pub exit_after_epoch: Option<u64>,
 
-    /// Path to export DKG state before exiting. Required when `--consensus.exit-after-epoch`
-    /// is set. The exported file contains all necessary state to resume the node
-    /// after a breaking storage migration.
-    #[arg(long = "consensus.exit-export-file")]
-    pub exit_export_file: Option<PathBuf>,
+    /// Path to export the BLS12-381 signing share before exiting. Requires
+    /// `--consensus.exit-after-epoch`. The exported file can be used as
+    /// `--consensus.signing-share` for a new node after a breaking storage migration.
+    #[arg(long = "consensus.exit-export-share", requires = "exit_after_epoch")]
+    pub exit_export_share: Option<PathBuf>,
 }
 
 /// Runtime configuration for exit behavior (includes shutdown token).

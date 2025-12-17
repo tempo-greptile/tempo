@@ -618,7 +618,7 @@ where
             && tx.has_post_allegretto_state().await
     }
 
-    /// Checks if we should export DKG state and signal shutdown.
+    /// Checks if we should export signing share and signal shutdown.
     ///
     /// Called after each finalized block to check if we've reached the target epoch boundary.
     /// Returns `ControlFlow::Break` if the actor should exit (without acknowledging).
@@ -626,7 +626,7 @@ where
         tracing::debug!(
             block_height,
             exit_after_epoch = ?self.config.exit.args.exit_after_epoch,
-            exit_export_file = ?self.config.exit.args.exit_export_file,
+            exit_export_share = ?self.config.exit.args.exit_export_share,
             "checking if should export and shutdown"
         );
 
@@ -644,7 +644,7 @@ where
         ControlFlow::Continue(())
     }
 
-    /// Exports DKG state to file and signals shutdown.
+    /// Optionally exports signing share to file and signals shutdown.
     async fn export_and_shutdown(
         &self,
         tx: &DkgReadWriteTransaction<ContextCell<TContext>>,
@@ -653,29 +653,27 @@ where
     ) {
         info!(
             block_height,
-            epoch, "at target epoch boundary; exporting state and signaling shutdown"
+            epoch, "at target epoch boundary; signaling shutdown"
         );
 
-        let export_path = self
-            .config
-            .exit
-            .args
-            .exit_export_file
-            .as_ref()
-            .expect("validated at startup: exit_after_epoch requires exit_export_file");
+        if let Some(export_path) = &self.config.exit.args.exit_export_share {
+            let Ok(Some(epoch_state)) = tx.get_epoch::<post_allegretto::EpochState>().await else {
+                error!("failed to read epoch state");
+                self.config.exit.shutdown_token.cancel();
+                return;
+            };
 
-        match super::export::DkgExport::from_db(tx, block_height).await {
-            Ok(export) => {
-                if let Err(e) = export.write_to_file(export_path) {
-                    error!(?e, "failed to write DKG export file");
+            if let Some(share) = &epoch_state.dkg_outcome.share {
+                if let Err(e) = super::export::write_share_to_file(share, export_path) {
+                    error!(?e, "failed to write signing share");
                 } else {
-                    info!(?export_path, "exported DKG state; signaling shutdown");
+                    info!(?export_path, "exported signing share");
                 }
-            }
-            Err(e) => {
-                error!(?e, "failed to create DKG export");
+            } else {
+                info!("node has no signing share to export");
             }
         }
+
         self.config.exit.shutdown_token.cancel();
     }
 
