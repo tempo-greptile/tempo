@@ -345,7 +345,7 @@ where
                 ));
             };
 
-            if !validator.verify(None, signature_hash.as_slice(), &signature) {
+            if !validator.verify(&[], signature_hash.as_slice(), &signature) {
                 return Err(BlockValidationError::msg("invalid subblock signature"));
             }
 

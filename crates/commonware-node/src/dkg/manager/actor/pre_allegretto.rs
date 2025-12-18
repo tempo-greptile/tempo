@@ -13,8 +13,9 @@ use commonware_cryptography::{
 use commonware_p2p::{Receiver, Sender, utils::mux::MuxHandle};
 use commonware_runtime::{Clock, ContextCell, Spawner, Storage};
 use commonware_utils::{
+    NZU32,
+    ordered::{Map, Set},
     quorum,
-    set::{Ordered, OrderedAssociated},
 };
 use eyre::{OptionExt as _, WrapErr as _};
 use rand_core::CryptoRngCore;
@@ -34,10 +35,8 @@ use crate::{
 impl<TContext, TPeerManager> super::Actor<TContext, TPeerManager>
 where
     TContext: Clock + CryptoRngCore + commonware_runtime::Metrics + Spawner + Storage,
-    TPeerManager: commonware_p2p::Manager<
-            PublicKey = PublicKey,
-            Peers = OrderedAssociated<PublicKey, SocketAddr>,
-        > + Sync,
+    TPeerManager:
+        commonware_p2p::Manager<PublicKey = PublicKey, Peers = Map<PublicKey, SocketAddr>> + Sync,
 {
     /// Runs the pre-allegretto initialization routines.
     ///
@@ -356,7 +355,7 @@ where
 #[derive(Clone)]
 pub(crate) struct EpochState {
     pub(crate) epoch: Epoch,
-    pub(crate) participants: Ordered<PublicKey>,
+    pub(crate) participants: Set<PublicKey>,
     pub(crate) public: Public<MinSig>,
     pub(crate) share: Option<Share>,
 }
@@ -377,7 +376,7 @@ impl EpochState {
         self.epoch
     }
 
-    pub(super) fn participants(&self) -> &Ordered<PublicKey> {
+    pub(super) fn participants(&self) -> &Set<PublicKey> {
         &self.participants
     }
 
@@ -416,9 +415,10 @@ impl Read for EpochState {
         _cfg: &Self::Cfg,
     ) -> Result<Self, commonware_codec::Error> {
         let epoch = Epoch::read(buf)?;
-        let participants = Ordered::read_cfg(buf, &(RangeCfg::from(0..=usize::MAX), ()))?;
+        let participants = Set::read_cfg(buf, &(RangeCfg::from(0..=usize::MAX), ()))?;
+        let quorum = quorum(participants.len() as u32);
         let public =
-            Public::<MinSig>::read_cfg(buf, &(quorum(participants.len() as u32) as usize))?;
+            Public::<MinSig>::read_cfg(buf, &RangeCfg::from(NZU32!(quorum)..=NZU32!(quorum)))?;
         let share = Option::<Share>::read_cfg(buf, &())?;
         Ok(Self {
             epoch,

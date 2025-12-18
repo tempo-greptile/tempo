@@ -7,6 +7,7 @@ use alloy_primitives::Bytes;
 use commonware_codec::Encode as _;
 use commonware_consensus::types::Epoch;
 use commonware_cryptography::ed25519::PublicKey;
+use commonware_utils::TryFromIterator as _;
 use eyre::{WrapErr as _, eyre};
 use indicatif::{ParallelProgressIterator, ProgressIterator};
 use rayon::prelude::*;
@@ -757,11 +758,13 @@ fn generate_consensus_config(
     >(&mut rng, None, validators.len() as u32, threshold);
 
     signers.sort_by_key(|signer| signer.public_key());
-    let peers = validators
-        .iter()
-        .zip(signers.iter())
-        .map(|(addr, private_key)| (private_key.public_key(), *addr))
-        .collect::<commonware_utils::set::OrderedAssociated<_, _>>();
+    let peers = commonware_utils::ordered::Map::try_from_iter(
+        validators
+            .iter()
+            .zip(signers.iter())
+            .map(|(addr, private_key)| (private_key.public_key(), *addr)),
+    )
+    .expect("all addresses should be unique");
 
     let mut validators = vec![];
     for (addr, (signer, share)) in peers.values().iter().zip(signers.into_iter().zip(shares)) {

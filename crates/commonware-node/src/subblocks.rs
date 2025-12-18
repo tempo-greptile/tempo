@@ -735,7 +735,7 @@ async fn build_subblock(
         transactions,
     };
 
-    let signature = signer.sign(None, subblock.signature_hash().as_slice());
+    let signature = signer.sign(&[], subblock.signature_hash().as_slice());
     let signed_subblock = SignedSubBlock {
         inner: subblock,
         signature: Bytes::copy_from_slice(signature.as_ref()),
@@ -770,7 +770,7 @@ async fn validate_subblock(
         return Err(eyre::eyre!("invalid signature"));
     };
 
-    if !sender.verify(None, subblock.signature_hash().as_slice(), &signature) {
+    if !sender.verify(&[], subblock.signature_hash().as_slice(), &signature) {
         return Err(eyre::eyre!("invalid signature"));
     }
 

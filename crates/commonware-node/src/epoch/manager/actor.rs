@@ -50,7 +50,7 @@ use bytes::Bytes;
 use commonware_codec::{DecodeExt as _, Encode as _};
 use commonware_consensus::{
     Reporters,
-    simplex::{self, signing_scheme::bls12381_threshold::Scheme, types::Voter},
+    simplex::{self, signing_scheme::bls12381_threshold::Scheme, types::Certificate},
     types::{Epoch, ViewDelta},
     utils,
 };
@@ -496,7 +496,7 @@ where
                     available locally; cannot serve request"
                 )
             })?;
-        let message = Voter::<Scheme<PublicKey, MinSig>, Digest>::Finalization(cert);
+        let message = Certificate::<Scheme<PublicKey, MinSig>, Digest>::Finalization(cert);
         recovered_global_sender
             .send(
                 requested_epoch.get(),

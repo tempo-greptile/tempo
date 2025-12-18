@@ -223,7 +223,8 @@ impl Inner<Init> {
         err(level = Level::ERROR),
     )]
     async fn handle_broadcast(mut self, broadcast: Broadcast) -> eyre::Result<()> {
-        let Some(latest_proposed) = self.state.latest_proposed_block.read().await.clone() else {
+        let Some((round, latest_proposed)) = self.state.latest_proposed_block.read().await.clone()
+        else {
             return Err(eyre!("there was no latest block to broadcast"));
         };
         ensure!(
@@ -233,7 +234,7 @@ impl Inner<Init> {
             latest_proposed.digest(),
         );
 
-        self.marshal.broadcast(latest_proposed).await;
+        self.marshal.proposed(round, latest_proposed).await;
         Ok(())
     }
 
@@ -301,7 +302,7 @@ impl Inner<Init> {
         err(level = Level::WARN),
     )]
     async fn handle_propose<TContext: Pacer>(
-        self,
+        mut self,
         request: Propose,
         context: TContext,
     ) -> eyre::Result<()> {
@@ -353,7 +354,7 @@ impl Inner<Init> {
 
         {
             let mut lock = self.state.latest_proposed_block.write().await;
-            *lock = Some(proposal.clone());
+            *lock = Some((round, proposal.clone()));
         }
 
         // Make sure reth sees the new payload so that in the next round we can
@@ -760,7 +761,7 @@ pub(in crate::consensus) struct Uninit(());
 /// Carries the runtime initialized state of the application.
 #[derive(Clone, Debug)]
 struct Init {
-    latest_proposed_block: Arc<RwLock<Option<Block>>>,
+    latest_proposed_block: Arc<RwLock<Option<(Round, Block)>>>,
     dkg_manager: crate::dkg::manager::Mailbox,
     /// The communication channel to the [`executor::Executor`] task.
     executor_mailbox: ExecutorMailbox,

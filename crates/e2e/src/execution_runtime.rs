@@ -21,7 +21,7 @@ use commonware_cryptography::{
     bls12381::primitives::{poly::Public, variant::MinSig},
     ed25519::PublicKey,
 };
-use commonware_utils::set::OrderedAssociated;
+use commonware_utils::ordered::Map;
 use eyre::{OptionExt as _, WrapErr as _};
 use futures::StreamExt;
 use reth_db::mdbx::DatabaseEnv;
@@ -124,7 +124,7 @@ impl Builder {
         }
     }
 
-    pub fn with_validators(self, validators: OrderedAssociated<PublicKey, SocketAddr>) -> Self {
+    pub fn with_validators(self, validators: Map<PublicKey, SocketAddr>) -> Self {
         Self {
             validators: Some(validators.into()),
             ..self

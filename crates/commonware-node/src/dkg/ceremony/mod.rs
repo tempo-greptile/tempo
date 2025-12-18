@@ -17,7 +17,7 @@ use commonware_p2p::{
     utils::mux::{MuxHandle, SubReceiver, SubSender},
 };
 use commonware_runtime::{Clock, Metrics as RuntimeMetrics, Storage};
-use commonware_utils::{max_faults, set::Ordered, union};
+use commonware_utils::{max_faults, ordered::Set, union};
 use eyre::{WrapErr as _, bail, ensure};
 use futures::FutureExt as _;
 use indexmap::IndexSet;
@@ -75,10 +75,10 @@ pub(super) struct Config {
     pub(super) hardfork_regime: HardforkRegime,
 
     /// The dealers in the round.
-    pub(super) dealers: Ordered<PublicKey>,
+    pub(super) dealers: Set<PublicKey>,
 
     /// The players in the round.
-    pub(super) players: Ordered<PublicKey>,
+    pub(super) players: Set<PublicKey>,
 }
 
 pub(super) struct Ceremony<TReceiver, TSender>
@@ -782,7 +782,7 @@ where
         dealer_me.outcome.as_ref()
     }
 
-    pub(super) fn dealers(&self) -> &Ordered<PublicKey> {
+    pub(super) fn dealers(&self) -> &Set<PublicKey> {
         &self.config.dealers
     }
 
@@ -822,7 +822,7 @@ pub(super) struct PrivateOutcome {
 
     /// The participants of the new epoch. If successful, this will the players
     /// in the ceremony. If not successful, these are the dealers.
-    pub(super) participants: Ordered<PublicKey>,
+    pub(super) participants: Set<PublicKey>,
 
     /// The role the node will have in the next epoch.
     pub(super) role: Role,

@@ -21,11 +21,11 @@ use commonware_p2p::{
 use commonware_runtime::{Clock, ContextCell, Handle, Metrics as _, Spawner, Storage, spawn_cell};
 use commonware_storage::metadata::{self, Metadata};
 use commonware_utils::{
-    Acknowledgement,
+    Acknowledgement, NZU32,
     acknowledgement::Exact,
+    ordered::{Map, Set},
     quorum,
     sequence::U64,
-    set::{Ordered, OrderedAssociated},
     union,
 };
 
@@ -157,10 +157,8 @@ impl Future for PendingFinalizedGap {
 impl<TContext, TPeerManager> Actor<TContext, TPeerManager>
 where
     TContext: Clock + CryptoRngCore + commonware_runtime::Metrics + Spawner + Storage,
-    TPeerManager: commonware_p2p::Manager<
-            PublicKey = PublicKey,
-            Peers = OrderedAssociated<PublicKey, SocketAddr>,
-        > + Sync,
+    TPeerManager:
+        commonware_p2p::Manager<PublicKey = PublicKey, Peers = Map<PublicKey, SocketAddr>> + Sync,
 {
     pub(super) async fn new(
         config: super::Config<TPeerManager>,
@@ -1028,7 +1026,7 @@ impl EpochState {
         }
     }
 
-    fn participants(&self) -> &Ordered<PublicKey> {
+    fn participants(&self) -> &Set<PublicKey> {
         match self {
             Self::PreModerato(epoch_state) => epoch_state.participants(),
             Self::PostModerato(epoch_state) => epoch_state.participants(),
@@ -1066,7 +1064,7 @@ async fn read_validator_config_with_retry<C: commonware_runtime::Clock>(
     node: &TempoFullNode,
     epoch: Epoch,
     epoch_length: u64,
-) -> OrderedAssociated<PublicKey, DecodedValidator> {
+) -> Map<PublicKey, DecodedValidator> {
     let mut attempts = 1;
     let retry_after = Duration::from_secs(1);
     loop {
@@ -1096,7 +1094,7 @@ pub struct DkgOutcome {
     pub epoch: Epoch,
 
     /// The participants in the next epoch as determined by the DKG.
-    pub participants: Ordered<PublicKey>,
+    pub participants: Set<PublicKey>,
 
     /// The public polynomial in the next epoch as determined by the DKG.
     pub public: Public<MinSig>,
@@ -1134,9 +1132,11 @@ impl Read for DkgOutcome {
     ) -> Result<Self, commonware_codec::Error> {
         let dkg_successful = bool::read(buf)?;
         let epoch = Epoch::read(buf)?;
-        let participants = Ordered::read_cfg(buf, &(RangeCfg::from(0..=usize::MAX), ()))?;
+        let participants = Set::read_cfg(buf, &(RangeCfg::from(0..=usize::MAX), ()))?;
+
+        let quorum = quorum(participants.len() as u32);
         let public =
-            Public::<MinSig>::read_cfg(buf, &(quorum(participants.len() as u32) as usize))?;
+            Public::<MinSig>::read_cfg(buf, &RangeCfg::from(NZU32!(quorum)..=NZU32!(quorum)))?;
         let share = Option::<Share>::read_cfg(buf, &())?;
         Ok(Self {
             dkg_successful,

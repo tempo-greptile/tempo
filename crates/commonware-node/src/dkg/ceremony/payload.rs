@@ -1,10 +1,10 @@
 //! Objects that are created as part of a ceremony and distributed.
 
 use bytes::{Buf, BufMut};
-use commonware_codec::{EncodeSize, FixedSize as _, Read, ReadExt as _, Write};
+use commonware_codec::{EncodeSize, FixedSize as _, RangeCfg, Read, ReadExt as _, Write};
 use commonware_consensus::types::Epoch;
 use commonware_cryptography::bls12381::primitives::{group, poly::Public, variant::MinSig};
-use commonware_utils::quorum;
+use commonware_utils::{NZU32, quorum};
 use tempo_dkg_onchain_artifacts::Ack;
 
 /// The actual message that is sent over p2p.
@@ -142,9 +142,15 @@ impl Read for Share {
     type Cfg = u32;
 
     fn read_cfg(buf: &mut impl Buf, t: &u32) -> Result<Self, commonware_codec::Error> {
+        if *t == 0 {
+            return Err(commonware_codec::Error::Invalid(
+                "read share",
+                "length of commitment cannot be 0",
+            ));
+        }
         let q = quorum(*t);
         Ok(Self {
-            commitment: Public::<MinSig>::read_cfg(buf, &(q as usize))?,
+            commitment: Public::<MinSig>::read_cfg(buf, &RangeCfg::from(NZU32!(q)..=NZU32!(q)))?,
             share: group::Share::read(buf)?,
         })
     }

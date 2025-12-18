@@ -5,7 +5,7 @@ use commonware_cryptography::{
     ed25519::{PrivateKey, PublicKey},
 };
 use commonware_runtime::{Clock, Metrics, Spawner, Storage};
-use commonware_utils::set::OrderedAssociated;
+use commonware_utils::ordered::Map;
 use eyre::WrapErr as _;
 use futures::channel::mpsc;
 use rand_core::CryptoRngCore;
@@ -35,10 +35,8 @@ pub(crate) async fn init<TContext, TPeerManager>(
 ) -> eyre::Result<(Actor<TContext, TPeerManager>, Mailbox)>
 where
     TContext: Clock + CryptoRngCore + Metrics + Spawner + Storage,
-    TPeerManager: commonware_p2p::Manager<
-            PublicKey = PublicKey,
-            Peers = OrderedAssociated<PublicKey, SocketAddr>,
-        > + Sync,
+    TPeerManager:
+        commonware_p2p::Manager<PublicKey = PublicKey, Peers = Map<PublicKey, SocketAddr>> + Sync,
 {
     let (tx, rx) = mpsc::unbounded();
 

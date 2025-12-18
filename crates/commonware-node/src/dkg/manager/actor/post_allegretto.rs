@@ -14,7 +14,7 @@ use commonware_cryptography::{
 };
 use commonware_p2p::{Receiver, Sender, utils::mux::MuxHandle};
 use commonware_runtime::{Clock, ContextCell, Spawner, Storage};
-use commonware_utils::set::{Ordered, OrderedAssociated};
+use commonware_utils::ordered::{Map, Set};
 use eyre::{WrapErr as _, ensure};
 use rand_core::CryptoRngCore;
 use reth_ethereum::chainspec::EthChainSpec as _;
@@ -39,10 +39,8 @@ use crate::{
 impl<TContext, TPeerManager> super::Actor<TContext, TPeerManager>
 where
     TContext: Clock + CryptoRngCore + commonware_runtime::Metrics + Spawner + Storage,
-    TPeerManager: commonware_p2p::Manager<
-            PublicKey = PublicKey,
-            Peers = OrderedAssociated<PublicKey, SocketAddr>,
-        > + Sync,
+    TPeerManager:
+        commonware_p2p::Manager<PublicKey = PublicKey, Peers = Map<PublicKey, SocketAddr>> + Sync,
 {
     #[instrument(skip_all, err)]
     pub(super) async fn post_allegretto_init(
@@ -330,15 +328,17 @@ where
         );
 
         {
-            let static_validators = pre_allegretto_validator_state
-                .dealers()
-                .iter_pairs()
-                .map(|(key, val)| (key, &val.inbound))
-                .collect::<OrderedAssociated<_, _>>();
-            let on_chain_validators = on_chain_validators
-                .iter_pairs()
-                .map(|(key, val)| (key, &val.inbound))
-                .collect::<OrderedAssociated<_, _>>();
+            let static_validators = Map::from_iter_dedup(
+                pre_allegretto_validator_state
+                    .dealers()
+                    .iter_pairs()
+                    .map(|(key, val)| (key, &val.inbound)),
+            );
+            let on_chain_validators = Map::from_iter_dedup(
+                on_chain_validators
+                    .iter_pairs()
+                    .map(|(key, val)| (key, &val.inbound)),
+            );
 
             ensure!(
                 static_validators == on_chain_validators,
@@ -606,7 +606,7 @@ impl EpochState {
         self.dkg_outcome.epoch
     }
 
-    pub(crate) fn participants(&self) -> &Ordered<PublicKey> {
+    pub(crate) fn participants(&self) -> &Set<PublicKey> {
         &self.dkg_outcome.participants
     }
 
@@ -618,11 +618,11 @@ impl EpochState {
         &self.dkg_outcome.share
     }
 
-    pub(crate) fn dealer_pubkeys(&self) -> Ordered<PublicKey> {
+    pub(crate) fn dealer_pubkeys(&self) -> Set<PublicKey> {
         self.validator_state.dealer_pubkeys()
     }
 
-    pub(crate) fn player_pubkeys(&self) -> Ordered<PublicKey> {
+    pub(crate) fn player_pubkeys(&self) -> Set<PublicKey> {
         self.validator_state.player_pubkeys()
     }
 }

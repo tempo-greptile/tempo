@@ -12,7 +12,7 @@ use commonware_cryptography::{
     },
     ed25519::PublicKey,
 };
-use commonware_utils::{set::Ordered, union};
+use commonware_utils::{ordered::Set, union};
 use eyre::Report;
 use tempo_dkg_onchain_artifacts::IntermediateOutcome;
 use tracing::{info, instrument, warn};
@@ -45,8 +45,8 @@ pub(in crate::dkg) struct TreeOfDealings {
     epoch_length: u64,
 
     input_polynomial: Public<MinSig>,
-    dealers: Ordered<PublicKey>,
-    players: Ordered<PublicKey>,
+    dealers: Set<PublicKey>,
+    players: Set<PublicKey>,
 
     hardfork_regime: HardforkRegime,
     namespace: Vec<u8>,
@@ -57,8 +57,8 @@ impl TreeOfDealings {
         epoch: Epoch,
         epoch_length: u64,
         input_polynomial: Public<MinSig>,
-        dealers: Ordered<PublicKey>,
-        players: Ordered<PublicKey>,
+        dealers: Set<PublicKey>,
+        players: Set<PublicKey>,
         hardfork_regime: HardforkRegime,
         namespace: Vec<u8>,
     ) -> Self {
@@ -251,6 +251,9 @@ impl TreeOfDealings {
             .filter_map(|block| block.dealing.as_ref())
         {
             match self.verify_dealing(dealing).map_err(|err| *err.0) {
+                // TODO(janis): can remove this now because it's now handled by
+                // the arbiter.
+                //
                 // Don't disqualify unknown dealers - if unknown dealers are
                 // added to the arbiter it will panic on finalize.
                 Err(VerificationErrorKind::UnknownDealer { dealer }) => {
@@ -258,7 +261,9 @@ impl TreeOfDealings {
                 }
                 Err(reason) => {
                     warn!(reason = %Report::new(reason), "disqualifiying dealer");
-                    arbiter.disqualify(dealing.dealer().clone());
+                    if let Err(reason) = arbiter.disqualify(dealing.dealer().clone()) {
+                        warn!(reason = %Report::new(reason), "failed disqualifying dealer");
+                    }
                 }
                 Ok(ack_indices) => {
                     if let Err(reason) = arbiter.commitment(

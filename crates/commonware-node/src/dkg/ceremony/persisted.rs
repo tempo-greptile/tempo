@@ -1,6 +1,6 @@
 //! Information about a ceremony that is persisted to disk.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, num::NonZeroU32};
 
 use bytes::Buf;
 use commonware_codec::{EncodeSize, RangeCfg, Read, Write, varint::UInt};
@@ -8,7 +8,7 @@ use commonware_cryptography::{
     bls12381::primitives::{group, poly::Public, variant::MinSig},
     ed25519::PublicKey,
 };
-use commonware_utils::quorum;
+use commonware_utils::{NZU32, quorum};
 
 use super::IntermediateOutcome;
 
@@ -57,12 +57,19 @@ impl Read for State {
         _cfg: &Self::Cfg,
     ) -> Result<Self, commonware_codec::Error> {
         let num_players = UInt::read_cfg(buf, &())?.into();
-        let dealing = Option::<Dealing>::read_cfg(buf, &(quorum(num_players as u32) as usize))?;
+        if num_players == 0 {
+            return Err(commonware_codec::Error::Invalid(
+                "read state",
+                "number of players cannot be 0",
+            ));
+        }
+        let quorum = quorum(num_players as u32);
+        let dealing = Option::<Dealing>::read_cfg(buf, &NZU32!(quorum))?;
         let received_shares = Vec::<(PublicKey, Public<MinSig>, group::Share)>::read_cfg(
             buf,
             &(
                 RangeCfg::from(0..usize::MAX),
-                ((), quorum(num_players as u32) as usize, ()),
+                ((), RangeCfg::from(NZU32!(quorum)..=NZU32!(quorum)), ()),
             ),
         )?;
         let dealing_outcome = Option::<IntermediateOutcome>::read_cfg(buf, &())?;
@@ -96,10 +103,10 @@ impl EncodeSize for Dealing {
 }
 
 impl Read for Dealing {
-    type Cfg = usize;
+    type Cfg = NonZeroU32;
 
     fn read_cfg(buf: &mut impl Buf, cfg: &Self::Cfg) -> Result<Self, commonware_codec::Error> {
-        let commitment = Public::<MinSig>::read_cfg(buf, cfg)?;
+        let commitment = Public::<MinSig>::read_cfg(buf, &RangeCfg::from(*cfg..=*cfg))?;
         let shares = BTreeMap::read_cfg(buf, &(RangeCfg::from(0..usize::MAX), ((), ())))?;
         let acks = BTreeMap::read_cfg(buf, &(RangeCfg::from(0..usize::MAX), ((), ())))?;
         Ok(Self {

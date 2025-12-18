@@ -2389,7 +2389,7 @@ dependencies = [
 [[package]]
 name = "commonware-broadcast"
 version = "0.0.63"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=31a2bf3009963ad3ba907712aca0cad39a153c03#31a2bf3009963ad3ba907712aca0cad39a153c03"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=4a5fca0223772b1a1627138d970ce231f876e6ff#4a5fca0223772b1a1627138d970ce231f876e6ff"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -2407,7 +2407,7 @@ dependencies = [
 [[package]]
 name = "commonware-codec"
 version = "0.0.63"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=31a2bf3009963ad3ba907712aca0cad39a153c03#31a2bf3009963ad3ba907712aca0cad39a153c03"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=4a5fca0223772b1a1627138d970ce231f876e6ff#4a5fca0223772b1a1627138d970ce231f876e6ff"
 dependencies = [
  "bytes",
  "paste",
@@ -2417,7 +2417,7 @@ dependencies = [
 [[package]]
 name = "commonware-consensus"
 version = "0.0.63"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=31a2bf3009963ad3ba907712aca0cad39a153c03#31a2bf3009963ad3ba907712aca0cad39a153c03"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=4a5fca0223772b1a1627138d970ce231f876e6ff#4a5fca0223772b1a1627138d970ce231f876e6ff"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -2443,8 +2443,9 @@ dependencies = [
 [[package]]
 name = "commonware-cryptography"
 version = "0.0.63"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=31a2bf3009963ad3ba907712aca0cad39a153c03#31a2bf3009963ad3ba907712aca0cad39a153c03"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=4a5fca0223772b1a1627138d970ce231f876e6ff#4a5fca0223772b1a1627138d970ce231f876e6ff"
 dependencies = [
+ "anyhow",
  "blake3",
  "blst",
  "bytes",
@@ -2452,6 +2453,7 @@ dependencies = [
  "chacha20poly1305",
  "commonware-codec",
  "commonware-utils",
+ "ecdsa",
  "ed25519-consensus",
  "getrandom 0.2.16",
  "p256",
@@ -2468,13 +2470,14 @@ dependencies = [
 [[package]]
 name = "commonware-macros"
 version = "0.0.63"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=31a2bf3009963ad3ba907712aca0cad39a153c03#31a2bf3009963ad3ba907712aca0cad39a153c03"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=4a5fca0223772b1a1627138d970ce231f876e6ff#4a5fca0223772b1a1627138d970ce231f876e6ff"
 dependencies = [
  "futures",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
  "syn 2.0.111",
+ "toml 0.9.8",
  "tracing",
  "tracing-subscriber 0.3.22",
 ]
@@ -2482,7 +2485,7 @@ dependencies = [
 [[package]]
 name = "commonware-p2p"
 version = "0.0.63"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=31a2bf3009963ad3ba907712aca0cad39a153c03#31a2bf3009963ad3ba907712aca0cad39a153c03"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=4a5fca0223772b1a1627138d970ce231f876e6ff#4a5fca0223772b1a1627138d970ce231f876e6ff"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -2508,7 +2511,7 @@ dependencies = [
 [[package]]
 name = "commonware-resolver"
 version = "0.0.63"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=31a2bf3009963ad3ba907712aca0cad39a153c03#31a2bf3009963ad3ba907712aca0cad39a153c03"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=4a5fca0223772b1a1627138d970ce231f876e6ff#4a5fca0223772b1a1627138d970ce231f876e6ff"
 dependencies = [
  "bimap",
  "bytes",
@@ -2530,7 +2533,7 @@ dependencies = [
 [[package]]
 name = "commonware-runtime"
 version = "0.0.63"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=31a2bf3009963ad3ba907712aca0cad39a153c03#31a2bf3009963ad3ba907712aca0cad39a153c03"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=4a5fca0223772b1a1627138d970ce231f876e6ff#4a5fca0223772b1a1627138d970ce231f876e6ff"
 dependencies = [
  "async-lock",
  "axum",
@@ -2562,7 +2565,7 @@ dependencies = [
 [[package]]
 name = "commonware-storage"
 version = "0.0.63"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=31a2bf3009963ad3ba907712aca0cad39a153c03#31a2bf3009963ad3ba907712aca0cad39a153c03"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=4a5fca0223772b1a1627138d970ce231f876e6ff#4a5fca0223772b1a1627138d970ce231f876e6ff"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2585,7 +2588,7 @@ dependencies = [
 [[package]]
 name = "commonware-stream"
 version = "0.0.63"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=31a2bf3009963ad3ba907712aca0cad39a153c03#31a2bf3009963ad3ba907712aca0cad39a153c03"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=4a5fca0223772b1a1627138d970ce231f876e6ff#4a5fca0223772b1a1627138d970ce231f876e6ff"
 dependencies = [
  "bytes",
  "chacha20poly1305",
@@ -2605,13 +2608,14 @@ dependencies = [
 [[package]]
 name = "commonware-utils"
 version = "0.0.63"
-source = "git+https://github.com/commonwarexyz/monorepo?rev=31a2bf3009963ad3ba907712aca0cad39a153c03#31a2bf3009963ad3ba907712aca0cad39a153c03"
+source = "git+https://github.com/commonwarexyz/monorepo?rev=4a5fca0223772b1a1627138d970ce231f876e6ff#4a5fca0223772b1a1627138d970ce231f876e6ff"
 dependencies = [
  "bytes",
  "cfg-if",
  "commonware-codec",
  "futures",
  "getrandom 0.2.16",
+ "hashbrown 0.16.1",
  "num-bigint",
  "num-integer",
  "num-rational",
@@ -7572,7 +7576,7 @@ dependencies = [
  "tar",
  "tokio",
  "tokio-stream",
- "toml",
+ "toml 0.8.23",
  "tracing",
  "zstd",
 ]
@@ -7647,7 +7651,7 @@ dependencies = [
  "reth-stages-types",
  "reth-static-file-types",
  "serde",
- "toml",
+ "toml 0.8.23",
  "url",
 ]
 
@@ -8967,7 +8971,7 @@ dependencies = [
  "shellexpand",
  "strum 0.27.2",
  "thiserror 2.0.17",
- "toml",
+ "toml 0.8.23",
  "tracing",
  "url",
  "vergen",
@@ -10888,6 +10892,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8bbf91e5a4d6315eee45e704372590b30e260ee83af6639d64557f51b067776"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "serde_urlencoded"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12362,9 +12375,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
 dependencies = [
  "serde",
- "serde_spanned",
+ "serde_spanned 0.6.9",
  "toml_datetime 0.6.11",
  "toml_edit 0.22.27",
+]
+
+[[package]]
+name = "toml"
+version = "0.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0dc8b1fb61449e27716ec0e1bdf0f6b8f3e8f6b05391e8497b8b6d7804ea6d8"
+dependencies = [
+ "indexmap 2.12.1",
+ "serde_core",
+ "serde_spanned 1.0.4",
+ "toml_datetime 0.7.3",
+ "toml_parser",
+ "toml_writer",
+ "winnow",
 ]
 
 [[package]]
@@ -12393,7 +12421,7 @@ checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
 dependencies = [
  "indexmap 2.12.1",
  "serde",
- "serde_spanned",
+ "serde_spanned 0.6.9",
  "toml_datetime 0.6.11",
  "toml_write",
  "winnow",
@@ -12425,6 +12453,12 @@ name = "toml_write"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
+
+[[package]]
+name = "toml_writer"
+version = "1.0.5+spec-1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9cd6190959dce0994aa8970cd32ab116d1851ead27e866039acaf2524ce44fa"
 
 [[package]]
 name = "tonic"
