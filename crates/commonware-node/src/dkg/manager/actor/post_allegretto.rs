@@ -238,7 +238,7 @@ where
                 .await;
 
             // Check if we're shutting down at this epoch boundary
-            if self.config.exit.args.exit_after_epoch == Some(block_epoch) {
+            if self.config.pause.args.pause_after_epoch == Some(block_epoch) {
                 // Stop the consensus engine we just started to prevent it from running
                 self.config
                     .epoch_manager

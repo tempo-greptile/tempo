@@ -11,7 +11,7 @@ use futures::channel::mpsc;
 use rand_core::CryptoRngCore;
 use tempo_node::TempoFullNode;
 
-use crate::args::ExitConfig;
+use crate::args::PauseConfig;
 
 pub mod actor;
 pub mod export;
@@ -90,6 +90,6 @@ pub(crate) struct Config<TPeerManager> {
     /// given epoch after reading them from the smart contract.
     pub(crate) peer_manager: TPeerManager,
 
-    /// Exit configuration for coordinated shutdown at epoch boundaries.
-    pub(crate) exit: ExitConfig,
+    /// Pause configuration for coordinated shutdown at epoch boundaries.
+    pub(crate) pause: PauseConfig,
 }

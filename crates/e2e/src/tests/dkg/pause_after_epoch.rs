@@ -1,4 +1,4 @@
-//! Tests for the exit-after-epoch coordinated shutdown feature.
+//! Tests for the pause-after-epoch coordinated shutdown feature.
 
 use std::time::Duration;
 
@@ -13,11 +13,11 @@ use tracing::info;
 use crate::{Setup, setup_validators};
 
 #[test_traced]
-fn single_validator_exits_after_epoch_and_exports_share() {
+fn single_validator_pauses_after_epoch_and_exports_share() {
     let _ = tempo_eyre::install();
 
     let epoch_length = 10;
-    let target_epoch = 1; // Exit after epoch 1 (blocks 10-19)
+    let target_epoch = 1; // Pause after epoch 1 (blocks 10-19)
 
     let export_dir = tempfile::tempdir().expect("failed to create temp dir");
     let export_path = export_dir.path().join("signing_share.txt");
@@ -28,7 +28,7 @@ fn single_validator_exits_after_epoch_and_exports_share() {
         .how_many_signers(1)
         .epoch_length(epoch_length)
         .allegretto_time(0) // Post-allegretto from genesis
-        .exit_after_epoch(target_epoch, export_path.clone());
+        .pause_after_epoch(target_epoch, export_path.clone());
 
     let cfg = Config::default().with_seed(setup.seed);
     let executor = Runner::from(cfg);
@@ -39,7 +39,7 @@ fn single_validator_exits_after_epoch_and_exports_share() {
         // Start the single validator
         validators[0].start().await;
 
-        // Wait for the export file to be created (indicates successful exit-after-epoch)
+        // Wait for the export file to be created (indicates successful pause-after-epoch)
         // The node should process epoch 1 (blocks 10-19) and then export + shutdown
         for i in 0..120 {
             context.sleep(Duration::from_secs(1)).await;

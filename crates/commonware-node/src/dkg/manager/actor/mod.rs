@@ -915,12 +915,12 @@ where
     async fn maybe_export_and_shutdown(&mut self, block_height: u64) -> ControlFlow<()> {
         tracing::debug!(
             block_height,
-            exit_after_epoch = ?self.config.exit.args.exit_after_epoch,
-            exit_export_share = ?self.config.exit.args.exit_export_share,
+            pause_after_epoch = ?self.config.pause.args.pause_after_epoch,
+            pause_export_share = ?self.config.pause.args.pause_export_share,
             "checking if should export and shutdown"
         );
 
-        if let Some(target_epoch) = self.config.exit.args.exit_after_epoch
+        if let Some(target_epoch) = self.config.pause.args.pause_after_epoch
             && let Some(block_epoch) =
                 utils::is_last_block_in_epoch(self.config.epoch_length, block_height)
             && block_epoch == target_epoch
@@ -946,10 +946,10 @@ where
             epoch, "at target epoch boundary; signaling shutdown"
         );
 
-        if let Some(export_path) = &self.config.exit.args.exit_export_share {
+        if let Some(export_path) = &self.config.pause.args.pause_export_share {
             let Ok(Some(epoch_state)) = tx.get_epoch::<post_allegretto::EpochState>().await else {
                 error!("failed to read epoch state");
-                self.config.exit.shutdown_token.cancel();
+                self.config.pause.shutdown_token.cancel();
                 return;
             };
 
@@ -964,7 +964,7 @@ where
             }
         }
 
-        self.config.exit.shutdown_token.cancel();
+        self.config.pause.shutdown_token.cancel();
     }
 
     /// Returns the previous epoch state.

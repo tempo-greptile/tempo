@@ -136,38 +136,38 @@ pub struct Args {
     #[arg(long = "consensus.subblock-broadcast-interval", default_value = "50ms")]
     pub subblock_broadcast_interval: jiff::SignedDuration,
 
-    /// Exit configuration for coordinated shutdown at epoch boundaries.
+    /// Pause configuration for coordinated shutdown at epoch boundaries.
     #[command(flatten)]
-    pub exit: ExitArgs,
+    pub pause: PauseArgs,
 
     /// Cache for the signing key loaded from CLI-provided file.
     #[clap(skip)]
     loaded_signing_key: OnceLock<Option<SigningKey>>,
 }
 
-/// Configuration for coordinated node exit at epoch boundaries.
+/// Configuration for coordinated node pause at epoch boundaries.
 ///
 /// Used for breaking storage migrations where nodes need to export their DKG state,
 /// shut down cleanly, and restart with a new binary.
 #[derive(Debug, Clone, Default, PartialEq, Eq, clap::Args)]
-pub struct ExitArgs {
-    /// Exit after processing the last block of this epoch. When set, the node
+pub struct PauseArgs {
+    /// Pause after processing the last block of this epoch. When set, the node
     /// will exit with code 0 after the specified epoch boundary is finalized.
-    #[arg(long = "consensus.exit-after-epoch")]
-    pub exit_after_epoch: Option<u64>,
+    #[arg(long = "consensus.pause-after-epoch")]
+    pub pause_after_epoch: Option<u64>,
 
-    /// Path to export the BLS12-381 signing share before exiting. Requires
-    /// `--consensus.exit-after-epoch`. The exported file can be used as
+    /// Path to export the BLS12-381 signing share before pausing. Requires
+    /// `--consensus.pause-after-epoch`. The exported file can be used as
     /// `--consensus.signing-share` for a new node after a breaking storage migration.
-    #[arg(long = "consensus.exit-export-share", requires = "exit_after_epoch")]
-    pub exit_export_share: Option<PathBuf>,
+    #[arg(long = "consensus.pause-export-share", requires = "pause_after_epoch")]
+    pub pause_export_share: Option<PathBuf>,
 }
 
-/// Runtime configuration for exit behavior (includes shutdown token).
+/// Runtime configuration for pause behavior (includes shutdown token).
 #[derive(Clone, Debug)]
-pub struct ExitConfig {
-    /// CLI arguments for exit behavior.
-    pub args: ExitArgs,
+pub struct PauseConfig {
+    /// CLI arguments for pause behavior.
+    pub args: PauseArgs,
     /// Shutdown token to signal graceful shutdown.
     pub shutdown_token: tokio_util::sync::CancellationToken,
 }
