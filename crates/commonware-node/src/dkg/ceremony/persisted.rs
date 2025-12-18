@@ -139,28 +139,28 @@ mod tests {
         bls12381::{dkg, primitives::variant::MinSig},
         ed25519::{PrivateKey, PublicKey},
     };
-    use commonware_utils::{quorum, set::Ordered, union};
+    use commonware_utils::{NZU32, TryFromIterator as _, ordered::Set, quorum, union};
     use rand::{SeedableRng as _, rngs::StdRng};
     use tempo_dkg_onchain_artifacts::IntermediateOutcome;
 
-    fn four_private_keys() -> Ordered<PrivateKey> {
-        vec![
+    fn four_private_keys() -> Set<PrivateKey> {
+        Set::try_from_iter(vec![
             PrivateKey::from_seed(0),
             PrivateKey::from_seed(1),
             PrivateKey::from_seed(2),
             PrivateKey::from_seed(3),
-        ]
-        .into()
+        ])
+        .unwrap()
     }
 
-    fn four_public_keys() -> Ordered<PublicKey> {
-        vec![
+    fn four_public_keys() -> Set<PublicKey> {
+        Set::try_from_iter(vec![
             PrivateKey::from_seed(0).public_key(),
             PrivateKey::from_seed(1).public_key(),
             PrivateKey::from_seed(2).public_key(),
             PrivateKey::from_seed(3).public_key(),
-        ]
-        .into()
+        ])
+        .unwrap()
     }
 
     fn dealing(dealer_index: usize) -> Dealing {
@@ -242,7 +242,7 @@ mod tests {
         let bytes = dealing(0).encode();
 
         assert_eq!(
-            Dealing::read_cfg(&mut bytes.as_ref(), &(quorum(4) as usize)).unwrap(),
+            Dealing::read_cfg(&mut bytes.as_ref(), &NZU32!(quorum(4))).unwrap(),
             dealing(0),
         )
     }

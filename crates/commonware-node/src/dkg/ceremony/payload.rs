@@ -165,20 +165,20 @@ mod tests {
         bls12381::{dkg, primitives::variant::MinSig},
         ed25519::{PrivateKey, PublicKey},
     };
-    use commonware_utils::{set::Ordered, union};
+    use commonware_utils::{TryFromIterator as _, ordered::Set, union};
     use rand::{SeedableRng as _, rngs::StdRng};
 
     use crate::dkg::ceremony::ACK_NAMESPACE;
 
     use super::Ack;
 
-    fn three_public_keys() -> Ordered<PublicKey> {
-        vec![
+    fn three_public_keys() -> Set<PublicKey> {
+        Set::try_from_iter(vec![
             PrivateKey::from_seed(0).public_key(),
             PrivateKey::from_seed(1).public_key(),
             PrivateKey::from_seed(2).public_key(),
-        ]
-        .into()
+        ])
+        .unwrap()
     }
 
     #[test]

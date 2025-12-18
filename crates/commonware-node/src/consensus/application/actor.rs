@@ -302,7 +302,7 @@ impl Inner<Init> {
         err(level = Level::WARN),
     )]
     async fn handle_propose<TContext: Pacer>(
-        mut self,
+        self,
         request: Propose,
         context: TContext,
     ) -> eyre::Result<()> {
