@@ -8,22 +8,40 @@ const baseUrl = process.env['VITE_BASE_URL'] ||
 
 /**
  * Finds the MDX file for a given path
+ * Handles various path formats that Vocs might use
  */
 function findMdxFile(path: string, pagesDir: string): string | null {
-  // Normalize path
-  const normalizedPath = path.replace(/^\//, '').replace(/\/$/, '')
+  // Remove query params and hash
+  const cleanPath = path.split('?')[0].split('#')[0]
   
-  // Try direct path with .mdx extension
+  // Normalize path - remove leading/trailing slashes
+  let normalizedPath = cleanPath.replace(/^\//, '').replace(/\/$/, '')
+  
+  // Handle root path
   if (normalizedPath === '') {
     const indexPath = join(pagesDir, 'index.mdx')
-    if (existsSync(indexPath)) return indexPath
-  } else {
-    const directPath = join(pagesDir, `${normalizedPath}.mdx`)
-    if (existsSync(directPath)) return directPath
-    
-    // Try as index.mdx in a directory
-    const indexPath = join(pagesDir, normalizedPath, 'index.mdx')
-    if (existsSync(indexPath)) return indexPath
+    if (existsSync(indexPath)) {
+      return indexPath
+    }
+    return null
+  }
+  
+  // Try multiple path variations
+  const attempts = [
+    // Direct file path: /learn -> pages/learn.mdx
+    join(pagesDir, `${normalizedPath}.mdx`),
+    // Directory index: /learn -> pages/learn/index.mdx
+    join(pagesDir, normalizedPath, 'index.mdx'),
+    // With trailing slash removed: /learn/ -> pages/learn/index.mdx
+    normalizedPath.endsWith('/') 
+      ? join(pagesDir, normalizedPath.slice(0, -1), 'index.mdx')
+      : null,
+  ].filter(Boolean) as string[]
+  
+  for (const attempt of attempts) {
+    if (existsSync(attempt)) {
+      return attempt
+    }
   }
   
   return null
@@ -35,7 +53,7 @@ function findMdxFile(path: string, pagesDir: string): string | null {
 export function ogImagePlugin(): Plugin {
   return {
     name: 'vite-plugin-og-image',
-    enforce: 'pre',
+    enforce: 'post', // Run after Vocs processes files
     transformIndexHtml(html: string, ctx: IndexHtmlTransformContext) {
       // Only process pages (not API routes, etc.)
       const path = 'path' in ctx ? ctx.path : undefined
@@ -49,29 +67,43 @@ export function ogImagePlugin(): Plugin {
       if (!mdxPath) {
         // No MDX file found for this path, skip
         // This is expected for some routes (like 404 pages)
+        if (process.env['NODE_ENV'] !== 'production') {
+          console.log(`[OG Plugin] No MDX file found for path: ${path}`)
+        }
         return html
+      }
+
+      if (process.env['NODE_ENV'] !== 'production') {
+        console.log(`[OG Plugin] Processing path: ${path} -> ${mdxPath}`)
       }
 
       try {
         const content = readFileSync(mdxPath, 'utf-8')
         
-        // Extract frontmatter
-        const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---\n/)
+        // Extract frontmatter - handle various formats
+        const frontmatterMatch = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/)
         if (!frontmatterMatch) {
+          if (process.env['NODE_ENV'] !== 'production') {
+            console.log(`[OG Plugin] No frontmatter found in ${mdxPath}`)
+          }
           return html
         }
 
         const frontmatter = frontmatterMatch[1]
-        if (!frontmatter) {
+        if (!frontmatter || frontmatter.trim() === '') {
+          if (process.env['NODE_ENV'] !== 'production') {
+            console.log(`[OG Plugin] Empty frontmatter in ${mdxPath}`)
+          }
           return html
         }
         
-        // Extract title - handle multi-line titles
-        const titleMatch = frontmatter.match(/title:\s*(.+?)(?:\n|$)/s)
-        const descMatch = frontmatter.match(/description:\s*(.+?)(?:\n|$)/s)
+        // Extract title - handle multi-line titles and various quote styles
+        // Match title: "value" or title: 'value' or title: value (with optional quotes)
+        const titleMatch = frontmatter.match(/title:\s*(.+?)(?=\n\w+:|---|$)/s)
+        const descMatch = frontmatter.match(/description:\s*(.+?)(?=\n\w+:|---|$)/s)
 
         let title = titleMatch?.[1]
-          ? titleMatch[1].trim().replace(/^["']|["']$/g, '')
+          ? titleMatch[1].trim().replace(/^["']|["']$/g, '').trim()
           : 'Documentation ⋅ Tempo'
         
         // Ensure title has "• Tempo" branding
@@ -80,13 +112,21 @@ export function ogImagePlugin(): Plugin {
           title = `${title}${tempoSuffix}`
         }
         
-        const description = descMatch?.[1]
-          ? descMatch[1].trim().replace(/^["']|["']$/g, '')
+        let description = descMatch?.[1]
+          ? descMatch[1].trim().replace(/^["']|["']$/g, '').trim()
           : 'Documentation for Tempo testnet and protocol specifications'
+
+        if (process.env['NODE_ENV'] !== 'production') {
+          console.log(`[OG Plugin] Extracted - Title: ${title}, Description: ${description.substring(0, 50)}...`)
+        }
 
         // Construct OG image URL
         const logoUrl = `${baseUrl}/lockup-light.svg`
         const ogImageUrl = `https://vocs.dev/api/og?logo=${encodeURIComponent(logoUrl)}&title=${encodeURIComponent(title)}&description=${encodeURIComponent(description)}`
+        
+        if (process.env['NODE_ENV'] !== 'production') {
+          console.log(`[OG Plugin] Generated OG image URL: ${ogImageUrl.substring(0, 100)}...`)
+        }
 
         // Escape HTML entities
         const escapedTitle = title.replace(/"/g, '&quot;').replace(/&/g, '&amp;')
@@ -94,29 +134,42 @@ export function ogImagePlugin(): Plugin {
 
         // Inject OG meta tags before closing </head>
         // Check if og:image already exists to avoid duplicates
-        if (html.includes('property="og:image"')) {
-          // Replace existing OG tags
-          const ogImageRegex = /<meta\s+property="og:image"[^>]*>/g
-          const ogImageWidthRegex = /<meta\s+property="og:image:width"[^>]*>/g
-          const ogImageHeightRegex = /<meta\s+property="og:image:height"[^>]*>/g
-          const ogTitleRegex = /<meta\s+property="og:title"[^>]*>/g
-          const ogDescRegex = /<meta\s+property="og:description"[^>]*>/g
+        const hasOgImage = html.includes('property="og:image"') || html.includes('property=\'og:image\'')
+        
+        if (hasOgImage) {
+          // Replace existing OG tags - handle both single and double quotes
+          const ogImageRegex = /<meta\s+property=["']og:image["'][^>]*>/gi
+          const ogImageWidthRegex = /<meta\s+property=["']og:image:width["'][^>]*>/gi
+          const ogImageHeightRegex = /<meta\s+property=["']og:image:height["'][^>]*>/gi
+          const ogTitleRegex = /<meta\s+property=["']og:title["'][^>]*>/gi
+          const ogDescRegex = /<meta\s+property=["']og:description["'][^>]*>/gi
           
           html = html.replace(ogImageRegex, `<meta property="og:image" content="${ogImageUrl}" />`)
           html = html.replace(ogImageWidthRegex, '<meta property="og:image:width" content="1200" />')
           html = html.replace(ogImageHeightRegex, '<meta property="og:image:height" content="630" />')
           html = html.replace(ogTitleRegex, `<meta property="og:title" content="${escapedTitle}" />`)
           html = html.replace(ogDescRegex, `<meta property="og:description" content="${escapedDescription}" />`)
+          
+          if (process.env['NODE_ENV'] !== 'production') {
+            console.log(`[OG Plugin] Replaced existing OG tags for ${path}`)
+          }
         } else {
-          // Add new OG tags
-          const ogTags = `
-    <meta property="og:image" content="${ogImageUrl}" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:title" content="${escapedTitle}" />
-    <meta property="og:description" content="${escapedDescription}" />
-`
-          html = html.replace('</head>', `${ogTags}</head>`)
+          // Add new OG tags before </head>
+          const ogTags = `\n    <meta property="og:image" content="${ogImageUrl}" />\n    <meta property="og:image:width" content="1200" />\n    <meta property="og:image:height" content="630" />\n    <meta property="og:title" content="${escapedTitle}" />\n    <meta property="og:description" content="${escapedDescription}" />`
+          
+          // Try to insert before </head>, fallback to before </body> if </head> not found
+          if (html.includes('</head>')) {
+            html = html.replace('</head>', `${ogTags}\n  </head>`)
+          } else if (html.includes('</body>')) {
+            html = html.replace('</body>', `${ogTags}\n  </body>`)
+          } else {
+            // Last resort: append to end
+            html = html + ogTags
+          }
+          
+          if (process.env['NODE_ENV'] !== 'production') {
+            console.log(`[OG Plugin] Added new OG tags for ${path}`)
+          }
         }
 
         return html
