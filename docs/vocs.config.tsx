@@ -48,6 +48,8 @@ export default defineConfig({
   },
   title: 'Documentation ⋅ Tempo',
   description: 'Documentation for Tempo testnet and protocol specifications',
+  // OG images are handled per-page by vite-plugin-og-image plugin which reads frontmatter
+  // This native ogImageUrl serves as a fallback for pages without frontmatter
   ogImageUrl: 'https://vocs.dev/api/og?logo=%logo&title=%title&description=%description',
   logoUrl: {
     light: '/lockup-light.svg',
@@ -1777,8 +1779,11 @@ export default defineConfig({
         },
   vite: {
     plugins: [
+      // OG image plugin reads frontmatter and injects OG meta tags per-page
+      // This works with per-page frontmatter, unlike Vocs' native ogImageUrl which only uses global config
+      // biome-ignore lint/suspicious/noExplicitAny: Vite plugin type compatibility
+      ogImagePlugin() as any,
       // SEO metadata plugin ensures frontmatter exists for all pages
-      // OG images are handled by Vocs' native ogImageUrl configuration
       seoMetadataPlugin(),
       {
         name: 'tempo-node',
