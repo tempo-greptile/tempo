@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Plugin } from 'vite'
+import type { IndexHtmlTransformContext, Plugin } from 'vite'
 
 const baseUrl = process.env['VITE_BASE_URL'] ||
   (process.env['VERCEL_URL'] ? `https://${process.env['VERCEL_URL']}` : undefined) ||
@@ -36,14 +36,15 @@ export function ogImagePlugin(): Plugin {
   return {
     name: 'vite-plugin-og-image',
     enforce: 'pre',
-    transformIndexHtml(html: string, ctx: { path?: string; filename?: string; [key: string]: unknown }) {
+    transformIndexHtml(html: string, ctx: IndexHtmlTransformContext) {
       // Only process pages (not API routes, etc.)
-      if (!ctx.path || ctx.path.startsWith('/api/')) {
+      const path = 'path' in ctx ? ctx.path : undefined
+      if (!path || path.startsWith('/api/')) {
         return html
       }
 
       const pagesDir = join(process.cwd(), 'pages')
-      const mdxPath = findMdxFile(ctx.path, pagesDir)
+      const mdxPath = findMdxFile(path, pagesDir)
 
       if (!mdxPath) {
         // No MDX file found for this path, skip
@@ -61,12 +62,15 @@ export function ogImagePlugin(): Plugin {
         }
 
         const frontmatter = frontmatterMatch[1]
+        if (!frontmatter) {
+          return html
+        }
         
         // Extract title - handle multi-line titles
         const titleMatch = frontmatter.match(/title:\s*(.+?)(?:\n|$)/s)
         const descMatch = frontmatter.match(/description:\s*(.+?)(?:\n|$)/s)
 
-        let title = titleMatch
+        let title = titleMatch?.[1]
           ? titleMatch[1].trim().replace(/^["']|["']$/g, '')
           : 'Documentation ⋅ Tempo'
         
@@ -76,7 +80,7 @@ export function ogImagePlugin(): Plugin {
           title = `${title}${tempoSuffix}`
         }
         
-        const description = descMatch
+        const description = descMatch?.[1]
           ? descMatch[1].trim().replace(/^["']|["']$/g, '')
           : 'Documentation for Tempo testnet and protocol specifications'
 
@@ -117,7 +121,7 @@ export function ogImagePlugin(): Plugin {
 
         return html
       } catch (error) {
-        console.warn(`Failed to inject OG image for ${ctx.path}:`, error)
+        console.warn(`Failed to inject OG image for ${path}:`, error)
         return html
       }
     },
