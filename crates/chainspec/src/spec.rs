@@ -22,9 +22,9 @@ pub const TEMPO_BASE_FEE: u64 = 10_000_000_000;
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TempoGenesisInfo {
-    /// Timestamp of Allegro-Moderato hardfork activation
+    /// Timestamp of TempoGenesis hardfork activation
     #[serde(skip_serializing_if = "Option::is_none")]
-    allegro_moderato_time: Option<u64>,
+    tempo_genesis_time: Option<u64>,
 
     /// The epoch length used by consensus.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -121,14 +121,13 @@ impl TempoChainSpec {
     pub fn from_genesis(genesis: Genesis) -> Self {
         // Extract Tempo genesis info from extra_fields
         let info @ TempoGenesisInfo {
-            allegro_moderato_time,
-            ..
+            tempo_genesis_time, ..
         } = TempoGenesisInfo::extract_from(&genesis);
 
         // Create base chainspec from genesis (already has ordered Ethereum hardforks)
         let mut base_spec = ChainSpec::from_genesis(genesis);
 
-        let tempo_forks = vec![(TempoHardfork::AllegroModerato, allegro_moderato_time)]
+        let tempo_forks = vec![(TempoHardfork::TempoGenesis, tempo_genesis_time)]
             .into_iter()
             .filter_map(|(fork, time)| time.map(|time| (fork, ForkCondition::Timestamp(time))));
 
@@ -288,8 +287,8 @@ mod tests {
         let chainspec = super::TempoChainSpecParser::parse("testnet")
             .expect("the testnet chainspec must always be well formed");
 
-        // AllegroModerato should be active at genesis (timestamp 0)
-        assert!(chainspec.is_allegro_moderato_active_at_timestamp(0));
+        // TempoGenesis should be active at genesis (timestamp 0)
+        assert!(chainspec.is_tempo_genesis_active_at_timestamp(0));
     }
 
     #[test]
@@ -298,12 +297,12 @@ mod tests {
             .expect("the testnet chainspec must always be well formed");
 
         // Should be able to query Tempo hardfork activation through trait
-        let activation = chainspec.tempo_fork_activation(TempoHardfork::AllegroModerato);
+        let activation = chainspec.tempo_fork_activation(TempoHardfork::TempoGenesis);
         assert_eq!(activation, ForkCondition::Timestamp(0));
 
         // Should be able to use convenience method through trait
-        assert!(chainspec.is_allegro_moderato_active_at_timestamp(0));
-        assert!(chainspec.is_allegro_moderato_active_at_timestamp(1000));
+        assert!(chainspec.is_tempo_genesis_active_at_timestamp(0));
+        assert!(chainspec.is_tempo_genesis_active_at_timestamp(1000));
     }
 
     #[test]
@@ -312,16 +311,16 @@ mod tests {
             .expect("the testnet chainspec must always be well formed");
 
         // Tempo hardforks should be queryable from inner.hardforks via Hardforks trait
-        let activation = chainspec.fork(TempoHardfork::AllegroModerato);
+        let activation = chainspec.fork(TempoHardfork::TempoGenesis);
         assert_eq!(activation, ForkCondition::Timestamp(0));
 
-        // Verify AllegroModerato appears in forks iterator
-        let has_allegro_moderato = chainspec
+        // Verify TempoGenesis appears in forks iterator
+        let has_tempo_genesis = chainspec
             .forks_iter()
-            .any(|(fork, _)| fork.name() == "AllegroModerato");
+            .any(|(fork, _)| fork.name() == "TempoGenesis");
         assert!(
-            has_allegro_moderato,
-            "AllegroModerato hardfork should be in inner.hardforks"
+            has_tempo_genesis,
+            "TempoGenesis hardfork should be in inner.hardforks"
         );
     }
 
@@ -347,7 +346,7 @@ mod tests {
                 "terminalTotalDifficultyPassed": true,
                 "shanghaiTime": 0,
                 "cancunTime": 0,
-                "allegroModeratoTime": 1000,
+                "tempoGenesisTime": 1000,
             },
             "alloc": {}
         });
@@ -357,31 +356,31 @@ mod tests {
 
         let chainspec = super::TempoChainSpec::from_genesis(genesis);
 
-        // Test AllegroModerato activation
-        let activation = chainspec.fork(TempoHardfork::AllegroModerato);
+        // Test TempoGenesis activation
+        let activation = chainspec.fork(TempoHardfork::TempoGenesis);
         assert_eq!(
             activation,
             ForkCondition::Timestamp(1000),
-            "AllegroModerato should be activated at the parsed timestamp from extra_fields"
+            "TempoGenesis should be activated at the parsed timestamp from extra_fields"
         );
 
         assert!(
-            chainspec.is_allegro_moderato_active_at_timestamp(0),
-            "AllegroModerato should not be active before its activation timestamp"
+            chainspec.is_tempo_genesis_active_at_timestamp(0),
+            "TempoGenesis should not be active before its activation timestamp"
         );
         assert!(
-            chainspec.is_allegro_moderato_active_at_timestamp(1000),
-            "AllegroModerato should not be active at AllegroModerato's activation timestamp"
+            chainspec.is_tempo_genesis_active_at_timestamp(1000),
+            "TempoGenesis should not be active at TempoGenesis's activation timestamp"
         );
         assert!(
-            chainspec.is_allegro_moderato_active_at_timestamp(2000),
-            "AllegroModerato should not be active at Moderato's activation timestamp"
+            chainspec.is_tempo_genesis_active_at_timestamp(2000),
+            "TempoGenesis should not be active at Moderato's activation timestamp"
         );
     }
 
     #[test]
     fn test_tempo_hardforks_are_ordered_correctly() {
-        // Create a genesis where AllegroModerato should appear between Shanghai (time 0) and Cancun (time 2000)
+        // Create a genesis where TempoGenesis should appear between Shanghai (time 0) and Cancun (time 2000)
         let genesis_json = json!({
             "config": {
                 "chainId": 1337,
@@ -400,7 +399,7 @@ mod tests {
                 "terminalTotalDifficultyPassed": true,
                 "shanghaiTime": 0,
                 "cancunTime": 2000,
-                "allegroModeratoTime": 1000,
+                "tempoGenesisTime": 1000,
             },
             "alloc": {}
         });
@@ -413,35 +412,35 @@ mod tests {
         // Collect forks in order
         let forks: Vec<_> = chainspec.inner.hardforks.forks_iter().collect();
 
-        // Find positions of Shanghai, AllegroModerato, and Cancun
+        // Find positions of Shanghai, TempoGenesis, and Cancun
         let shanghai_pos = forks
             .iter()
             .position(|(f, _)| f.name() == EthereumHardfork::Shanghai.name());
-        let allegro_moderato_pos = forks
+        let tempo_genesis_pos = forks
             .iter()
-            .position(|(f, _)| f.name() == TempoHardfork::AllegroModerato.name());
+            .position(|(f, _)| f.name() == TempoHardfork::TempoGenesis.name());
         let cancun_pos = forks
             .iter()
             .position(|(f, _)| f.name() == EthereumHardfork::Cancun.name());
 
         assert!(shanghai_pos.is_some(), "Shanghai should be present");
         assert!(
-            allegro_moderato_pos.is_some(),
-            "AllegroModerato should be present"
+            tempo_genesis_pos.is_some(),
+            "TempoGenesis should be present"
         );
         assert!(cancun_pos.is_some(), "Cancun should be present");
 
-        // Verify ordering: Shanghai (0) < AllegroModerato (1000) < Cancun (2000)
+        // Verify ordering: Shanghai (0) < TempoGenesis (1000) < Cancun (2000)
         assert!(
-            shanghai_pos.unwrap() < allegro_moderato_pos.unwrap(),
-            "Shanghai (time 0) should come before AllegroModerato (time 1000), but got positions {} and {}",
+            shanghai_pos.unwrap() < tempo_genesis_pos.unwrap(),
+            "Shanghai (time 0) should come before TempoGenesis (time 1000), but got positions {} and {}",
             shanghai_pos.unwrap(),
-            allegro_moderato_pos.unwrap()
+            tempo_genesis_pos.unwrap()
         );
         assert!(
-            allegro_moderato_pos.unwrap() < cancun_pos.unwrap(),
-            "AllegroModerato (time 1000) should come before Cancun (time 2000), but got positions {} and {}",
-            allegro_moderato_pos.unwrap(),
+            tempo_genesis_pos.unwrap() < cancun_pos.unwrap(),
+            "TempoGenesis (time 1000) should come before Cancun (time 2000), but got positions {} and {}",
+            tempo_genesis_pos.unwrap(),
             cancun_pos.unwrap()
         );
     }
@@ -467,7 +466,7 @@ mod tests {
                 "terminalTotalDifficultyPassed": true,
                 "shanghaiTime": 0,
                 "cancunTime": 0,
-                "allegroModeratoTime": 1000
+                "tempoGenesisTime": 1000
             },
             "alloc": {}
         });
@@ -477,25 +476,25 @@ mod tests {
 
         let chainspec = super::TempoChainSpec::from_genesis(genesis);
 
-        // Before AllegroModerato activation - should return AllegroModerato (it's the baseline)
+        // Before TempoGenesis activation - should return TempoGenesis (it's the baseline)
         assert_eq!(
             chainspec.tempo_hardfork_at(0),
-            TempoHardfork::AllegroModerato,
-            "Should return AllegroModerato at timestamp 0"
+            TempoHardfork::TempoGenesis,
+            "Should return TempoGenesis at timestamp 0"
         );
 
-        // At AllegroModerato time
+        // At TempoGenesis time
         assert_eq!(
             chainspec.tempo_hardfork_at(1000),
-            TempoHardfork::AllegroModerato,
-            "Should return AllegroModerato at its activation time"
+            TempoHardfork::TempoGenesis,
+            "Should return TempoGenesis at its activation time"
         );
 
-        // After AllegroModerato
+        // After TempoGenesis
         assert_eq!(
             chainspec.tempo_hardfork_at(2000),
-            TempoHardfork::AllegroModerato,
-            "Should return AllegroModerato after its activation time"
+            TempoHardfork::TempoGenesis,
+            "Should return TempoGenesis after its activation time"
         );
     }
 }

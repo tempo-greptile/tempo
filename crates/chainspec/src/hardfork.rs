@@ -41,7 +41,7 @@ hardfork!(
     TempoHardfork {
         /// Placeholder representing the baseline (pre-hardfork) state.
         #[default]
-        AllegroModerato,
+        TempoGenesis,
     }
 );
 
@@ -50,18 +50,18 @@ pub trait TempoHardforks: EthereumHardforks {
     /// Retrieves activation condition for a Tempo-specific hardfork
     fn tempo_fork_activation(&self, fork: TempoHardfork) -> ForkCondition;
 
-    /// Convenience method to check if Allegro-Moderato hardfork is active at a given timestamp
-    fn is_allegro_moderato_active_at_timestamp(&self, timestamp: u64) -> bool {
-        self.tempo_fork_activation(TempoHardfork::AllegroModerato)
+    /// Convenience method to check if Tempo-Genesis hardfork is active at a given timestamp
+    fn is_tempo_genesis_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.tempo_fork_activation(TempoHardfork::TempoGenesis)
             .active_at_timestamp(timestamp)
     }
 
     /// Retrieves the latest Tempo hardfork active at a given timestamp.
     fn tempo_hardfork_at(&self, timestamp: u64) -> TempoHardfork {
-        if self.is_allegro_moderato_active_at_timestamp(timestamp) {
-            TempoHardfork::AllegroModerato
+        if self.is_tempo_genesis_active_at_timestamp(timestamp) {
+            TempoHardfork::TempoGenesis
         } else {
-            unreachable!("only 'AllegroModerato' hardfork is configured")
+            unreachable!("only 'TempoGenesis' hardfork is configured")
         }
     }
 }
@@ -69,7 +69,7 @@ pub trait TempoHardforks: EthereumHardforks {
 impl From<TempoHardfork> for SpecId {
     fn from(value: TempoHardfork) -> Self {
         match value {
-            TempoHardfork::AllegroModerato => Self::OSAKA,
+            TempoHardfork::TempoGenesis => Self::OSAKA,
         }
     }
 }
@@ -81,10 +81,10 @@ impl From<SpecId> for TempoHardfork {
     /// `From<TempoHardfork> for SpecId`, because multiple Tempo
     /// hardforks may share the same underlying EVM spec.
     fn from(spec: SpecId) -> Self {
-        if spec.is_enabled_in(SpecId::from(Self::AllegroModerato)) {
-            Self::AllegroModerato
+        if spec.is_enabled_in(SpecId::from(Self::TempoGenesis)) {
+            Self::TempoGenesis
         } else {
-            unreachable!("only 'AllegroModerato' hardfork is configured")
+            unreachable!("only 'TempoGenesis' hardfork is configured")
         }
     }
 }
@@ -96,13 +96,13 @@ mod tests {
 
     #[test]
     fn test_hardfork_name() {
-        let fork = TempoHardfork::AllegroModerato;
-        assert_eq!(fork.name(), "AllegroModerato");
+        let fork = TempoHardfork::TempoGenesis;
+        assert_eq!(fork.name(), "TempoGenesis");
     }
 
     #[test]
     fn test_hardfork_trait_implementation() {
-        let fork = TempoHardfork::AllegroModerato;
+        let fork = TempoHardfork::TempoGenesis;
         // Should implement Hardfork trait
         let _name: &str = Hardfork::name(&fork);
     }
@@ -110,11 +110,11 @@ mod tests {
     #[test]
     #[cfg(feature = "serde")]
     fn test_tempo_hardfork_serde() {
-        let fork = TempoHardfork::AllegroModerato;
+        let fork = TempoHardfork::TempoGenesis;
 
         // Serialize to JSON
         let json = serde_json::to_string(&fork).unwrap();
-        assert_eq!(json, "\"AllegroModerato\"");
+        assert_eq!(json, "\"TempoGenesis\"");
 
         // Deserialize from JSON
         let deserialized: TempoHardfork = serde_json::from_str(&json).unwrap();
