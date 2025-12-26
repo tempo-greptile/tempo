@@ -1310,7 +1310,7 @@ where
     }
 
     // Calculate batch intrinsic gas using helper
-    let spec = evm.ctx_ref().cfg().spec().clone();
+    let spec = *evm.ctx_ref().cfg().spec();
     let mut batch_gas =
         calculate_aa_batch_intrinsic_gas(aa_env, gas_params, tx.access_list(), spec)?;
 

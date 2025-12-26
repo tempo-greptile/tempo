@@ -125,7 +125,7 @@ impl From<TempoHardfork> for SpecId {
 
 impl From<&TempoHardfork> for SpecId {
     fn from(value: &TempoHardfork) -> Self {
-        SpecId::from(value.clone())
+        Self::from(*value)
     }
 }
 
