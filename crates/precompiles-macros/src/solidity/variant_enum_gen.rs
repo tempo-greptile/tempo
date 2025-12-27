@@ -1,10 +1,10 @@
 //! Unified Error/Event enum code generation for the `#[solidity]` module macro.
 
 use alloy_sol_macro_expander::{
-    EventFieldInfo, SolErrorData, SolEventData, SolInterfaceKind,
-    expand_from_into_tuples_simple, expand_tokenize_simple,
+    EventFieldInfo, SolErrorData, SolEventData, expand_from_into_tuples_simple,
+    expand_tokenize_simple,
 };
-use proc_macro2::{Ident, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use crate::utils::SolType;
@@ -39,26 +39,16 @@ pub(super) fn generate_variant_enum(
     };
 
     let container = match kind {
-        VariantEnumKind::Error => generate_error_container(&def.variants, registry)?,
-        VariantEnumKind::Event => generate_event_container(&def.variants),
+        VariantEnumKind::Error => common::generate_error_container(&def.variants, registry)?,
+        VariantEnumKind::Event => common::generate_event_container(&def.variants),
     };
 
     let constructors = common::generate_constructors(&container_name, &def.variants);
-
-    let from_impls: TokenStream = if matches!(kind, VariantEnumKind::Event) {
-        def.variants
-            .iter()
-            .map(|v| common::generate_from_impl(&v.name, &container_name))
-            .collect()
-    } else {
-        quote! {}
-    };
 
     Ok(quote! {
         #(#variant_impls)*
         #container
         #constructors
-        #from_impls
     })
 }
 
@@ -101,7 +91,11 @@ fn generate_sol_error_impl(variant: &EnumVariantDef, signature: &str) -> syn::Re
     let param_tuple = common::make_param_tuple(&sol_types);
     let tokenize_impl = expand_tokenize_simple(&field_names, &sol_types);
 
-    Ok(SolErrorData { param_tuple, tokenize_impl }.expand(struct_name, signature))
+    Ok(SolErrorData {
+        param_tuple,
+        tokenize_impl,
+    }
+    .expand(struct_name, signature))
 }
 
 /// Generate SolEvent trait implementation.
@@ -122,54 +116,20 @@ fn generate_sol_event_impl(variant: &EnumVariantDef, signature: &str) -> syn::Re
         })
         .collect();
 
-    Ok(SolEventData { anonymous: false, fields: fields? }.expand(struct_name, signature))
-}
-
-/// Generate the container Error enum with SolInterface.
-fn generate_error_container(
-    variants: &[EnumVariantDef],
-    registry: &TypeRegistry,
-) -> syn::Result<TokenStream> {
-    let variant_names: Vec<Ident> = variants.iter().map(|v| v.name.clone()).collect();
-    let signatures: syn::Result<Vec<String>> = variants
-        .iter()
-        .map(|v| common::variant_signature(v, registry))
-        .collect();
-    let signatures = signatures?;
-    let field_counts: Vec<usize> = variants.iter().map(|v| v.fields.len()).collect();
-
-    Ok(common::generate_sol_interface_container(
-        "Error", &variant_names, &variant_names, &signatures, &field_counts, SolInterfaceKind::Error,
-    ))
-}
-
-/// Generate the container Event enum with IntoLogData.
-fn generate_event_container(variants: &[EnumVariantDef]) -> TokenStream {
-    let names: Vec<&Ident> = variants.iter().map(|v| &v.name).collect();
-
-    quote! {
-        /// Container enum for all event types.
-        #[derive(Clone, Debug, PartialEq, Eq)]
-        pub enum Event {
-            #(#[allow(missing_docs)] #names(#names),)*
-        }
-
-        #[automatically_derived]
-        impl ::alloy::primitives::IntoLogData for Event {
-            fn to_log_data(&self) -> ::alloy::primitives::LogData {
-                match self { #(Self::#names(inner) => inner.to_log_data(),)* }
-            }
-            fn into_log_data(self) -> ::alloy::primitives::LogData {
-                match self { #(Self::#names(inner) => inner.into_log_data(),)* }
-            }
-        }
+    Ok(SolEventData {
+        anonymous: false,
+        fields: fields?,
     }
+    .expand(struct_name, signature))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solidity::test_utils::{empty_module, make_error_enum, make_event_enum, make_field, make_field_indexed, make_variant};
+    use crate::solidity::test_utils::{
+        empty_module, make_error_enum, make_event_enum, make_field, make_field_indexed,
+        make_variant,
+    };
     use syn::parse_quote;
 
     #[test]
@@ -180,13 +140,20 @@ mod tests {
         // Error enum
         let error_def = make_error_enum(vec![
             make_variant("Unauthorized", vec![]),
-            make_variant("InsufficientBalance", vec![
-                make_field("available", parse_quote!(U256)),
-                make_field("required", parse_quote!(U256)),
-            ]),
+            make_variant(
+                "InsufficientBalance",
+                vec![
+                    make_field("available", parse_quote!(U256)),
+                    make_field("required", parse_quote!(U256)),
+                ],
+            ),
         ]);
-        let error_code = generate_variant_enum(&error_def, &registry, VariantEnumKind::Error)?.to_string();
-        assert!(error_code.contains("struct Unauthorized") && error_code.contains("struct InsufficientBalance"));
+        let error_code =
+            generate_variant_enum(&error_def, &registry, VariantEnumKind::Error)?.to_string();
+        assert!(
+            error_code.contains("struct Unauthorized")
+                && error_code.contains("struct InsufficientBalance")
+        );
         assert!(error_code.contains("enum Error") && error_code.contains("fn unauthorized"));
 
         // Event enum
@@ -198,7 +165,8 @@ mod tests {
                 make_field_indexed("amount", parse_quote!(U256), false),
             ],
         )]);
-        let event_code = generate_variant_enum(&event_def, &registry, VariantEnumKind::Event)?.to_string();
+        let event_code =
+            generate_variant_enum(&event_def, &registry, VariantEnumKind::Event)?.to_string();
         assert!(event_code.contains("struct Transfer") && event_code.contains("enum Event"));
         assert!(event_code.contains("IntoLogData") && event_code.contains("fn transfer"));
         Ok(())

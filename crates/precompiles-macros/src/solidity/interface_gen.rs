@@ -86,11 +86,11 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
     let call_name = format_ident!("{}Call", method.sol_name);
     let return_name = format_ident!("{}Return", method.sol_name);
 
-    let param_names: Vec<Ident> = method.params.iter().map(|(n, _)| n.clone()).collect();
+    let param_names = common::extract_param_names(&method.params);
     let param_types: Vec<TokenStream> =
         method.params.iter().map(|(_, ty)| quote! { #ty }).collect();
 
-    let param_tys: Vec<_> = method.params.iter().map(|(_, ty)| ty.clone()).collect();
+    let param_tys = common::extract_param_types(&method.params);
     let param_sol_types = common::types_to_sol_types(&param_tys)?;
 
     let signature = registry.compute_signature(&method.sol_name, &param_tys)?;
@@ -164,20 +164,30 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
 
 /// Generate the container enum for all calls.
 fn generate_calls_enum(methods: &[MethodDef], registry: &TypeRegistry) -> syn::Result<TokenStream> {
-    let variants: Vec<Ident> = methods.iter().map(|m| format_ident!("{}", m.sol_name)).collect();
-    let types: Vec<Ident> = methods.iter().map(|m| format_ident!("{}Call", m.sol_name)).collect();
+    let variants: Vec<Ident> = methods
+        .iter()
+        .map(|m| format_ident!("{}", m.sol_name))
+        .collect();
+    let types: Vec<Ident> = methods
+        .iter()
+        .map(|m| format_ident!("{}Call", m.sol_name))
+        .collect();
     let signatures: syn::Result<Vec<String>> = methods
         .iter()
         .map(|m| {
-            let tys: Vec<_> = m.params.iter().map(|(_, ty)| ty.clone()).collect();
+            let tys = common::extract_param_types(&m.params);
             registry.compute_signature(&m.sol_name, &tys)
         })
         .collect();
-    let signatures = signatures?;
     let field_counts: Vec<usize> = methods.iter().map(|m| m.params.len()).collect();
 
     Ok(common::generate_sol_interface_container(
-        "Calls", &variants, &types, &signatures, &field_counts, SolInterfaceKind::Call,
+        "Calls",
+        &variants,
+        &types,
+        &signatures?,
+        &field_counts,
+        SolInterfaceKind::Call,
     ))
 }
 
@@ -194,8 +204,23 @@ mod tests {
         let registry = TypeRegistry::from_module(&module)?;
 
         let def = make_interface(vec![
-            make_method("balance_of", "balanceOf", vec![(format_ident!("account"), parse_quote!(Address))], Some(parse_quote!(U256)), false),
-            make_method("transfer", "transfer", vec![(format_ident!("to"), parse_quote!(Address)), (format_ident!("amount"), parse_quote!(U256))], None, true),
+            make_method(
+                "balance_of",
+                "balanceOf",
+                vec![(format_ident!("account"), parse_quote!(Address))],
+                Some(parse_quote!(U256)),
+                false,
+            ),
+            make_method(
+                "transfer",
+                "transfer",
+                vec![
+                    (format_ident!("to"), parse_quote!(Address)),
+                    (format_ident!("amount"), parse_quote!(U256)),
+                ],
+                None,
+                true,
+            ),
         ]);
 
         // Full interface generation
@@ -205,7 +230,10 @@ mod tests {
 
         // Trait transformation (view vs mutable)
         let trait_code = generate_transformed_trait(&def).to_string();
-        assert!(trait_code.contains("fn balance_of (& self") && trait_code.contains("fn transfer (& mut self , msg_sender : Address"));
+        assert!(
+            trait_code.contains("fn balance_of (& self")
+                && trait_code.contains("fn transfer (& mut self , msg_sender : Address")
+        );
         Ok(())
     }
 }

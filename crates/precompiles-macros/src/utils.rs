@@ -258,8 +258,7 @@ impl SolType {
                 Ok(Self::FixedArray(Box::new(Self::from_syn(&arr.elem)?), len))
             }
             Type::Tuple(tuple) => {
-                let elems: syn::Result<Vec<_>> =
-                    tuple.elems.iter().map(Self::from_syn).collect();
+                let elems: syn::Result<Vec<_>> = tuple.elems.iter().map(Self::from_syn).collect();
                 Ok(Self::Tuple(elems?))
             }
             Type::Path(type_path) => {
@@ -317,7 +316,6 @@ impl SolType {
             }
         }
     }
-
 }
 
 /// Extracts `#[slot(N)]`, `#[base_slot(N)]` attributes from a field's attributes.
@@ -543,12 +541,24 @@ mod tests {
 
     #[test]
     fn test_sol_type_sol_name() -> syn::Result<()> {
-        assert_eq!(SolType::from_syn(&parse_quote!(Address))?.sol_name(), "address");
-        assert_eq!(SolType::from_syn(&parse_quote!(B256))?.sol_name(), "bytes32");
-        assert_eq!(SolType::from_syn(&parse_quote!(U256))?.sol_name(), "uint256");
+        assert_eq!(
+            SolType::from_syn(&parse_quote!(Address))?.sol_name(),
+            "address"
+        );
+        assert_eq!(
+            SolType::from_syn(&parse_quote!(B256))?.sol_name(),
+            "bytes32"
+        );
+        assert_eq!(
+            SolType::from_syn(&parse_quote!(U256))?.sol_name(),
+            "uint256"
+        );
         assert_eq!(SolType::from_syn(&parse_quote!(u64))?.sol_name(), "uint64");
         assert_eq!(SolType::from_syn(&parse_quote!(bool))?.sol_name(), "bool");
-        assert_eq!(SolType::from_syn(&parse_quote!(String))?.sol_name(), "string");
+        assert_eq!(
+            SolType::from_syn(&parse_quote!(String))?.sol_name(),
+            "string"
+        );
         assert_eq!(SolType::from_syn(&parse_quote!(Bytes))?.sol_name(), "bytes");
         Ok(())
     }
@@ -556,29 +566,59 @@ mod tests {
     #[test]
     fn test_sol_type_sol_name_arrays() -> syn::Result<()> {
         // Dynamic array: Vec<T> → "T[]"
-        assert_eq!(SolType::from_syn(&parse_quote!(Vec<Address>))?.sol_name(), "address[]");
-        assert_eq!(SolType::from_syn(&parse_quote!(Vec<U256>))?.sol_name(), "uint256[]");
+        assert_eq!(
+            SolType::from_syn(&parse_quote!(Vec<Address>))?.sol_name(),
+            "address[]"
+        );
+        assert_eq!(
+            SolType::from_syn(&parse_quote!(Vec<U256>))?.sol_name(),
+            "uint256[]"
+        );
 
         // Fixed array: [T; N] → "T[N]"
-        assert_eq!(SolType::from_syn(&parse_quote!([U256; 3]))?.sol_name(), "uint256[3]");
-        assert_eq!(SolType::from_syn(&parse_quote!([Address; 10]))?.sol_name(), "address[10]");
+        assert_eq!(
+            SolType::from_syn(&parse_quote!([U256; 3]))?.sol_name(),
+            "uint256[3]"
+        );
+        assert_eq!(
+            SolType::from_syn(&parse_quote!([Address; 10]))?.sol_name(),
+            "address[10]"
+        );
         Ok(())
     }
 
     #[test]
     fn test_sol_type_sol_name_tuples() -> syn::Result<()> {
-        assert_eq!(SolType::from_syn(&parse_quote!((Address, U256)))?.sol_name(), "(address,uint256)");
-        assert_eq!(SolType::from_syn(&parse_quote!((bool, Address, U256)))?.sol_name(), "(bool,address,uint256)");
+        assert_eq!(
+            SolType::from_syn(&parse_quote!((Address, U256)))?.sol_name(),
+            "(address,uint256)"
+        );
+        assert_eq!(
+            SolType::from_syn(&parse_quote!((bool, Address, U256)))?.sol_name(),
+            "(bool,address,uint256)"
+        );
         assert_eq!(SolType::from_syn(&parse_quote!(()))?.sol_name(), "()");
         Ok(())
     }
 
     #[test]
     fn test_sol_type_sol_name_nested() -> syn::Result<()> {
-        assert_eq!(SolType::from_syn(&parse_quote!(Vec<Vec<U256>>))?.sol_name(), "uint256[][]");
-        assert_eq!(SolType::from_syn(&parse_quote!(Vec<(Address, U256)>))?.sol_name(), "(address,uint256)[]");
-        assert_eq!(SolType::from_syn(&parse_quote!((Vec<Address>, U256)))?.sol_name(), "(address[],uint256)");
-        assert_eq!(SolType::from_syn(&parse_quote!([Vec<U256>; 2]))?.sol_name(), "uint256[][2]");
+        assert_eq!(
+            SolType::from_syn(&parse_quote!(Vec<Vec<U256>>))?.sol_name(),
+            "uint256[][]"
+        );
+        assert_eq!(
+            SolType::from_syn(&parse_quote!(Vec<(Address, U256)>))?.sol_name(),
+            "(address,uint256)[]"
+        );
+        assert_eq!(
+            SolType::from_syn(&parse_quote!((Vec<Address>, U256)))?.sol_name(),
+            "(address[],uint256)"
+        );
+        assert_eq!(
+            SolType::from_syn(&parse_quote!([Vec<U256>; 2]))?.sol_name(),
+            "uint256[][2]"
+        );
         Ok(())
     }
 
@@ -656,5 +696,4 @@ mod tests {
         assert!(sol_ty.is_dynamic()); // Contains dynamic type
         Ok(())
     }
-
 }

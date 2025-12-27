@@ -647,7 +647,9 @@ mod tests {
         // Non-unit enum (not Error/Event)
         let err = parse_module(quote! {
             pub mod test { pub enum Bad { V { f: U256 } } }
-        }).unwrap_err().to_string();
+        })
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("unit variants only"));
 
         // Too many indexed fields
@@ -665,13 +667,17 @@ mod tests {
         // Non-Interface trait name
         let err = parse_module(quote! {
             pub mod test { pub trait Other { fn f(&self) -> Result<()>; } }
-        }).unwrap_err().to_string();
+        })
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("must be named `Interface`"));
 
         // Duplicate Error enum
         let err = parse_module(quote! {
             pub mod test { pub enum Error { A } pub enum Error { B } }
-        }).unwrap_err().to_string();
+        })
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("duplicate"));
     }
 

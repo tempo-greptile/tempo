@@ -167,7 +167,10 @@ mod tests {
         let module = parse_solidity_module(item)?;
         let registry = TypeRegistry::from_module(&module)?;
 
-        assert_eq!(registry.resolve_abi(&syn::parse_quote!(Transfer))?, "(address,address,uint256)");
+        assert_eq!(
+            registry.resolve_abi(&syn::parse_quote!(Transfer))?,
+            "(address,address,uint256)"
+        );
         assert!(registry.is_unit_enum(&syn::parse_quote!(OrderStatus)));
         let sig = registry.compute_signature("transfer", &[syn::parse_quote!(Transfer)])?;
         assert_eq!(sig, "transfer((address,address,uint256))");
@@ -193,8 +196,16 @@ mod tests {
 
         let code = expand(item)?.to_string();
         assert!(code.contains("mod example") && code.contains("struct Transfer"));
-        assert!(code.contains("enum OrderStatus") && code.contains("enum Error") && code.contains("enum Event"));
-        assert!(code.contains("trait Interface") && code.contains("balanceOfCall") && code.contains("transferCall"));
+        assert!(
+            code.contains("enum OrderStatus")
+                && code.contains("enum Error")
+                && code.contains("enum Event")
+        );
+        assert!(
+            code.contains("trait Interface")
+                && code.contains("balanceOfCall")
+                && code.contains("transferCall")
+        );
         Ok(())
     }
 

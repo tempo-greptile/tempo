@@ -7,7 +7,7 @@ use alloy_sol_macro_expander::{Eip712Options, SolStructData};
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
-use crate::utils::{to_camel_case, SolType};
+use crate::utils::{SolType, to_camel_case};
 
 use super::common;
 use super::parser::SolStructDef;
@@ -104,19 +104,31 @@ mod tests {
     #[test]
     fn test_eip712_signature_and_struct_generation() -> syn::Result<()> {
         // EIP-712 signature basic
-        let def = make_struct("Transfer", vec![
-            make_field("from", parse_quote!(Address)),
-            make_field("to", parse_quote!(Address)),
-            make_field("amount", parse_quote!(U256)),
-        ]);
-        assert_eq!(build_eip712_signature(&def.name, &def), "Transfer(address from,address to,uint256 amount)");
+        let def = make_struct(
+            "Transfer",
+            vec![
+                make_field("from", parse_quote!(Address)),
+                make_field("to", parse_quote!(Address)),
+                make_field("amount", parse_quote!(U256)),
+            ],
+        );
+        assert_eq!(
+            build_eip712_signature(&def.name, &def),
+            "Transfer(address from,address to,uint256 amount)"
+        );
 
         // EIP-712 signature with snake_case -> camelCase
-        let def2 = make_struct("RewardStream", vec![
-            make_field("start_time", parse_quote!(u64)),
-            make_field("rate_per_second", parse_quote!(U256)),
-        ]);
-        assert_eq!(build_eip712_signature(&def2.name, &def2), "RewardStream(uint64 startTime,uint256 ratePerSecond)");
+        let def2 = make_struct(
+            "RewardStream",
+            vec![
+                make_field("start_time", parse_quote!(u64)),
+                make_field("rate_per_second", parse_quote!(U256)),
+            ],
+        );
+        assert_eq!(
+            build_eip712_signature(&def2.name, &def2),
+            "RewardStream(uint64 startTime,uint256 ratePerSecond)"
+        );
 
         // Full struct generation
         let mut module = empty_module();

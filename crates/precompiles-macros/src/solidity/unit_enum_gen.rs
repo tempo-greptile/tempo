@@ -15,6 +15,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use super::common;
 use super::parser::UnitEnumDef;
 
 /// Generate code for a unit enum definition.
@@ -22,13 +23,26 @@ pub(super) fn generate_unit_enum(def: &UnitEnumDef) -> TokenStream {
     let enum_name = &def.name;
     let vis = &def.vis;
     let attrs = &def.attrs;
-    let variant_count = def.variants.len();
 
-    let variants_with_discriminants: Vec<TokenStream> = def.variants.iter().enumerate()
-        .map(|(i, v)| { let idx = i as u8; quote! { #v = #idx } }).collect();
+    let variants_with_discriminants: Vec<TokenStream> = def
+        .variants
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let idx = i as u8;
+            quote! { #v = #idx }
+        })
+        .collect();
 
-    let from_u8_arms: Vec<TokenStream> = def.variants.iter().enumerate()
-        .map(|(i, v)| { let idx = i as u8; quote! { #idx => Ok(Self::#v) } }).collect();
+    let from_u8_arms: Vec<TokenStream> = def
+        .variants
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let idx = i as u8;
+            quote! { #idx => Ok(Self::#v) }
+        })
+        .collect();
 
     let enum_def = quote! {
         #(#attrs)*
@@ -39,107 +53,16 @@ pub(super) fn generate_unit_enum(def: &UnitEnumDef) -> TokenStream {
         }
     };
 
-    let from_impl = quote! {
-        #[automatically_derived]
-        impl ::core::convert::From<#enum_name> for u8 {
-            #[inline]
-            fn from(value: #enum_name) -> u8 {
-                value as u8
-            }
-        }
-    };
-
-    let try_from_impl = quote! {
-        #[automatically_derived]
-        impl ::core::convert::TryFrom<u8> for #enum_name {
-            type Error = ();
-
-            #[inline]
-            fn try_from(value: u8) -> ::core::result::Result<Self, ()> {
-                match value {
-                    #(#from_u8_arms,)*
-                    _ => Err(()),
-                }
-            }
-        }
-    };
-
-    let variant_count_u8 = variant_count as u8;
-
-    let sol_type_impl = quote! {
-        #[automatically_derived]
-        impl alloy_sol_types::SolType for #enum_name {
-            type RustType = Self;
-            type Token<'a> = <alloy_sol_types::sol_data::Uint<8> as alloy_sol_types::SolType>::Token<'a>;
-
-            const SOL_NAME: &'static str = "uint8";
-            const ENCODED_SIZE: Option<usize> = Some(32);
-            const PACKED_ENCODED_SIZE: Option<usize> = Some(1);
-
-            #[inline]
-            fn valid_token(token: &Self::Token<'_>) -> bool {
-                let value: u8 = token.0.to();
-                value < #variant_count_u8
-            }
-
-            #[inline]
-            fn detokenize(token: Self::Token<'_>) -> Self::RustType {
-                let value: u8 = token.0.to();
-                Self::try_from(value).unwrap_or_default()
-            }
-        }
-    };
-
-    let sol_type_value_impl = quote! {
-        #[automatically_derived]
-        impl alloy_sol_types::private::SolTypeValue<#enum_name> for #enum_name {
-            #[inline]
-            fn stv_to_tokens(&self) -> <#enum_name as alloy_sol_types::SolType>::Token<'_> {
-                alloy_sol_types::Word::from(alloy::primitives::U256::from(*self as u8))
-            }
-
-            #[inline]
-            fn stv_abi_encode_packed_to(&self, out: &mut alloy_sol_types::private::Vec<u8>) {
-                out.push(*self as u8);
-            }
-
-            #[inline]
-            fn stv_eip712_data_word(&self) -> alloy_sol_types::Word {
-                <alloy_sol_types::sol_data::Uint<8> as alloy_sol_types::SolType>::tokenize(&(*self as u8)).0
-            }
-        }
-    };
-
-    let sol_value_impl = quote! {
-        #[automatically_derived]
-        impl alloy_sol_types::SolValue for #enum_name {
-            type SolType = Self;
-        }
-    };
-
-    let default_impl = if !def.variants.is_empty() {
-        let first_variant = &def.variants[0];
-        quote! {
-            #[automatically_derived]
-            impl ::core::default::Default for #enum_name {
-                #[inline]
-                fn default() -> Self {
-                    Self::#first_variant
-                }
-            }
-        }
-    } else {
-        quote! {}
-    };
+    let trait_impls = common::expand_unit_enum_traits(
+        enum_name,
+        def.variants.len() as u8,
+        &from_u8_arms,
+        def.variants.first(),
+    );
 
     quote! {
         #enum_def
-        #from_impl
-        #try_from_impl
-        #sol_type_impl
-        #sol_type_value_impl
-        #sol_value_impl
-        #default_impl
+        #trait_impls
     }
 }
 
