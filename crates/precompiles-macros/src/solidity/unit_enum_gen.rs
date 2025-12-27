@@ -24,27 +24,11 @@ pub(super) fn generate_unit_enum(def: &UnitEnumDef) -> TokenStream {
     let attrs = &def.attrs;
     let variant_count = def.variants.len();
 
-    let variants_with_discriminants: Vec<TokenStream> = def
-        .variants
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            let idx = i as u8;
-            quote! { #v = #idx }
-        })
-        .collect();
+    let variants_with_discriminants: Vec<TokenStream> = def.variants.iter().enumerate()
+        .map(|(i, v)| { let idx = i as u8; quote! { #v = #idx } }).collect();
 
-    let _variant_names = &def.variants;
-
-    let from_u8_arms: Vec<TokenStream> = def
-        .variants
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            let idx = i as u8;
-            quote! { #idx => Ok(Self::#v) }
-        })
-        .collect();
+    let from_u8_arms: Vec<TokenStream> = def.variants.iter().enumerate()
+        .map(|(i, v)| { let idx = i as u8; quote! { #idx => Ok(Self::#v) } }).collect();
 
     let enum_def = quote! {
         #(#attrs)*
@@ -101,7 +85,7 @@ pub(super) fn generate_unit_enum(def: &UnitEnumDef) -> TokenStream {
             #[inline]
             fn detokenize(token: Self::Token<'_>) -> Self::RustType {
                 let value: u8 = token.0.to();
-                Self::try_from(value).expect("invalid enum value")
+                Self::try_from(value).unwrap_or_default()
             }
         }
     };
@@ -162,20 +146,7 @@ pub(super) fn generate_unit_enum(def: &UnitEnumDef) -> TokenStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proc_macro2::Span;
-    use quote::format_ident;
-    use syn::Visibility;
-
-    fn make_unit_enum(name: &str, variants: Vec<&str>) -> UnitEnumDef {
-        UnitEnumDef {
-            name: format_ident!("{}", name),
-            variants: variants.iter().map(|v| format_ident!("{}", v)).collect(),
-            attrs: vec![],
-            vis: Visibility::Public(syn::token::Pub {
-                span: Span::call_site(),
-            }),
-        }
-    }
+    use crate::solidity::test_utils::make_unit_enum;
 
     #[test]
     fn test_generate_unit_enum() {

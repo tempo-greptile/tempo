@@ -24,8 +24,6 @@ tracing.workspace = true
 thiserror.workspace = true
 derive_more.workspace = true
 scoped-tls = "1.0"
-const_format = "0.2"
-keccak-const = "0.2"
 
 [dev-dependencies]
 criterion.workspace = true

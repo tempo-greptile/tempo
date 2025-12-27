@@ -6,14 +6,15 @@
 //! Also transforms the trait to inject `msg_sender: Address` for mutable methods.
 
 use alloy_sol_macro_expander::{
-    ReturnInfo, SolCallData, SolInterfaceData, SolInterfaceKind, expand_from_into_tuples_simple,
-    expand_sol_interface, expand_tokenize_simple, selector,
+    ReturnInfo, SolCallData, SolInterfaceKind, expand_from_into_tuples_simple,
+    expand_tokenize_simple,
 };
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
 use crate::utils::SolType;
 
+use super::common;
 use super::parser::{InterfaceDef, MethodDef};
 use super::registry::TypeRegistry;
 
@@ -89,46 +90,15 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
     let param_types: Vec<TokenStream> =
         method.params.iter().map(|(_, ty)| quote! { #ty }).collect();
 
-    let param_sol_types: syn::Result<Vec<TokenStream>> = method
-        .params
-        .iter()
-        .map(|(_, ty)| Ok(SolType::from_syn(ty)?.to_sol_data()))
-        .collect();
-    let param_sol_types = param_sol_types?;
+    let param_tys: Vec<_> = method.params.iter().map(|(_, ty)| ty.clone()).collect();
+    let param_sol_types = common::types_to_sol_types(&param_tys)?;
 
-    let signature = registry.compute_signature(
-        &method.sol_name,
-        &method
-            .params
-            .iter()
-            .map(|(_, ty)| ty.clone())
-            .collect::<Vec<_>>(),
-    )?;
+    let signature = registry.compute_signature(&method.sol_name, &param_tys)?;
 
-    let sel = selector(&signature);
-    let doc = format!(
-        "Function with signature `{}` and selector `0x{}`.",
-        signature,
-        hex::encode(sel)
-    );
+    let doc = common::signature_doc("Function", &signature);
 
-    let call_struct = if method.params.is_empty() {
-        quote! {
-            #[doc = #doc]
-            #[derive(Clone, Debug, PartialEq, Eq)]
-            pub struct #call_name;
-        }
-    } else {
-        let names = &param_names;
-        let types: Vec<_> = method.params.iter().map(|(_, ty)| ty).collect();
-        quote! {
-            #[doc = #doc]
-            #[derive(Clone, Debug, PartialEq, Eq)]
-            pub struct #call_name {
-                #(pub #names: #types),*
-            }
-        }
-    };
+    let call_fields: Vec<_> = method.params.iter().map(|(n, ty)| (n, ty)).collect();
+    let call_struct = common::generate_simple_struct(&call_name, &call_fields, &doc);
 
     let (return_struct, return_from_tuple, return_sol_tuple, return_info) =
         if let Some(ref ret_ty) = method.return_type {
@@ -170,11 +140,7 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
             )
         };
 
-    let param_tuple = if param_sol_types.is_empty() {
-        quote! { () }
-    } else {
-        quote! { (#(#param_sol_types,)*) }
-    };
+    let param_tuple = common::make_param_tuple(&param_sol_types);
 
     let from_tuple = expand_from_into_tuples_simple(&call_name, &param_names, &param_types);
     let tokenize_impl = expand_tokenize_simple(&param_names, &param_sol_types);
@@ -198,157 +164,48 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
 
 /// Generate the container enum for all calls.
 fn generate_calls_enum(methods: &[MethodDef], registry: &TypeRegistry) -> syn::Result<TokenStream> {
-    let variants: Vec<Ident> = methods
-        .iter()
-        .map(|m| format_ident!("{}", m.sol_name))
-        .collect();
-    let types: Vec<Ident> = methods
-        .iter()
-        .map(|m| format_ident!("{}Call", m.sol_name))
-        .collect();
-
+    let variants: Vec<Ident> = methods.iter().map(|m| format_ident!("{}", m.sol_name)).collect();
+    let types: Vec<Ident> = methods.iter().map(|m| format_ident!("{}Call", m.sol_name)).collect();
     let signatures: syn::Result<Vec<String>> = methods
         .iter()
         .map(|m| {
-            registry.compute_signature(
-                &m.sol_name,
-                &m.params
-                    .iter()
-                    .map(|(_, ty)| ty.clone())
-                    .collect::<Vec<_>>(),
-            )
+            let tys: Vec<_> = m.params.iter().map(|(_, ty)| ty.clone()).collect();
+            registry.compute_signature(&m.sol_name, &tys)
         })
         .collect();
     let signatures = signatures?;
+    let field_counts: Vec<usize> = methods.iter().map(|m| m.params.len()).collect();
 
-    let data = SolInterfaceData {
-        name: format_ident!("Calls"),
-        variants,
-        types,
-        selectors: signatures.iter().map(|s| selector(s)).collect(),
-        min_data_len: methods
-            .iter()
-            .map(|m| m.params.len() * 32)
-            .min()
-            .unwrap_or(0),
-        signatures,
-        kind: SolInterfaceKind::Call,
-    };
-
-    Ok(expand_sol_interface(data))
+    Ok(common::generate_sol_interface_container(
+        "Calls", &variants, &types, &signatures, &field_counts, SolInterfaceKind::Call,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solidity::parser::{InterfaceDef, MethodDef, SolidityModule};
-    use proc_macro2::Span;
+    use crate::solidity::test_utils::{empty_module, make_interface, make_method};
     use quote::format_ident;
-    use syn::{Visibility, parse_quote};
-
-    fn make_method(
-        name: &str,
-        sol_name: &str,
-        params: Vec<(Ident, syn::Type)>,
-        return_type: Option<syn::Type>,
-        is_mutable: bool,
-    ) -> MethodDef {
-        MethodDef {
-            name: format_ident!("{}", name),
-            sol_name: sol_name.to_string(),
-            params,
-            return_type,
-            is_mutable,
-        }
-    }
-
-    fn make_interface(methods: Vec<MethodDef>) -> InterfaceDef {
-        InterfaceDef {
-            name: format_ident!("Interface"),
-            methods,
-            attrs: vec![],
-            vis: Visibility::Public(syn::token::Pub {
-                span: Span::call_site(),
-            }),
-        }
-    }
-
-    fn empty_module() -> SolidityModule {
-        SolidityModule {
-            name: format_ident!("test"),
-            vis: Visibility::Public(syn::token::Pub {
-                span: Span::call_site(),
-            }),
-            imports: vec![],
-            structs: vec![],
-            unit_enums: vec![],
-            error: None,
-            event: None,
-            interface: None,
-            other_items: vec![],
-        }
-    }
+    use syn::parse_quote;
 
     #[test]
-    fn test_generate_interface() -> syn::Result<()> {
+    fn test_generate_interface_and_trait_transform() -> syn::Result<()> {
         let module = empty_module();
         let registry = TypeRegistry::from_module(&module)?;
 
         let def = make_interface(vec![
-            make_method(
-                "balance_of",
-                "balanceOf",
-                vec![(format_ident!("account"), parse_quote!(Address))],
-                Some(parse_quote!(U256)),
-                false,
-            ),
-            make_method(
-                "transfer",
-                "transfer",
-                vec![
-                    (format_ident!("to"), parse_quote!(Address)),
-                    (format_ident!("amount"), parse_quote!(U256)),
-                ],
-                None,
-                true,
-            ),
+            make_method("balance_of", "balanceOf", vec![(format_ident!("account"), parse_quote!(Address))], Some(parse_quote!(U256)), false),
+            make_method("transfer", "transfer", vec![(format_ident!("to"), parse_quote!(Address)), (format_ident!("amount"), parse_quote!(U256))], None, true),
         ]);
 
-        let tokens = generate_interface(&def, &registry)?;
-        let code = tokens.to_string();
+        // Full interface generation
+        let code = generate_interface(&def, &registry)?.to_string();
+        assert!(code.contains("trait Interface") && code.contains("struct balanceOfCall"));
+        assert!(code.contains("enum Calls") && code.contains("msg_sender : Address"));
 
-        assert!(code.contains("trait Interface"));
-        assert!(code.contains("struct balanceOfCall"));
-        assert!(code.contains("struct transferCall"));
-        assert!(code.contains("enum Calls"));
-        assert!(code.contains("msg_sender : Address"));
-
+        // Trait transformation (view vs mutable)
+        let trait_code = generate_transformed_trait(&def).to_string();
+        assert!(trait_code.contains("fn balance_of (& self") && trait_code.contains("fn transfer (& mut self , msg_sender : Address"));
         Ok(())
-    }
-
-    #[test]
-    fn test_generate_transformed_trait() {
-        let def = make_interface(vec![
-            make_method(
-                "view_method",
-                "viewMethod",
-                vec![(format_ident!("x"), syn::parse_quote!(U256))],
-                Some(syn::parse_quote!(bool)),
-                false,
-            ),
-            make_method(
-                "mutate_method",
-                "mutateMethod",
-                vec![(format_ident!("y"), syn::parse_quote!(U256))],
-                None,
-                true,
-            ),
-        ]);
-
-        let tokens = generate_transformed_trait(&def);
-        let code = tokens.to_string();
-
-        assert!(code.contains("fn view_method (& self"));
-        assert!(code.contains("fn mutate_method (& mut self , msg_sender : Address"));
     }
 }

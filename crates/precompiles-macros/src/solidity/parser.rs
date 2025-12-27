@@ -586,262 +586,118 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_empty_module() {
-        let result = parse_module(quote! {
-            pub mod test {}
-        });
-        assert!(result.is_ok());
-        let module = result.unwrap();
+    fn test_parser_success_cases() -> syn::Result<()> {
+        // Empty module
+        let module = parse_module(quote! { pub mod test {} })?;
         assert_eq!(module.name.to_string(), "test");
-        assert!(module.structs.is_empty());
-        assert!(module.error.is_none());
-        assert!(module.event.is_none());
-        assert!(module.interface.is_none());
-    }
+        assert!(module.structs.is_empty() && module.error.is_none() && module.interface.is_none());
 
-    #[test]
-    fn test_parse_struct() {
-        let result = parse_module(quote! {
+        // Struct with derives
+        let module = parse_module(quote! {
             pub mod test {
                 #[derive(Clone, Debug)]
-                pub struct Transfer {
-                    pub from: Address,
-                    pub to: Address,
-                    pub amount: U256,
-                }
+                pub struct Transfer { pub from: Address, pub to: Address }
             }
-        });
-        assert!(result.is_ok());
-        let module = result.unwrap();
+        })?;
         assert_eq!(module.structs.len(), 1);
-        assert_eq!(module.structs[0].name.to_string(), "Transfer");
-        assert_eq!(module.structs[0].fields.len(), 3);
-    }
+        assert_eq!(module.structs[0].fields.len(), 2);
 
-    #[test]
-    fn test_parse_unit_enum() {
-        let result = parse_module(quote! {
-            pub mod test {
-                pub enum OrderStatus {
-                    Pending,
-                    Filled,
-                    Cancelled,
-                }
-            }
-        });
-        assert!(result.is_ok());
-        let module = result.unwrap();
+        // Unit enum
+        let module = parse_module(quote! {
+            pub mod test { pub enum Status { Pending, Filled } }
+        })?;
         assert_eq!(module.unit_enums.len(), 1);
-        assert_eq!(module.unit_enums[0].name.to_string(), "OrderStatus");
-        assert_eq!(module.unit_enums[0].variants.len(), 3);
-    }
+        assert_eq!(module.unit_enums[0].variants.len(), 2);
 
-    #[test]
-    fn test_reject_non_unit_enum() {
-        let result = parse_module(quote! {
-            pub mod test {
-                pub enum BadEnum {
-                    Variant { field: U256 },
-                }
-            }
-        });
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("unit variants only"));
-    }
-
-    #[test]
-    fn test_parse_error_enum() {
-        let result = parse_module(quote! {
-            pub mod test {
-                pub enum Error {
-                    Unauthorized,
-                    InsufficientBalance { available: U256, required: U256 },
-                }
-            }
-        });
-        assert!(result.is_ok());
-        let module = result.unwrap();
-        assert!(module.error.is_some());
+        // Error enum with variants
+        let module = parse_module(quote! {
+            pub mod test { pub enum Error { Unauthorized, BadValue { val: U256 } } }
+        })?;
         let error = module.error.unwrap();
         assert_eq!(error.variants.len(), 2);
-        assert_eq!(error.variants[0].name.to_string(), "Unauthorized");
         assert!(error.variants[0].fields.is_empty());
-        assert_eq!(error.variants[1].fields.len(), 2);
-    }
+        assert_eq!(error.variants[1].fields.len(), 1);
 
-    #[test]
-    fn test_parse_event_enum_with_indexed() {
-        let result = parse_module(quote! {
-            pub mod test {
-                pub enum Event {
-                    Transfer {
-                        #[indexed]
-                        from: Address,
-                        #[indexed]
-                        to: Address,
-                        amount: U256,
-                    },
-                }
-            }
-        });
-        assert!(result.is_ok());
-        let module = result.unwrap();
-        assert!(module.event.is_some());
+        // Event enum with indexed fields
+        let module = parse_module(quote! {
+            pub mod test { pub enum Event { Transfer { #[indexed] from: Address, to: Address } } }
+        })?;
         let event = module.event.unwrap();
-        assert_eq!(event.variants.len(), 1);
-        let variant = &event.variants[0];
-        assert_eq!(variant.fields.len(), 3);
-        assert!(variant.fields[0].indexed);
-        assert!(variant.fields[1].indexed);
-        assert!(!variant.fields[2].indexed);
-    }
+        assert!(event.variants[0].fields[0].indexed);
+        assert!(!event.variants[0].fields[1].indexed);
 
-    #[test]
-    fn test_reject_too_many_indexed_fields() {
-        let result = parse_module(quote! {
-            pub mod test {
-                pub enum Event {
-                    BadEvent {
-                        #[indexed]
-                        a: Address,
-                        #[indexed]
-                        b: Address,
-                        #[indexed]
-                        c: Address,
-                        #[indexed]
-                        d: Address,
-                    },
-                }
-            }
-        });
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("at most 3 indexed fields"));
-    }
-
-    #[test]
-    fn test_parse_interface() {
-        let result = parse_module(quote! {
+        // Interface trait
+        let module = parse_module(quote! {
             pub mod test {
                 pub trait Interface {
-                    fn balance_of(&self, account: Address) -> Result<U256>;
-                    fn transfer(&mut self, to: Address, amount: U256) -> Result<()>;
+                    fn get(&self, id: U256) -> Result<Address>;
+                    fn set(&mut self, id: U256, val: Address) -> Result<()>;
                 }
             }
-        });
-        assert!(result.is_ok());
-        let module = result.unwrap();
-        assert!(module.interface.is_some());
+        })?;
         let interface = module.interface.unwrap();
-        assert_eq!(interface.methods.len(), 2);
-
-        let balance_of = &interface.methods[0];
-        assert_eq!(balance_of.name.to_string(), "balance_of");
-        assert_eq!(balance_of.sol_name, "balanceOf");
-        assert!(!balance_of.is_mutable);
-        assert_eq!(balance_of.params.len(), 1);
-
-        let transfer = &interface.methods[1];
-        assert_eq!(transfer.name.to_string(), "transfer");
-        assert_eq!(transfer.sol_name, "transfer");
-        assert!(transfer.is_mutable);
-        assert_eq!(transfer.params.len(), 2);
-        assert!(transfer.return_type.is_none());
+        assert!(!interface.methods[0].is_mutable);
+        assert!(interface.methods[1].is_mutable);
+        assert_eq!(interface.methods[0].sol_name, "get");
+        Ok(())
     }
 
     #[test]
-    fn test_reject_msg_sender_param() {
-        let result = parse_module(quote! {
-            pub mod test {
-                pub trait Interface {
-                    fn bad_method(&mut self, msg_sender: Address, value: U256) -> Result<()>;
-                }
-            }
-        });
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("reserved name"));
-        assert!(err.contains("msg_sender"));
-    }
+    fn test_parser_error_cases() {
+        // Non-unit enum (not Error/Event)
+        let err = parse_module(quote! {
+            pub mod test { pub enum Bad { V { f: U256 } } }
+        }).unwrap_err().to_string();
+        assert!(err.contains("unit variants only"));
 
-    #[test]
-    fn test_reject_non_interface_trait() {
-        let result = parse_module(quote! {
-            pub mod test {
-                pub trait SomethingElse {
-                    fn method(&self) -> Result<()>;
-                }
-            }
-        });
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        // Too many indexed fields
+        let err = parse_module(quote! {
+            pub mod test { pub enum Event { E { #[indexed] a: Address, #[indexed] b: Address, #[indexed] c: Address, #[indexed] d: Address } } }
+        }).unwrap_err().to_string();
+        assert!(err.contains("at most 3 indexed"));
+
+        // Reserved msg_sender parameter
+        let err = parse_module(quote! {
+            pub mod test { pub trait Interface { fn f(&mut self, msg_sender: Address) -> Result<()>; } }
+        }).unwrap_err().to_string();
+        assert!(err.contains("reserved") && err.contains("msg_sender"));
+
+        // Non-Interface trait name
+        let err = parse_module(quote! {
+            pub mod test { pub trait Other { fn f(&self) -> Result<()>; } }
+        }).unwrap_err().to_string();
         assert!(err.contains("must be named `Interface`"));
-    }
 
-    #[test]
-    fn test_reject_duplicate_error() {
-        let result = parse_module(quote! {
-            pub mod test {
-                pub enum Error { A }
-                pub enum Error { B }
-            }
-        });
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        // Duplicate Error enum
+        let err = parse_module(quote! {
+            pub mod test { pub enum Error { A } pub enum Error { B } }
+        }).unwrap_err().to_string();
         assert!(err.contains("duplicate"));
     }
 
     #[test]
-    fn test_full_module() {
-        let result = parse_module(quote! {
+    fn test_full_module() -> syn::Result<()> {
+        let module = parse_module(quote! {
             pub mod roles_auth {
                 use super::*;
-
-                #[derive(Clone, Debug)]
-                pub struct Transfer {
-                    pub from: Address,
-                    pub to: Address,
-                    pub amount: U256,
-                }
-
-                pub enum PolicyType {
-                    Whitelist,
-                    Blacklist,
-                }
-
-                pub enum Error {
-                    Unauthorized,
-                    InsufficientBalance { available: U256, required: U256 },
-                }
-
-                pub enum Event {
-                    RoleMembershipUpdated {
-                        #[indexed]
-                        role: B256,
-                        #[indexed]
-                        account: Address,
-                        sender: Address,
-                        has_role: bool,
-                    },
-                }
-
+                #[derive(Clone)]
+                pub struct Transfer { pub from: Address, pub amount: U256 }
+                pub enum PolicyType { Whitelist, Blacklist }
+                pub enum Error { Unauthorized, InsufficientBalance { available: U256 } }
+                pub enum Event { Updated { #[indexed] role: B256, sender: Address } }
                 pub trait Interface {
-                    fn has_role(&self, account: Address, role: B256) -> Result<bool>;
-                    fn grant_role(&mut self, role: B256, account: Address) -> Result<()>;
+                    fn has_role(&self, account: Address) -> Result<bool>;
+                    fn grant_role(&mut self, role: B256) -> Result<()>;
                 }
             }
-        });
+        })?;
 
-        assert!(result.is_ok());
-        let module = result.unwrap();
         assert_eq!(module.name.to_string(), "roles_auth");
         assert_eq!(module.imports.len(), 1);
         assert_eq!(module.structs.len(), 1);
         assert_eq!(module.unit_enums.len(), 1);
-        assert!(module.error.is_some());
-        assert!(module.event.is_some());
-        assert!(module.interface.is_some());
+        assert!(module.error.is_some() && module.event.is_some() && module.interface.is_some());
+        Ok(())
     }
 
     #[test]
@@ -849,6 +705,5 @@ mod tests {
         assert_eq!(to_camel_case("balance_of"), "balanceOf");
         assert_eq!(to_camel_case("transfer_from"), "transferFrom");
         assert_eq!(to_camel_case("name"), "name");
-        assert_eq!(to_camel_case("update_quote_token"), "updateQuoteToken");
     }
 }

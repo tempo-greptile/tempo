@@ -51,14 +51,15 @@
 //! }
 //! ```
 
-mod error_gen;
-mod event_gen;
+mod common;
 mod interface_gen;
 mod parser;
 mod registry;
-mod selector;
 mod struct_gen;
+#[cfg(test)]
+mod test_utils;
 mod unit_enum_gen;
+mod variant_enum_gen;
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -96,13 +97,21 @@ pub(crate) fn expand(item: ItemMod) -> syn::Result<TokenStream> {
         .collect();
 
     let error_impl = if let Some(ref def) = module.error {
-        Some(error_gen::generate_error_enum(def, &registry)?)
+        Some(variant_enum_gen::generate_variant_enum(
+            def,
+            &registry,
+            variant_enum_gen::VariantEnumKind::Error,
+        )?)
     } else {
         None
     };
 
     let event_impl = if let Some(ref def) = module.event {
-        Some(event_gen::generate_event_enum(def, &registry)?)
+        Some(variant_enum_gen::generate_variant_enum(
+            def,
+            &registry,
+            variant_enum_gen::VariantEnumKind::Event,
+        )?)
     } else {
         None
     };
@@ -140,181 +149,70 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_and_build_registry() {
+    fn test_registry_integration() -> syn::Result<()> {
         let item: ItemMod = syn::parse2(quote! {
             pub mod test {
                 use super::*;
-
-                #[derive(Clone, Debug)]
-                pub struct Transfer {
-                    pub from: Address,
-                    pub to: Address,
-                    pub amount: U256,
-                }
-
-                pub enum OrderStatus {
-                    Pending,
-                    Filled,
-                }
-
-                pub enum Error {
-                    Unauthorized,
-                }
-
-                pub enum Event {
-                    Transfer {
-                        #[indexed]
-                        from: Address,
-                        to: Address,
-                        amount: U256,
-                    },
-                }
-
+                pub struct Transfer { pub from: Address, pub to: Address, pub amount: U256 }
+                pub enum OrderStatus { Pending, Filled }
+                pub enum Error { Unauthorized }
+                pub enum Event { Transfer { #[indexed] from: Address, to: Address, amount: U256 } }
                 pub trait Interface {
                     fn balance_of(&self, account: Address) -> Result<U256>;
                     fn transfer(&mut self, data: Transfer) -> Result<()>;
                 }
             }
-        })
-        .unwrap();
+        })?;
 
-        let module = parse_solidity_module(item).unwrap();
-        let registry = TypeRegistry::from_module(&module).unwrap();
+        let module = parse_solidity_module(item)?;
+        let registry = TypeRegistry::from_module(&module)?;
 
-        assert_eq!(
-            registry.get_struct_abi("Transfer"),
-            Some("(address,address,uint256)")
-        );
-
+        assert_eq!(registry.resolve_abi(&syn::parse_quote!(Transfer))?, "(address,address,uint256)");
         assert!(registry.is_unit_enum(&syn::parse_quote!(OrderStatus)));
-
-        let sig = registry
-            .compute_signature("transfer", &[syn::parse_quote!(Transfer)])
-            .unwrap();
+        let sig = registry.compute_signature("transfer", &[syn::parse_quote!(Transfer)])?;
         assert_eq!(sig, "transfer((address,address,uint256))");
+
+        Ok(())
     }
 
     #[test]
-    fn test_interface_with_struct_param() {
-        let item: ItemMod = syn::parse2(quote! {
-            pub mod test {
-                pub struct Data {
-                    pub value: U256,
-                }
-
-                pub trait Interface {
-                    fn process(&mut self, data: Data) -> Result<()>;
-                }
-            }
-        })
-        .unwrap();
-
-        let module = parse_solidity_module(item).unwrap();
-        let registry = TypeRegistry::from_module(&module).unwrap();
-
-        let interface = module.interface.as_ref().unwrap();
-        let method = &interface.methods[0];
-
-        let param_types: Vec<_> = method.params.iter().map(|(_, ty)| ty.clone()).collect();
-        assert!(registry.has_struct_params(&param_types));
-
-        let sig = registry
-            .compute_signature(&method.sol_name, &param_types)
-            .unwrap();
-        assert_eq!(sig, "process((uint256))");
-    }
-
-    #[test]
-    fn test_expand_full_module() {
+    fn test_expand_full_module() -> syn::Result<()> {
         let item: ItemMod = syn::parse2(quote! {
             pub mod example {
                 use super::*;
-
-                pub struct Transfer {
-                    pub from: Address,
-                    pub to: Address,
-                    pub amount: U256,
-                }
-
-                pub enum OrderStatus {
-                    Pending,
-                    Filled,
-                }
-
-                pub enum Error {
-                    Unauthorized,
-                    InsufficientBalance { available: U256, required: U256 },
-                }
-
-                pub enum Event {
-                    Transfer {
-                        #[indexed]
-                        from: Address,
-                        #[indexed]
-                        to: Address,
-                        amount: U256,
-                    },
-                }
-
+                pub struct Transfer { pub from: Address, pub to: Address, pub amount: U256 }
+                pub enum OrderStatus { Pending, Filled }
+                pub enum Error { Unauthorized, InsufficientBalance { available: U256 } }
+                pub enum Event { Transfer { #[indexed] from: Address, to: Address, amount: U256 } }
                 pub trait Interface {
                     fn balance_of(&self, account: Address) -> Result<U256>;
                     fn transfer(&mut self, to: Address, amount: U256) -> Result<()>;
                 }
             }
-        })
-        .unwrap();
+        })?;
 
-        let result = expand(item);
-        assert!(result.is_ok(), "expand failed: {:?}", result.err());
-
-        let tokens = result.unwrap();
-        let code = tokens.to_string();
-
-        assert!(code.contains("mod example"));
-        assert!(code.contains("struct Transfer"));
-        assert!(code.contains("enum OrderStatus"));
-        assert!(code.contains("enum Error"));
-        assert!(code.contains("enum Event"));
-        assert!(code.contains("trait Interface"));
-        assert!(code.contains("balanceOfCall"));
-        assert!(code.contains("transferCall"));
+        let code = expand(item)?.to_string();
+        assert!(code.contains("mod example") && code.contains("struct Transfer"));
+        assert!(code.contains("enum OrderStatus") && code.contains("enum Error") && code.contains("enum Event"));
+        assert!(code.contains("trait Interface") && code.contains("balanceOfCall") && code.contains("transferCall"));
+        Ok(())
     }
 
     #[test]
-    fn test_expand_empty_module() {
-        let item: ItemMod = syn::parse2(quote! {
-            pub mod empty {
-                use super::*;
-            }
-        })
-        .unwrap();
+    fn test_expand_edge_cases() -> syn::Result<()> {
+        // Empty module
+        let item: ItemMod = syn::parse2(quote! { pub mod empty { use super::*; } })?;
+        expand(item)?;
 
-        let result = expand(item);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_expand_structs_only() {
+        // Nested structs only
         let item: ItemMod = syn::parse2(quote! {
             pub mod structs_only {
-                pub struct Inner {
-                    pub value: U256,
-                }
-
-                pub struct Outer {
-                    pub inner: Inner,
-                    pub extra: Address,
-                }
+                pub struct Inner { pub value: U256 }
+                pub struct Outer { pub inner: Inner, pub extra: Address }
             }
-        })
-        .unwrap();
-
-        let result = expand(item);
-        assert!(result.is_ok());
-
-        let code = result.unwrap().to_string();
-        assert!(code.contains("struct Inner"));
-        assert!(code.contains("struct Outer"));
-        assert!(code.contains("SolTupleSignature"));
+        })?;
+        let code = expand(item)?.to_string();
+        assert!(code.contains("struct Inner") && code.contains("struct Outer"));
+        Ok(())
     }
 }

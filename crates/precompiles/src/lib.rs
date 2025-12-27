@@ -2,36 +2,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-// Allow the crate to refer to itself by name (needed for macro-generated code)
-extern crate self as tempo_precompiles;
-
 pub mod error;
 pub use error::{IntoPrecompileResult, Result};
 
-/// Trait for types that can provide their ABI tuple signature.
-///
-/// Used by the `#[interface]` macro to generate correct function selectors
-/// when custom structs are used as function parameters.
-///
-/// # Example
-///
-/// A struct `Transfer { to: Address, amount: U256 }` would have:
-/// - `ABI_TUPLE = "(address,uint256)"`
-///
-/// This allows the interface macro to generate correct signatures like
-/// `transfer((address,uint256))` instead of incorrect `transfer(Transfer)`.
-pub trait SolTupleSignature {
-    /// The ABI tuple representation of this type's fields.
-    ///
-    /// For a struct with fields `(address, uint256)`, this would be `"(address,uint256)"`.
-    const ABI_TUPLE: &'static str;
-}
-
-// Re-export for use in generated code
-#[doc(hidden)]
-pub use const_format;
-#[doc(hidden)]
-pub use keccak_const;
 
 pub mod storage;
 
@@ -512,23 +485,6 @@ mod macro_tests {
     }
 
     #[test]
-    fn test_sol_struct_abi_tuple_primitives() {
-        use crate::SolTupleSignature;
-
-        // Inner struct: (uint256,address)
-        assert_eq!(test_types::Inner::ABI_TUPLE, "(uint256,address)");
-    }
-
-    #[test]
-    fn test_sol_struct_abi_tuple_nested() {
-        use crate::SolTupleSignature;
-
-        // Outer struct contains Inner, so its ABI_TUPLE should include the expanded tuple
-        // Expected: "((uint256,address),uint64)"
-        assert_eq!(test_types::Outer::ABI_TUPLE, "((uint256,address),uint64)");
-    }
-
-    #[test]
     fn test_sol_struct_eip712_root_type() {
         // EIP-712 root type uses struct names for nested types
         let inner_root = <test_types::Inner as SolStruct>::eip712_root_type();
@@ -558,13 +514,10 @@ mod macro_tests {
 
     #[test]
     fn test_interface_struct_param_selector() {
-        use crate::SolTupleSignature;
-
         // The signature should use the tuple form: "processInner((uint256,address))"
-        let expected_sig = format!("processInner({})", test_types::Inner::ABI_TUPLE);
         assert_eq!(
             <test_types::processInnerCall as SolCall>::SIGNATURE,
-            expected_sig
+            "processInner((uint256,address))"
         );
 
         // Container enum should have the same selector as the call struct

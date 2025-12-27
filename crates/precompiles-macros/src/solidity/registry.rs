@@ -48,7 +48,7 @@ pub(super) struct TypeRegistry {
     struct_deps: HashMap<String, Vec<String>>,
 
     /// Structs in topologically sorted order (dependencies first)
-    sorted_structs: Vec<String>,
+    pub(super) sorted_structs: Vec<String>,
 }
 
 impl TypeRegistry {
@@ -96,11 +96,12 @@ impl TypeRegistry {
         struct_map: &HashMap<String, &SolStructDef>,
     ) -> syn::Result<()> {
         for (name, def) in struct_map {
-            let mut deps = Vec::new();
+            let mut deps = HashSet::new();
             for field in &def.fields {
                 self.collect_type_dependencies(&field.ty, struct_map, &mut deps);
             }
-            self.struct_deps.insert(name.clone(), deps);
+            self.struct_deps
+                .insert(name.clone(), deps.into_iter().collect());
         }
         Ok(())
     }
@@ -110,15 +111,15 @@ impl TypeRegistry {
         &self,
         ty: &Type,
         struct_map: &HashMap<String, &SolStructDef>,
-        deps: &mut Vec<String>,
+        deps: &mut HashSet<String>,
     ) {
         match ty {
             Type::Path(type_path) => {
                 if let Some(seg) = type_path.path.segments.last() {
                     let type_name = seg.ident.to_string();
 
-                    if struct_map.contains_key(&type_name) && !deps.contains(&type_name) {
-                        deps.push(type_name);
+                    if struct_map.contains_key(&type_name) {
+                        deps.insert(type_name);
                     }
 
                     if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
@@ -158,8 +159,12 @@ impl TypeRegistry {
         for (name, deps) in &self.struct_deps {
             for dep in deps {
                 if struct_map.contains_key(dep) {
-                    *in_degree.get_mut(name).unwrap() += 1;
-                    reverse_deps.get_mut(dep).unwrap().push(name.clone());
+                    if let (Some(deg), Some(rdeps)) =
+                        (in_degree.get_mut(name), reverse_deps.get_mut(dep))
+                    {
+                        *deg += 1;
+                        rdeps.push(name.clone());
+                    }
                 }
             }
         }
@@ -181,8 +186,8 @@ impl TypeRegistry {
                     if let Some(deg) = in_degree.get_mut(dependent) {
                         *deg -= 1;
                         if *deg == 0 {
-                            queue.push(dependent.clone());
-                            queue.sort();
+                            let pos = queue.binary_search(dependent).unwrap_or_else(|p| p);
+                            queue.insert(pos, dependent.clone());
                         }
                     }
                 }
@@ -300,7 +305,7 @@ impl TypeRegistry {
     }
 
     /// Check if a type is a registered struct.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(super) fn is_struct(&self, ty: &Type) -> bool {
         if let Type::Path(type_path) = ty {
             if let Some(seg) = type_path.path.segments.last() {
@@ -311,7 +316,7 @@ impl TypeRegistry {
     }
 
     /// Check if a type is a registered unit enum.
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(super) fn is_unit_enum(&self, ty: &Type) -> bool {
         if let Type::Path(type_path) = ty {
             if let Some(seg) = type_path.path.segments.last() {
@@ -321,40 +326,9 @@ impl TypeRegistry {
         false
     }
 
-    /// Get the ABI tuple for a struct by name.
-    pub(super) fn get_struct_abi(&self, name: &str) -> Option<&str> {
-        self.abi_tuples.get(name).map(|s| s.as_str())
-    }
-
-    /// Get structs in topologically sorted order (dependencies first).
-    #[allow(dead_code)]
-    pub(super) fn sorted_structs(&self) -> &[String] {
-        &self.sorted_structs
-    }
-
-    /// Get all registered struct names.
-    #[allow(dead_code)]
-    pub(super) fn struct_names(&self) -> impl Iterator<Item = &str> {
-        self.abi_tuples.keys().map(|s| s.as_str())
-    }
-
-    /// Get all registered unit enum names.
-    #[allow(dead_code)]
-    pub(super) fn unit_enum_names(&self) -> impl Iterator<Item = &str> {
-        self.unit_enums.iter().map(|s| s.as_str())
-    }
-
     // ========================================================================
     // EIP-712 Component Support
     // ========================================================================
-
-    /// Get the direct struct dependencies for a struct (for EIP-712 components).
-    ///
-    /// Returns struct names that are directly referenced in the struct's fields.
-    #[allow(dead_code)]
-    pub(super) fn get_struct_dependencies(&self, name: &str) -> Option<&[String]> {
-        self.struct_deps.get(name).map(|v| v.as_slice())
-    }
 
     /// Get all transitive struct dependencies for a struct (for EIP-712 encodeType).
     ///
@@ -389,95 +363,6 @@ impl TypeRegistry {
                     self.collect_transitive_deps(dep, visited, result);
                 }
             }
-        }
-    }
-
-    // ========================================================================
-    // Code Generation Support
-    // ========================================================================
-
-    /// Generate the ABI signature expression for a type.
-    ///
-    /// For struct types, this generates a reference to the struct's `ABI_TUPLE` constant.
-    /// For primitives, returns a literal string.
-    pub(super) fn to_abi_signature_expr(&self, ty: &Type) -> syn::Result<TokenStream> {
-        if let Type::Path(type_path) = ty {
-            if let Some(seg) = type_path.path.segments.last() {
-                let type_name = seg.ident.to_string();
-
-                if self.unit_enums.contains(&type_name) {
-                    return Ok(quote! { "uint8" });
-                }
-
-                if self.abi_tuples.contains_key(&type_name) {
-                    let ident = &seg.ident;
-                    return Ok(
-                        quote! { <#ident as tempo_precompiles::SolTupleSignature>::ABI_TUPLE },
-                    );
-                }
-
-                if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                    if seg.ident == "Vec" {
-                        if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
-                            let inner_expr = self.to_abi_signature_expr(inner)?;
-                            return Ok(quote! {
-                                tempo_precompiles::const_format::concatcp!(#inner_expr, "[]")
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        if let Type::Array(arr) = ty {
-            let inner_expr = self.to_abi_signature_expr(&arr.elem)?;
-            if let syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Int(len),
-                ..
-            }) = &arr.len
-            {
-                let len_str = len.to_string();
-                return Ok(quote! {
-                    tempo_precompiles::const_format::concatcp!(#inner_expr, "[", #len_str, "]")
-                });
-            }
-        }
-
-        let sol_type = SolType::from_syn(ty)?;
-        let sol_name = sol_type.sol_name();
-        Ok(quote! { #sol_name })
-    }
-
-    /// Check if any parameters contain struct types.
-    pub(super) fn has_struct_params(&self, params: &[Type]) -> bool {
-        params.iter().any(|ty| self.contains_struct(ty))
-    }
-
-    /// Check if a type contains (directly or nested) a struct type.
-    fn contains_struct(&self, ty: &Type) -> bool {
-        match ty {
-            Type::Path(type_path) => {
-                if let Some(seg) = type_path.path.segments.last() {
-                    let type_name = seg.ident.to_string();
-                    if self.abi_tuples.contains_key(&type_name) {
-                        return true;
-                    }
-
-                    if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                        for arg in &args.args {
-                            if let syn::GenericArgument::Type(inner_ty) = arg {
-                                if self.contains_struct(inner_ty) {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-                false
-            }
-            Type::Array(arr) => self.contains_struct(&arr.elem),
-            Type::Tuple(tuple) => tuple.elems.iter().any(|e| self.contains_struct(e)),
-            _ => false,
         }
     }
 
@@ -517,188 +402,100 @@ impl TypeRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solidity::parser::{FieldDef, SolStructDef, SolidityModule, UnitEnumDef};
-    use proc_macro2::Span;
-    use quote::format_ident;
-    use syn::{parse_quote, Visibility};
-
-    fn make_field(name: &str, ty: Type) -> FieldDef {
-        FieldDef {
-            name: format_ident!("{}", name),
-            ty,
-            indexed: false,
-            vis: Visibility::Public(syn::token::Pub {
-                span: Span::call_site(),
-            }),
-        }
-    }
-
-    fn make_struct(name: &str, fields: Vec<FieldDef>) -> SolStructDef {
-        SolStructDef {
-            name: format_ident!("{}", name),
-            fields,
-            derives: vec![],
-            attrs: vec![],
-            vis: Visibility::Public(syn::token::Pub {
-                span: Span::call_site(),
-            }),
-        }
-    }
-
-    fn make_unit_enum(name: &str, variants: Vec<&str>) -> UnitEnumDef {
-        UnitEnumDef {
-            name: format_ident!("{}", name),
-            variants: variants.iter().map(|v| format_ident!("{}", v)).collect(),
-            attrs: vec![],
-            vis: Visibility::Public(syn::token::Pub {
-                span: Span::call_site(),
-            }),
-        }
-    }
-
-    fn empty_module() -> SolidityModule {
-        SolidityModule {
-            name: format_ident!("test"),
-            vis: Visibility::Public(syn::token::Pub {
-                span: Span::call_site(),
-            }),
-            imports: vec![],
-            structs: vec![],
-            unit_enums: vec![],
-            error: None,
-            event: None,
-            interface: None,
-            other_items: vec![],
-        }
-    }
+    use crate::solidity::test_utils::{empty_module, make_field, make_struct, make_unit_enum};
+    use syn::parse_quote;
 
     #[test]
-    fn test_resolve_primitive() -> syn::Result<()> {
+    fn test_resolve_abi_types() -> syn::Result<()> {
+        // Primitives (no module needed)
         let registry = TypeRegistry::default();
         assert_eq!(registry.resolve_abi(&parse_quote!(Address))?, "address");
         assert_eq!(registry.resolve_abi(&parse_quote!(U256))?, "uint256");
         assert_eq!(registry.resolve_abi(&parse_quote!(bool))?, "bool");
-        Ok(())
-    }
 
-    #[test]
-    fn test_resolve_unit_enum() -> syn::Result<()> {
+        // Unit enum -> uint8
         let mut module = empty_module();
-        module
-            .unit_enums
-            .push(make_unit_enum("OrderStatus", vec!["Pending", "Filled"]));
-
+        module.unit_enums.push(make_unit_enum("OrderStatus", vec!["Pending", "Filled"]));
         let registry = TypeRegistry::from_module(&module)?;
         assert_eq!(registry.resolve_abi(&parse_quote!(OrderStatus))?, "uint8");
+
+        // Struct -> tuple
+        let mut module = empty_module();
+        module.structs.push(make_struct("Transfer", vec![
+            make_field("from", parse_quote!(Address)),
+            make_field("to", parse_quote!(Address)),
+            make_field("amount", parse_quote!(U256)),
+        ]));
+        let registry = TypeRegistry::from_module(&module)?;
+        assert_eq!(registry.resolve_abi(&parse_quote!(Transfer))?, "(address,address,uint256)");
+
+        // Struct with unit enum field
+        let mut module = empty_module();
+        module.unit_enums.push(make_unit_enum("Status", vec!["Active", "Inactive"]));
+        module.structs.push(make_struct("Order", vec![
+            make_field("id", parse_quote!(U256)),
+            make_field("status", parse_quote!(Status)),
+        ]));
+        let registry = TypeRegistry::from_module(&module)?;
+        assert_eq!(registry.resolve_abi(&parse_quote!(Order))?, "(uint256,uint8)");
+
         Ok(())
     }
 
     #[test]
-    fn test_resolve_struct() -> syn::Result<()> {
+    fn test_nested_struct_resolution() -> syn::Result<()> {
+        // Simple nesting: Outer { inner: Inner }
         let mut module = empty_module();
-        module.structs.push(make_struct(
-            "Transfer",
-            vec![
-                make_field("from", parse_quote!(Address)),
-                make_field("to", parse_quote!(Address)),
-                make_field("amount", parse_quote!(U256)),
-            ],
-        ));
-
+        module.structs.push(make_struct("Inner", vec![make_field("value", parse_quote!(U256))]));
+        module.structs.push(make_struct("Outer", vec![
+            make_field("inner", parse_quote!(Inner)),
+            make_field("extra", parse_quote!(Address)),
+        ]));
         let registry = TypeRegistry::from_module(&module)?;
-        assert_eq!(
-            registry.resolve_abi(&parse_quote!(Transfer))?,
-            "(address,address,uint256)"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn test_nested_structs() -> syn::Result<()> {
-        let mut module = empty_module();
-
-        module.structs.push(make_struct(
-            "Inner",
-            vec![make_field("value", parse_quote!(U256))],
-        ));
-
-        module.structs.push(make_struct(
-            "Outer",
-            vec![
-                make_field("inner", parse_quote!(Inner)),
-                make_field("extra", parse_quote!(Address)),
-            ],
-        ));
-
-        let registry = TypeRegistry::from_module(&module)?;
-
         assert_eq!(registry.resolve_abi(&parse_quote!(Inner))?, "(uint256)");
-        assert_eq!(
-            registry.resolve_abi(&parse_quote!(Outer))?,
-            "((uint256),address)"
-        );
+        assert_eq!(registry.resolve_abi(&parse_quote!(Outer))?, "((uint256),address)");
+        assert_eq!(registry.compute_signature("process", &[parse_quote!(Outer)])?, "process(((uint256),address))");
 
-        let sig = registry.compute_signature("process", &[parse_quote!(Outer)])?;
-        assert_eq!(sig, "process(((uint256),address))");
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_deeply_nested_structs() -> syn::Result<()> {
+        // Deep nesting: Level3 { Level2 { Level1 } }
         let mut module = empty_module();
-
-        module.structs.push(make_struct(
-            "Level1",
-            vec![make_field("value", parse_quote!(U256))],
-        ));
-
-        module.structs.push(make_struct(
-            "Level2",
-            vec![make_field("level1", parse_quote!(Level1))],
-        ));
-
-        module.structs.push(make_struct(
-            "Level3",
-            vec![
-                make_field("level2", parse_quote!(Level2)),
-                make_field("extra", parse_quote!(bool)),
-            ],
-        ));
-
+        module.structs.push(make_struct("Level1", vec![make_field("value", parse_quote!(U256))]));
+        module.structs.push(make_struct("Level2", vec![make_field("level1", parse_quote!(Level1))]));
+        module.structs.push(make_struct("Level3", vec![
+            make_field("level2", parse_quote!(Level2)),
+            make_field("extra", parse_quote!(bool)),
+        ]));
         let registry = TypeRegistry::from_module(&module)?;
-
         assert_eq!(registry.resolve_abi(&parse_quote!(Level1))?, "(uint256)");
         assert_eq!(registry.resolve_abi(&parse_quote!(Level2))?, "((uint256))");
-        assert_eq!(
-            registry.resolve_abi(&parse_quote!(Level3))?,
-            "(((uint256)),bool)"
-        );
+        assert_eq!(registry.resolve_abi(&parse_quote!(Level3))?, "(((uint256)),bool)");
+
+        // Array of structs: Container { items: Vec<Item> }
+        let mut module = empty_module();
+        module.structs.push(make_struct("Item", vec![make_field("id", parse_quote!(U256))]));
+        module.structs.push(make_struct("Container", vec![make_field("items", parse_quote!(Vec<Item>))]));
+        let registry = TypeRegistry::from_module(&module)?;
+        assert_eq!(registry.resolve_abi(&parse_quote!(Item))?, "(uint256)");
+        assert_eq!(registry.resolve_abi(&parse_quote!(Container))?, "((uint256)[])");
 
         Ok(())
     }
 
     #[test]
-    fn test_struct_with_array_of_structs() -> syn::Result<()> {
+    fn test_type_classification() -> syn::Result<()> {
         let mut module = empty_module();
-
-        module.structs.push(make_struct(
-            "Item",
-            vec![make_field("id", parse_quote!(U256))],
-        ));
-
-        module.structs.push(make_struct(
-            "Container",
-            vec![make_field("items", parse_quote!(Vec<Item>))],
-        ));
-
+        module.structs.push(make_struct("Transfer", vec![make_field("amount", parse_quote!(U256))]));
+        module.unit_enums.push(make_unit_enum("OrderStatus", vec!["Pending"]));
         let registry = TypeRegistry::from_module(&module)?;
 
-        assert_eq!(registry.resolve_abi(&parse_quote!(Item))?, "(uint256)");
-        assert_eq!(
-            registry.resolve_abi(&parse_quote!(Container))?,
-            "((uint256)[])"
-        );
+        // is_struct
+        assert!(registry.is_struct(&parse_quote!(Transfer)));
+        assert!(!registry.is_struct(&parse_quote!(Address)));
+        assert!(!registry.is_struct(&parse_quote!(OrderStatus)));
+
+        // is_unit_enum
+        assert!(registry.is_unit_enum(&parse_quote!(OrderStatus)));
+        assert!(!registry.is_unit_enum(&parse_quote!(Address)));
+        assert!(!registry.is_unit_enum(&parse_quote!(Transfer)));
 
         Ok(())
     }
@@ -706,49 +503,25 @@ mod tests {
     #[test]
     fn test_cycle_detection() {
         let mut module = empty_module();
-
-        module.structs.push(make_struct(
-            "A",
-            vec![make_field("b", parse_quote!(B))],
-        ));
-
-        module.structs.push(make_struct(
-            "B",
-            vec![make_field("a", parse_quote!(A))],
-        ));
-
+        module.structs.push(make_struct("A", vec![make_field("b", parse_quote!(B))]));
+        module.structs.push(make_struct("B", vec![make_field("a", parse_quote!(A))]));
         let result = TypeRegistry::from_module(&module);
         assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("circular dependency"));
+        assert!(result.unwrap_err().to_string().contains("circular dependency"));
     }
 
     #[test]
     fn test_topological_order() -> syn::Result<()> {
         let mut module = empty_module();
-
-        module.structs.push(make_struct(
-            "C",
-            vec![make_field("b", parse_quote!(B))],
-        ));
-        module.structs.push(make_struct(
-            "A",
-            vec![make_field("value", parse_quote!(U256))],
-        ));
-        module.structs.push(make_struct(
-            "B",
-            vec![make_field("a", parse_quote!(A))],
-        ));
-
+        module.structs.push(make_struct("C", vec![make_field("b", parse_quote!(B))]));
+        module.structs.push(make_struct("A", vec![make_field("value", parse_quote!(U256))]));
+        module.structs.push(make_struct("B", vec![make_field("a", parse_quote!(A))]));
         let registry = TypeRegistry::from_module(&module)?;
 
-        let sorted = registry.sorted_structs();
-        let a_pos = sorted.iter().position(|s| s == "A").unwrap();
-        let b_pos = sorted.iter().position(|s| s == "B").unwrap();
-        let c_pos = sorted.iter().position(|s| s == "C").unwrap();
-
-        assert!(a_pos < b_pos, "A must come before B");
-        assert!(b_pos < c_pos, "B must come before C");
+        let a_pos = registry.sorted_structs.iter().position(|s| s == "A").unwrap();
+        let b_pos = registry.sorted_structs.iter().position(|s| s == "B").unwrap();
+        let c_pos = registry.sorted_structs.iter().position(|s| s == "C").unwrap();
+        assert!(a_pos < b_pos && b_pos < c_pos);
 
         Ok(())
     }
@@ -756,33 +529,17 @@ mod tests {
     #[test]
     fn test_transitive_dependencies() -> syn::Result<()> {
         let mut module = empty_module();
-
-        module.structs.push(make_struct(
-            "A",
-            vec![make_field("value", parse_quote!(U256))],
-        ));
-        module.structs.push(make_struct(
-            "B",
-            vec![make_field("a", parse_quote!(A))],
-        ));
-        module.structs.push(make_struct(
-            "C",
-            vec![
-                make_field("b", parse_quote!(B)),
-                make_field("a", parse_quote!(A)),
-            ],
-        ));
-
+        module.structs.push(make_struct("A", vec![make_field("value", parse_quote!(U256))]));
+        module.structs.push(make_struct("B", vec![make_field("a", parse_quote!(A))]));
+        module.structs.push(make_struct("C", vec![
+            make_field("b", parse_quote!(B)),
+            make_field("a", parse_quote!(A)),
+        ]));
         let registry = TypeRegistry::from_module(&module)?;
 
-        let deps_a = registry.get_transitive_dependencies("A");
-        assert!(deps_a.is_empty());
-
-        let deps_b = registry.get_transitive_dependencies("B");
-        assert_eq!(deps_b, vec!["A"]);
-
-        let deps_c = registry.get_transitive_dependencies("C");
-        assert_eq!(deps_c, vec!["A", "B"]);
+        assert!(registry.get_transitive_dependencies("A").is_empty());
+        assert_eq!(registry.get_transitive_dependencies("B"), vec!["A"]);
+        assert_eq!(registry.get_transitive_dependencies("C"), vec!["A", "B"]);
 
         Ok(())
     }
@@ -790,95 +547,15 @@ mod tests {
     #[test]
     fn test_compute_signature() -> syn::Result<()> {
         let mut module = empty_module();
-        module.structs.push(make_struct(
-            "Transfer",
-            vec![
-                make_field("from", parse_quote!(Address)),
-                make_field("to", parse_quote!(Address)),
-                make_field("amount", parse_quote!(U256)),
-            ],
-        ));
-
+        module.structs.push(make_struct("Transfer", vec![
+            make_field("from", parse_quote!(Address)),
+            make_field("to", parse_quote!(Address)),
+            make_field("amount", parse_quote!(U256)),
+        ]));
         let registry = TypeRegistry::from_module(&module)?;
 
-        let sig = registry.compute_signature("transfer", &[parse_quote!(Transfer)])?;
-        assert_eq!(sig, "transfer((address,address,uint256))");
-
-        let sig2 = registry.compute_signature(
-            "multiTransfer",
-            &[parse_quote!(Transfer), parse_quote!(Address)],
-        )?;
-        assert_eq!(sig2, "multiTransfer((address,address,uint256),address)");
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_has_struct_params() -> syn::Result<()> {
-        let mut module = empty_module();
-        module.structs.push(make_struct(
-            "Transfer",
-            vec![make_field("amount", parse_quote!(U256))],
-        ));
-
-        let registry = TypeRegistry::from_module(&module)?;
-
-        assert!(registry.has_struct_params(&[parse_quote!(Transfer)]));
-        assert!(!registry.has_struct_params(&[parse_quote!(Address), parse_quote!(U256)]));
-        assert!(registry.has_struct_params(&[parse_quote!(Vec<Transfer>)]));
-        Ok(())
-    }
-
-    #[test]
-    fn test_is_struct() -> syn::Result<()> {
-        let mut module = empty_module();
-        module.structs.push(make_struct(
-            "Transfer",
-            vec![make_field("amount", parse_quote!(U256))],
-        ));
-
-        let registry = TypeRegistry::from_module(&module)?;
-
-        assert!(registry.is_struct(&parse_quote!(Transfer)));
-        assert!(!registry.is_struct(&parse_quote!(Address)));
-        assert!(!registry.is_struct(&parse_quote!(OrderStatus)));
-        Ok(())
-    }
-
-    #[test]
-    fn test_is_unit_enum() -> syn::Result<()> {
-        let mut module = empty_module();
-        module
-            .unit_enums
-            .push(make_unit_enum("OrderStatus", vec!["Pending"]));
-
-        let registry = TypeRegistry::from_module(&module)?;
-
-        assert!(registry.is_unit_enum(&parse_quote!(OrderStatus)));
-        assert!(!registry.is_unit_enum(&parse_quote!(Address)));
-        assert!(!registry.is_unit_enum(&parse_quote!(Transfer)));
-        Ok(())
-    }
-
-    #[test]
-    fn test_struct_with_unit_enum_field() -> syn::Result<()> {
-        let mut module = empty_module();
-
-        module
-            .unit_enums
-            .push(make_unit_enum("Status", vec!["Active", "Inactive"]));
-
-        module.structs.push(make_struct(
-            "Order",
-            vec![
-                make_field("id", parse_quote!(U256)),
-                make_field("status", parse_quote!(Status)),
-            ],
-        ));
-
-        let registry = TypeRegistry::from_module(&module)?;
-
-        assert_eq!(registry.resolve_abi(&parse_quote!(Order))?, "(uint256,uint8)");
+        assert_eq!(registry.compute_signature("transfer", &[parse_quote!(Transfer)])?, "transfer((address,address,uint256))");
+        assert_eq!(registry.compute_signature("multiTransfer", &[parse_quote!(Transfer), parse_quote!(Address)])?, "multiTransfer((address,address,uint256),address)");
 
         Ok(())
     }
