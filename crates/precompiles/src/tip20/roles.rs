@@ -49,9 +49,9 @@ pub use roles_auth::{
 #[allow(non_snake_case)]
 pub mod IRolesAuth {
     pub use super::roles_auth::{
-        Interface, InterfaceCalls as Calls, getRoleAdminCall, getRoleAdminReturn, grantRoleCall,
-        grantRoleReturn, hasRoleCall, hasRoleReturn, renounceRoleCall, renounceRoleReturn,
-        revokeRoleCall, revokeRoleReturn, setRoleAdminCall, setRoleAdminReturn,
+        Calls, Interface, getRoleAdminCall, getRoleAdminReturn, grantRoleCall, grantRoleReturn,
+        hasRoleCall, hasRoleReturn, renounceRoleCall, renounceRoleReturn, revokeRoleCall,
+        revokeRoleReturn, setRoleAdminCall, setRoleAdminReturn,
     };
 }
 

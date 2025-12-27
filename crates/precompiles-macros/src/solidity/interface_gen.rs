@@ -1,6 +1,6 @@
 //! Interface trait code generation for the `#[solidity]` module macro.
 //!
-//! Generates `SolCall` structs for each method and a container `InterfaceCalls`
+//! Generates `SolCall` structs for each method and a container `Calls`
 //! enum with `SolInterface` implementation.
 //!
 //! Also transforms the trait to inject `msg_sender: Address` for mutable methods.
@@ -11,7 +11,6 @@ use alloy_sol_macro_expander::{
 };
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
-
 
 use crate::utils::SolType;
 
@@ -52,11 +51,8 @@ fn generate_transformed_trait(def: &InterfaceDef) -> TokenStream {
         .iter()
         .map(|m| {
             let name = &m.name;
-            let params: Vec<TokenStream> = m
-                .params
-                .iter()
-                .map(|(n, ty)| quote! { #n: #ty })
-                .collect();
+            let params: Vec<TokenStream> =
+                m.params.iter().map(|(n, ty)| quote! { #n: #ty }).collect();
 
             let return_type = if let Some(ref ty) = m.return_type {
                 quote! { -> Result<#ty> }
@@ -90,11 +86,8 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
     let return_name = format_ident!("{}Return", method.sol_name);
 
     let param_names: Vec<Ident> = method.params.iter().map(|(n, _)| n.clone()).collect();
-    let param_types: Vec<TokenStream> = method
-        .params
-        .iter()
-        .map(|(_, ty)| quote! { #ty })
-        .collect();
+    let param_types: Vec<TokenStream> =
+        method.params.iter().map(|(_, ty)| quote! { #ty }).collect();
 
     let param_sol_types: syn::Result<Vec<TokenStream>> = method
         .params
@@ -105,7 +98,11 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
 
     let signature = registry.compute_signature(
         &method.sol_name,
-        &method.params.iter().map(|(_, ty)| ty.clone()).collect::<Vec<_>>(),
+        &method
+            .params
+            .iter()
+            .map(|(_, ty)| ty.clone())
+            .collect::<Vec<_>>(),
     )?;
 
     let sel = selector(&signature);
@@ -200,10 +197,7 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
 }
 
 /// Generate the container enum for all calls.
-fn generate_calls_enum(
-    methods: &[MethodDef],
-    registry: &TypeRegistry,
-) -> syn::Result<TokenStream> {
+fn generate_calls_enum(methods: &[MethodDef], registry: &TypeRegistry) -> syn::Result<TokenStream> {
     let variants: Vec<Ident> = methods
         .iter()
         .map(|m| format_ident!("{}", m.sol_name))
@@ -218,14 +212,17 @@ fn generate_calls_enum(
         .map(|m| {
             registry.compute_signature(
                 &m.sol_name,
-                &m.params.iter().map(|(_, ty)| ty.clone()).collect::<Vec<_>>(),
+                &m.params
+                    .iter()
+                    .map(|(_, ty)| ty.clone())
+                    .collect::<Vec<_>>(),
             )
         })
         .collect();
     let signatures = signatures?;
 
     let data = SolInterfaceData {
-        name: format_ident!("InterfaceCalls"),
+        name: format_ident!("Calls"),
         variants,
         types,
         selectors: signatures.iter().map(|s| selector(s)).collect(),
@@ -247,7 +244,7 @@ mod tests {
     use crate::solidity::parser::{InterfaceDef, MethodDef, SolidityModule};
     use proc_macro2::Span;
     use quote::format_ident;
-    use syn::{parse_quote, Visibility};
+    use syn::{Visibility, parse_quote};
 
     fn make_method(
         name: &str,
@@ -323,7 +320,7 @@ mod tests {
         assert!(code.contains("trait Interface"));
         assert!(code.contains("struct balanceOfCall"));
         assert!(code.contains("struct transferCall"));
-        assert!(code.contains("enum InterfaceCalls"));
+        assert!(code.contains("enum Calls"));
         assert!(code.contains("msg_sender : Address"));
 
         Ok(())

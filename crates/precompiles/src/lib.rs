@@ -570,7 +570,7 @@ mod macro_tests {
         // Container enum should have the same selector as the call struct
         let call_selector = <test_types::processInnerCall as SolCall>::SELECTOR;
         assert_eq!(
-            test_types::InterfaceCalls::SELECTORS[0],
+            test_types::Calls::SELECTORS[0],
             call_selector,
             "Container enum selector should match call struct selector"
         );

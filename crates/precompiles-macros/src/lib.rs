@@ -140,7 +140,7 @@ pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// For Interface trait:
 /// - `{camelCaseName}Call` structs with `SolCall` implementations
-/// - `InterfaceCalls` enum with `SolInterface` implementation
+/// - `Calls` enum with `SolInterface` implementation
 /// - Trait with `msg_sender: Address` auto-injected for `&mut self` methods
 ///
 /// # Example
