@@ -7,7 +7,6 @@ pub mod tip20;
 pub mod tip20_factory;
 pub mod tip20_rewards_registry;
 pub mod tip403_registry;
-pub mod tip_account_registrar;
 pub mod tip_fee_manager;
 pub mod validator_config;
 
@@ -17,7 +16,6 @@ pub use common_errors::*;
 pub use nonce::*;
 pub use path_usd::*;
 pub use stablecoin_exchange::*;
-pub use tip_account_registrar::*;
 pub use tip_fee_manager::*;
 pub use tip20::*;
 pub use tip20_factory::*;
@@ -36,7 +34,6 @@ pub const TIP403_REGISTRY_ADDRESS: Address = address!("0x403C0000000000000000000
 pub const TIP20_FACTORY_ADDRESS: Address = address!("0x20FC000000000000000000000000000000000000");
 pub const TIP20_REWARDS_REGISTRY_ADDRESS: Address =
     address!("0x3000000000000000000000000000000000000000");
-pub const TIP_ACCOUNT_REGISTRAR: Address = address!("0x7702ac0000000000000000000000000000000000");
 pub const STABLECOIN_EXCHANGE_ADDRESS: Address =
     address!("0xdec0000000000000000000000000000000000000");
 pub const NONCE_PRECOMPILE_ADDRESS: Address =
