@@ -439,8 +439,6 @@ impl FieldAccessors for EnumVariantDef {
 /// - Generics are not supported
 #[derive(Debug, Clone)]
 pub(super) struct InterfaceDef {
-    /// Always `Interface`
-    pub name: Ident,
     /// Methods
     pub methods: Vec<MethodDef>,
     /// Original attributes to preserve
@@ -483,7 +481,6 @@ impl InterfaceDef {
         let (_, other_attrs) = extract_derive_attrs(&item.attrs);
 
         Ok(Self {
-            name: item.ident.clone(),
             methods,
             attrs: other_attrs,
             vis: item.vis.clone(),

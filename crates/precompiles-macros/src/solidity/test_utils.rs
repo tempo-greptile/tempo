@@ -89,7 +89,6 @@ pub(super) fn make_variant(name: &str, fields: Vec<FieldDef>) -> EnumVariantDef 
 
 pub(super) fn make_interface(methods: Vec<MethodDef>) -> InterfaceDef {
     InterfaceDef {
-        name: format_ident!("Interface"),
         methods,
         attrs: vec![],
         vis: Visibility::Public(syn::token::Pub {

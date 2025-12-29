@@ -41,7 +41,7 @@ pub(super) fn generate_interface(
 
 /// Generate the transformed trait with msg_sender injection.
 fn generate_transformed_trait(def: &InterfaceDef) -> TokenStream {
-    let trait_name = &def.name;
+    let trait_name = format_ident!("Interface");
     let vis = &def.vis;
     let attrs = &def.attrs;
 

@@ -171,14 +171,14 @@ fn mail_type_hash() {
 
     let mail = Mail {
         from: mail::Person {
-            name: "".into(),
+            name: String::new(),
             wallet: Address::ZERO,
         },
         to: mail::Person {
-            name: "".into(),
+            name: String::new(),
             wallet: Address::ZERO,
         },
-        contents: "".into(),
+        contents: String::new(),
     };
 
     assert_eq!(mail.eip712_type_hash(), expected_type_hash);
