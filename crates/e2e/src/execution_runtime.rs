@@ -122,13 +122,6 @@ impl Builder {
             .insert_value("epochLength".to_string(), epoch_length)
             .wrap_err("failed to insert epoch length into genesis")?;
 
-        // TODO: remove, but might still be relevant for some tests (like subblocks).
-        genesis
-            .config
-            .extra_fields
-            .insert_value("allegrettoTime".to_string(), 0)
-            .wrap_err("failed to insert allegretto timestamp into genesis")?;
-
         genesis.extra_data = initial_dkg_outcome.encode().freeze().to_vec().into();
 
         let mut evm = setup_tempo_evm();
@@ -618,10 +611,7 @@ impl std::fmt::Debug for ExecutionNode {
 }
 
 pub fn genesis() -> Genesis {
-    serde_json::from_str(include_str!(
-        "../../node/tests/assets/test-genesis-moderato.json"
-    ))
-    .unwrap()
+    serde_json::from_str(include_str!("../../node/tests/assets/test-genesis.json")).unwrap()
 }
 
 /// Launches a tempo execution node.
