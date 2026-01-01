@@ -16,14 +16,19 @@ pub const PRICE_SCALE: u32 = 100_000;
 
 /// Rounding direction for price conversions.
 ///
-/// Rounding should always favor the protocol to prevent insolvency:
-/// - When users deposit funds (escrow) → round UP (user pays more)
-/// - When users receive funds (settlement/refunds) → round DOWN (user receives less)
+/// Rounding ensures zero-sum between maker and taker at each fill:
+/// - Bid orders (maker pays quote): round DOWN for escrow, fill, and refund
+/// - Ask orders (maker receives quote): round UP (maker receives more, taker pays more)
+///
+/// For bids, using floor everywhere ensures:
+/// 1. Per-fill zero-sum: taker receives exactly what maker conceptually "pays"
+/// 2. Safety: sum of releases can never exceed escrow
+/// 3. Any dust from multiple partial fills stays in the exchange
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RoundingDirection {
-    /// Round down (floor division) - favors protocol when user receives funds
+    /// Round down (floor division) - used for bids and when taker receives quote
     Down,
-    /// Round up (ceiling division) - favors protocol when user deposits funds
+    /// Round up (ceiling division) - used for asks where maker receives quote
     Up,
 }
 
@@ -1101,29 +1106,29 @@ mod tests {
         }
 
         #[test]
-        fn test_rounding_favors_protocol_for_bid_escrow() {
+        fn test_ceiling_always_gte_floor() {
             let base_amount = 10_000_001u128;
             let tick = 100i16;
 
-            let escrow_floor = base_to_quote(base_amount, tick, RoundingDirection::Down).unwrap();
-            let escrow_ceil = base_to_quote(base_amount, tick, RoundingDirection::Up).unwrap();
+            let floor = base_to_quote(base_amount, tick, RoundingDirection::Down).unwrap();
+            let ceil = base_to_quote(base_amount, tick, RoundingDirection::Up).unwrap();
 
             assert!(
-                escrow_ceil >= escrow_floor,
+                ceil >= floor,
                 "Ceiling should never be less than floor"
             );
         }
 
         #[test]
-        fn test_rounding_favors_protocol_for_settlement() {
+        fn test_floor_always_lte_ceiling() {
             let base_amount = 10_000_001u128;
             let tick = 100i16;
 
-            let payout_floor = base_to_quote(base_amount, tick, RoundingDirection::Down).unwrap();
-            let payout_ceil = base_to_quote(base_amount, tick, RoundingDirection::Up).unwrap();
+            let floor = base_to_quote(base_amount, tick, RoundingDirection::Down).unwrap();
+            let ceil = base_to_quote(base_amount, tick, RoundingDirection::Up).unwrap();
 
             assert!(
-                payout_floor <= payout_ceil,
+                floor <= ceil,
                 "Floor should never be more than ceiling"
             );
         }
