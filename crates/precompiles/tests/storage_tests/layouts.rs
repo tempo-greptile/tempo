@@ -408,7 +408,7 @@ fn test_user_mapping_with_struct_value() -> eyre::Result<()> {
     })
 }
 
-// -- SPACE-BASED STORAGE TESTS (DirectAddressMap with multi-slot structs) -------------------------
+// -- SPACE-BASED STORAGE TESTS (`DirectAddressMap` with multi-slot structs) -----------------------
 
 #[test]
 fn test_user_mapping_with_test_block_space_offsets() -> eyre::Result<()> {
@@ -559,6 +559,59 @@ fn test_multiple_address_mappings_in_different_spaces() -> eyre::Result<()> {
         assert!(layout.info.at(user).active.read()?);
         assert_eq!(layout.info.at(user).balance.read()?, balance + U256::ONE);
         assert_eq!(layout.nonces.at(user).read()?, 1234);
+
+        Ok(())
+    })
+}
+
+#[test]
+fn test_space_handler_full_struct_roundtrip() -> eyre::Result<()> {
+    #[contract]
+    pub struct Layout {
+        pub profiles: AddressMapping<UserProfile>,
+        pub blocks: AddressMapping<TestBlock>,
+    }
+
+    let (mut storage, address) = setup_storage();
+    let layout = Layout::__new(address);
+
+    StorageCtx::enter(&mut storage, || {
+        let user = Address::random();
+
+        // -- UserProfile (packed struct) --
+        let profile = UserProfile {
+            owner: Address::random(),
+            active: true,
+            balance: U256::random(),
+        };
+        layout.profiles.at(user).write(profile.clone())?;
+        assert_eq!(layout.profiles.at(user).read()?, profile);
+        // Individual field reads still work
+        assert_eq!(layout.profiles.at(user).owner.read()?, profile.owner);
+        assert!(layout.profiles.at(user).active.read()?);
+        // Delete and verify zeroed
+        layout.profiles.at(user).delete()?;
+        assert_eq!(layout.profiles.at(user).read()?, UserProfile::default());
+
+        // -- TestBlock (multi-slot struct) --
+        let block = TestBlock {
+            field1: U256::random(),
+            field2: U256::random(),
+            field3: 333u64,
+        };
+        layout.blocks.at(user).write(block.clone())?;
+        assert_eq!(layout.blocks.at(user).read()?, block);
+        // Update via full-struct write
+        let updated = TestBlock {
+            field1: U256::random(),
+            field2: U256::random(),
+            field3: 666u64,
+        };
+        layout.blocks.at(user).write(updated.clone())?;
+        assert_eq!(layout.blocks.at(user).read()?, updated);
+        // Delete multi-slot struct
+        layout.blocks.at(user).delete()?;
+        assert_eq!(layout.blocks.at(user).read()?, TestBlock::default());
 
         Ok(())
     })

@@ -1373,7 +1373,7 @@ where
     let token_id = tip20::address_to_token_id_unchecked(token);
 
     journal.load_account(token)?;
-    let balance_slot = TIP20Token::new(token_id).users.at(sender).balance.slot();
+    let balance_slot = TIP20Token::new(token_id).balances.at(sender).slot();
     let balance = journal.sload(token, balance_slot)?.data;
 
     Ok(balance)
@@ -1495,7 +1495,7 @@ mod tests {
 
         // Set up initial balance
         let token_id = tip20::address_to_token_id_unchecked(token);
-        let balance_slot = TIP20Token::new(token_id).users.at(account).balance.slot();
+        let balance_slot = TIP20Token::new(token_id).balances.at(account).slot();
         journal.load_account(token)?;
         journal
             .sstore(token, balance_slot, expected_balance)

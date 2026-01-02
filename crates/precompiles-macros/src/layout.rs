@@ -297,7 +297,7 @@ fn gen_collision_checks(allocated_fields: &[LayoutField<'_>]) -> proc_macro2::To
     let mut generated = proc_macro2::TokenStream::new();
     let mut check_fn_calls = Vec::new();
 
-    // Generate collision detection check functions
+    // Generate slot collision detection check functions
     for (idx, allocated) in allocated_fields.iter().enumerate() {
         if let Some((check_fn_name, check_fn)) =
             packing::gen_collision_check_fn(idx, allocated, allocated_fields)
@@ -307,6 +307,9 @@ fn gen_collision_checks(allocated_fields: &[LayoutField<'_>]) -> proc_macro2::To
         }
     }
 
+    // Generate SPACE collision checks for AddressMapping fields
+    let space_checks = gen_space_collision_checks(allocated_fields);
+
     // Generate a module initializer that calls all check functions
     // Always generate the function, even if empty, so the constructor can call it
     generated.extend(quote! {
@@ -314,10 +317,73 @@ fn gen_collision_checks(allocated_fields: &[LayoutField<'_>]) -> proc_macro2::To
         #[inline(always)]
         pub(super) fn __check_all_collisions() {
             #(#check_fn_calls();)*
+            #space_checks
         }
     });
 
     generated
+}
+
+/// Generate SPACE collision detection for `AddressMapping` fields.
+///
+/// Validates that:
+/// - SPACE values don't overflow u8
+/// - Each field's SPACE range is non-overlapping
+fn gen_space_collision_checks(fields: &[LayoutField<'_>]) -> proc_macro2::TokenStream {
+    let mut checks = proc_macro2::TokenStream::new();
+
+    // Collect `AddressMapping` fields with their SPACE constants
+    let space_fields: Vec<_> = fields
+        .iter()
+        .filter_map(|f| {
+            extract_address_mapping_value_ty(f.ty).map(|value_ty| {
+                let space_const = format_ident!("{}_SPACE", f.name.to_string().to_uppercase());
+                (f.name, space_const, value_ty)
+            })
+        })
+        .collect();
+
+    if space_fields.is_empty() {
+        return checks;
+    }
+
+    // Check that no SPACE range overlaps with another
+    for (i, (name, space_const, value_ty)) in space_fields.iter().enumerate() {
+        for (other_name, other_space_const, other_value_ty) in space_fields.iter().skip(i + 1) {
+            checks.extend(quote! {
+                {
+                    let space_start = #space_const as u16;
+                    let space_end = space_start + <#value_ty as crate::storage::StorableType>::SLOTS as u16;
+                    let other_start = #other_space_const as u16;
+                    let other_end = other_start + <#other_value_ty as crate::storage::StorableType>::SLOTS as u16;
+
+                    let no_overlap = space_end <= other_start || other_end <= space_start;
+                    debug_assert!(
+                        no_overlap,
+                        "SPACE collision: `{}` (SPACE {}-{}) overlaps with `{}` (SPACE {}-{})",
+                        stringify!(#name), space_start, space_end - 1,
+                        stringify!(#other_name), other_start, other_end - 1
+                    );
+                }
+            });
+        }
+    }
+
+    // Check that the last SPACE doesn't overflow u8
+    if let Some((name, space_const, value_ty)) = space_fields.last() {
+        checks.extend(quote! {
+            {
+                let final_space = #space_const as u16 + <#value_ty as crate::storage::StorableType>::SLOTS as u16 - 1;
+                debug_assert!(
+                    final_space <= u8::MAX as u16,
+                    "SPACE overflow: `{}` exceeds u8::MAX (final SPACE = {})",
+                    stringify!(#name), final_space
+                );
+            }
+        });
+    }
+
+    checks
 }
 
 /// Generate a `Default` implementation that calls `Self::new()`.
