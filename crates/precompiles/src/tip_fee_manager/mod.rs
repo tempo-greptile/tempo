@@ -10,7 +10,7 @@ pub use tempo_contracts::precompiles::{
 use crate::{
     DEFAULT_FEE_TOKEN_POST_ALLEGRETTO, DEFAULT_FEE_TOKEN_PRE_ALLEGRETTO, PATH_USD_ADDRESS,
     error::{Result, TempoPrecompileError},
-    storage::{Handler, Mapping, StorableType, StorageKey},
+    storage::{AddressMapping, Handler, Mapping, StorableType, StorageKey},
     tip_fee_manager::amm::{Pool, compute_amount_out},
     tip20::{
         ITIP20, TIP20Token, address_to_token_id_unchecked, is_tip20_prefix, token_id_to_address,
@@ -40,11 +40,11 @@ impl StorageKey for TokenPair {
 
 #[contract(addr = TIP_FEE_MANAGER_ADDRESS)]
 pub struct TipFeeManager {
-    validator_tokens: Mapping<Address, Address>,
-    user_tokens: Mapping<Address, Address>,
-    collected_fees: Mapping<Address, U256>,
+    validator_tokens: AddressMapping<Address>,
+    user_tokens: AddressMapping<Address>,
+    collected_fees: AddressMapping<U256>,
     tokens_with_fees: Vec<Address>,
-    token_in_fees_array: Mapping<Address, bool>,
+    token_in_fees_array: AddressMapping<bool>,
     pools: Mapping<B256, Pool>,
     pending_fee_swap_in: Mapping<B256, u128>,
     total_supply: Mapping<B256, U256>,
@@ -52,7 +52,7 @@ pub struct TipFeeManager {
     pools_with_fees: Vec<TokenPair>,
     pool_in_fees_array: Mapping<TokenPair, bool>,
     validators_with_fees: Vec<Address>,
-    validator_in_fees_array: Mapping<Address, bool>,
+    validator_in_fees_array: AddressMapping<bool>,
 }
 
 impl TipFeeManager {
