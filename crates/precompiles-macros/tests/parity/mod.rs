@@ -1,8 +1,16 @@
 //! Test utilities and assertion helpers for parity tests.
+//!
+//! # Known Gaps
+//!
+//! These features are supported by `sol!` but NOT by `#[solidity]`:
+//!
+//! - **Anonymous events**: `sol!` supports `event Foo() anonymous;`
+//! - **Overloaded functions**: Rust traits don't support method overloading
 
 use alloy::primitives::keccak256;
 use alloy::sol_types::{SolCall, SolError, SolEvent, SolValue};
 
+mod enums;
 mod errors;
 mod events;
 mod functions;
@@ -25,7 +33,8 @@ pub(crate) fn assert_call_parity<T: SolCall, U: SolCall>() {
     );
     let expected: [u8; 4] = keccak256(T::SIGNATURE)[..4].try_into().unwrap();
     assert_eq!(
-        T::SELECTOR, expected,
+        T::SELECTOR,
+        expected,
         "SolCall selector != keccak256(signature)"
     );
 }
@@ -47,7 +56,8 @@ pub(crate) fn assert_error_parity<T: SolError, U: SolError>() {
     );
     let expected: [u8; 4] = keccak256(T::SIGNATURE)[..4].try_into().unwrap();
     assert_eq!(
-        T::SELECTOR, expected,
+        T::SELECTOR,
+        expected,
         "SolError selector != keccak256(signature)"
     );
 }

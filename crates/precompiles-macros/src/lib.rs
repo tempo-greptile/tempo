@@ -121,7 +121,6 @@ pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// For each struct:
 /// - `SolStruct`, `SolType`, `SolValue`, `EventTopic` implementations
-/// - `SolTupleSignature` with `ABI_TUPLE` constant
 ///
 /// For unit enums (non-Error/Event):
 /// - `#[repr(u8)]` with explicit discriminants

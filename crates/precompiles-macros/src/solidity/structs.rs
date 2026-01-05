@@ -3,7 +3,7 @@
 //! Generates `SolStruct`, `SolType`, `SolValue`, and `EventTopic`
 //! implementations for structs defined within a `#[solidity]` module.
 
-use alloy_sol_macro_expander::{Eip712Options, SolStructData};
+use alloy_sol_macro_expander::{Eip712Options, StructCodegen};
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 
@@ -24,19 +24,19 @@ pub(super) fn generate_struct(
     let rust_types = def.field_types();
     let sol_types = common::types_to_sol_types(&def.field_raw_types())?;
 
-    let eip712_signature = build_eip712_signature(struct_name, def)?;
+    let eip712_root = build_eip712_root(struct_name, def)?;
 
     let has_deps = !registry
         .get_transitive_dependencies(&struct_name.to_string())
         .is_empty();
 
     // encode_type_impl: `None` lets alloy infer from `components_impl`
-    let sol_struct_impl = SolStructData {
+    let sol_struct_impl = StructCodegen::new(
         field_names,
         rust_types,
         sol_types,
-        eip712: Eip712Options {
-            signature: eip712_signature,
+        Eip712Options {
+            root: eip712_root,
             components_impl: if has_deps {
                 Some(registry.generate_eip712_components(struct_name))
             } else {
@@ -44,8 +44,8 @@ pub(super) fn generate_struct(
             },
             encode_type_impl: None,
         },
-    }
-    .expand(struct_name);
+    )
+    .expand(struct_name, &quote!(alloy_sol_types));
 
     let derives = &def.derives;
     let attrs = &def.attrs;
@@ -72,12 +72,17 @@ pub(super) fn generate_struct(
 
     Ok(quote! {
         #struct_def
-        #sol_struct_impl
+
+        #[allow(non_camel_case_types, non_snake_case, clippy::pub_underscore_fields, clippy::style)]
+        const _: () = {
+            use alloy_sol_types as alloy_sol_types;
+            #sol_struct_impl
+        };
     })
 }
 
-/// Build EIP-712 type signature.
-fn build_eip712_signature(name: &Ident, def: &SolStructDef) -> syn::Result<String> {
+/// Build EIP-712 root type signature.
+fn build_eip712_root(name: &Ident, def: &SolStructDef) -> syn::Result<String> {
     let mut sig = name.to_string();
     sig.push('(');
 

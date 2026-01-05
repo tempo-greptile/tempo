@@ -1,6 +1,6 @@
 //! Struct encoding parity tests between `#[solidity]` and `sol!`.
 
-use alloy::primitives::{Address, Bytes, I256, B256, U256};
+use alloy::primitives::{Address, B256, Bytes, I256, U256};
 use alloy::sol_types::SolValue;
 use alloy_sol_macro::sol;
 use tempo_precompiles_macros::solidity;
@@ -42,6 +42,12 @@ sol! {
         uint256 big;
         int256 signed;
         bytes32 hash;
+    }
+
+    struct SignedInts {
+        int8 small;
+        int128 medium;
+        int256 big;
     }
 }
 
@@ -89,6 +95,13 @@ mod rust {
         pub big: U256,
         pub signed: I256,
         pub hash: B256,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct SignedInts {
+        pub small: i8,
+        pub medium: i128,
+        pub big: I256,
     }
 }
 
@@ -216,5 +229,24 @@ fn all_primitives_encoding() {
     assert_encoding_parity(&sol_val, &our_val);
 
     let decoded = rust::AllPrimitives::abi_decode(&sol_val.abi_encode()).unwrap();
+    assert_eq!(our_val, decoded);
+}
+
+#[test]
+fn signed_int_encoding() {
+    let sol_val = SignedInts {
+        small: -1,
+        medium: -1000,
+        big: I256::try_from(-1i64).unwrap(),
+    };
+    let our_val = rust::SignedInts {
+        small: -1,
+        medium: -1000,
+        big: I256::try_from(-1i64).unwrap(),
+    };
+
+    assert_encoding_parity(&sol_val, &our_val);
+
+    let decoded = rust::SignedInts::abi_decode(&sol_val.abi_encode()).unwrap();
     assert_eq!(our_val, decoded);
 }

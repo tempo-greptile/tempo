@@ -24,9 +24,17 @@ pub(super) trait FieldAccessors {
     /// Returns an iterator over (name, type) pairs.
     fn fields(&self) -> impl Iterator<Item = (&Ident, &Type)>;
 
+    /// Returns the identifier of the type.
+    fn name(&self) -> &Ident;
+
     /// Extract field/param names as a Vec of Idents.
     fn field_names(&self) -> Vec<Ident> {
         self.fields().map(|(n, _)| n.clone()).collect()
+    }
+
+    /// Extract raw syn Types.
+    fn field_raw_types(&self) -> Vec<Type> {
+        self.fields().map(|(_, ty)| ty.clone()).collect()
     }
 
     /// Extract field/param types as quoted TokenStreams.
@@ -34,9 +42,21 @@ pub(super) trait FieldAccessors {
         self.fields().map(|(_, ty)| quote! { #ty }).collect()
     }
 
-    /// Extract raw syn Types.
-    fn field_raw_types(&self) -> Vec<Type> {
-        self.fields().map(|(_, ty)| ty.clone()).collect()
+    /// Generate comma-separated Solidity params: "type1 name1, type2 name2"
+    fn as_solidity_params(&self) -> syn::Result<String> {
+        self.fields()
+            .map(|(name, ty)| {
+                let sol_name = super::common::SynSolType::parse(ty)?.sol_name();
+                Ok(format!("{} {}", sol_name, name))
+            })
+            .collect::<syn::Result<Vec<_>>>()
+            .map(|v| v.join(", "))
+    }
+
+    /// Generate Solidity declaration.
+    fn solidity_decl(&self, kind: &str) -> Option<String> {
+        let params = self.as_solidity_params().ok()?;
+        Some(format!("{} {}({});", kind, self.name(), params))
     }
 }
 
@@ -220,6 +240,10 @@ impl SolStructDef {
 impl FieldAccessors for SolStructDef {
     fn fields(&self) -> impl Iterator<Item = (&Ident, &Type)> {
         self.fields.iter().map(|f| (&f.name, &f.ty))
+    }
+
+    fn name(&self) -> &Ident {
+        &self.name
     }
 }
 
@@ -426,6 +450,23 @@ impl FieldAccessors for EnumVariantDef {
     fn fields(&self) -> impl Iterator<Item = (&Ident, &Type)> {
         self.fields.iter().map(|f| (&f.name, &f.ty))
     }
+
+    fn name(&self) -> &Ident {
+        &self.name
+    }
+
+    /// Generate Solidity params with indexed support for events.
+    fn as_solidity_params(&self) -> syn::Result<String> {
+        self.fields
+            .iter()
+            .map(|f| {
+                let sol_name = super::common::SynSolType::parse(&f.ty)?.sol_name();
+                let indexed = if f.indexed { " indexed" } else { "" };
+                Ok(format!("{}{} {}", sol_name, indexed, f.name))
+            })
+            .collect::<syn::Result<Vec<_>>>()
+            .map(|v| v.join(", "))
+    }
 }
 
 /// Interface trait definition.
@@ -559,6 +600,10 @@ impl MethodDef {
 impl FieldAccessors for MethodDef {
     fn fields(&self) -> impl Iterator<Item = (&Ident, &Type)> {
         self.params.iter().map(|(n, ty)| (n, ty))
+    }
+
+    fn name(&self) -> &Ident {
+        &self.name
     }
 }
 

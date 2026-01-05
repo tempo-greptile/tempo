@@ -6,7 +6,7 @@
 //! Also transforms the trait to inject `msg_sender: Address` for mutable methods.
 
 use alloy_sol_macro_expander::{
-    ReturnInfo, SolCallData, SolInterfaceKind, expand_from_into_tuples_simple,
+    CallCodegen, ReturnInfo, SolInterfaceKind, StructLayout, gen_from_into_tuple,
 };
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -85,17 +85,23 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
     let return_name = format_ident!("{}Return", method.sol_name);
 
     let param_names = method.field_names();
-    let param_types = method.field_types();
-    let param_tys = method.field_raw_types();
+    let param_rust_types = method.field_types();
+    let param_raw_types = method.field_raw_types();
+    let param_sol_types = common::types_to_sol_types(&param_raw_types)?;
 
     let common::EncodedParams {
-        param_tuple,
+        param_tuple: call_tuple,
         tokenize_impl,
-    } = common::encode_params(&param_names, &param_tys)?;
+    } = common::encode_params(&param_names, &param_raw_types)?;
 
-    let signature = registry.compute_signature(&method.sol_name, &param_tys)?;
+    let signature = registry.compute_signature(&method.sol_name, &param_raw_types)?;
 
-    let doc = common::signature_doc("Function", &signature);
+    let doc = common::signature_doc(
+        "Function",
+        &signature,
+        false,
+        method.solidity_decl("function"),
+    );
 
     let call_fields: Vec<_> = method.fields().collect();
     let call_struct = common::generate_simple_struct(&call_name, &call_fields, &doc);
@@ -105,7 +111,8 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
             let ret_sol = SynSolType::parse(ret_ty)?.to_sol_data();
             let field_name = format_ident!("_0");
             let return_field_names = vec![field_name.clone()];
-            let return_field_types = vec![quote! { #ret_ty }];
+            let return_sol_types = vec![ret_sol.clone()];
+            let return_rust_types = vec![quote! { #ret_ty }];
             (
                 quote! {
                     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,10 +120,13 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
                         pub _0: #ret_ty,
                     }
                 },
-                expand_from_into_tuples_simple(
+                gen_from_into_tuple(
                     &return_name,
                     &return_field_names,
-                    &return_field_types,
+                    &return_sol_types,
+                    &return_rust_types,
+                    StructLayout::Named,
+                    &quote!(alloy_sol_types),
                 ),
                 quote! { (#ret_sol,) },
                 ReturnInfo::Single {
@@ -127,12 +137,27 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
                 },
             )
         } else {
+            // For empty returns, generate _tokenize method required by CallCodegen
             (
                 quote! {
                     #[derive(Clone, Debug, PartialEq, Eq)]
                     pub struct #return_name;
+
+                    impl #return_name {
+                        #[doc(hidden)]
+                        pub fn _tokenize(_: &Self) -> () {
+                            ()
+                        }
+                    }
                 },
-                expand_from_into_tuples_simple(&return_name, &[], &[]),
+                gen_from_into_tuple(
+                    &return_name,
+                    &[],
+                    &[],
+                    &[],
+                    StructLayout::Unit,
+                    &quote!(alloy_sol_types),
+                ),
                 quote! { () },
                 ReturnInfo::Empty {
                     return_name: return_name.clone(),
@@ -140,22 +165,40 @@ fn generate_method_code(method: &MethodDef, registry: &TypeRegistry) -> syn::Res
             )
         };
 
-    let from_tuple = expand_from_into_tuples_simple(&call_name, &param_names, &param_types);
-
-    let sol_call_data = SolCallData {
-        param_tuple,
-        return_tuple: return_sol_tuple,
-        tokenize_impl,
-        return_info,
+    let call_layout = if param_names.is_empty() {
+        StructLayout::Unit
+    } else {
+        StructLayout::Named
     };
-    let sol_call_impl = sol_call_data.expand(&call_name, &signature);
+    let call_from_tuple = gen_from_into_tuple(
+        &call_name,
+        &param_names,
+        &param_sol_types,
+        &param_rust_types,
+        call_layout,
+        &quote!(alloy_sol_types),
+    );
 
+    let sol_call_impl = CallCodegen::new(call_tuple, return_sol_tuple, tokenize_impl, return_info)
+        .expand(&call_name, &signature, &quote!(alloy_sol_types));
+
+    // Wrap trait impls in const blocks to avoid type alias conflicts between calls
     Ok(quote! {
         #call_struct
         #return_struct
-        #from_tuple
-        #return_from_tuple
-        #sol_call_impl
+
+        #[allow(non_camel_case_types, non_snake_case, clippy::pub_underscore_fields, clippy::style)]
+        const _: () = {
+            use alloy_sol_types as alloy_sol_types;
+            #call_from_tuple
+            #sol_call_impl
+        };
+
+        #[allow(non_camel_case_types, non_snake_case, clippy::pub_underscore_fields, clippy::style)]
+        const _: () = {
+            use alloy_sol_types as alloy_sol_types;
+            #return_from_tuple
+        };
     })
 }
 

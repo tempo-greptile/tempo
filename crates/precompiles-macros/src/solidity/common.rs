@@ -1,7 +1,7 @@
 //! Shared utilities for code generation.
 
 use alloy_sol_macro_expander::{
-    SolInterfaceData, SolInterfaceKind, expand_sol_interface, expand_tokenize_simple, selector,
+    InterfaceCodegen, SolInterfaceKind, expand_tokenize_simple, selector,
 };
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
@@ -72,20 +72,30 @@ impl SynSolType {
     /// Generates the `alloy_sol_types::sol_data::*` TokenStream for this type.
     pub(super) fn to_sol_data(&self) -> TokenStream {
         match self {
-            Self::Bool => quote! { alloy_sol_types::sol_data::Bool },
-            Self::Address => quote! { alloy_sol_types::sol_data::Address },
-            Self::Uint(bits) => quote! { alloy_sol_types::sol_data::Uint<#bits> },
-            Self::Int(bits) => quote! { alloy_sol_types::sol_data::Int<#bits> },
-            Self::FixedBytes(n) => quote! { alloy_sol_types::sol_data::FixedBytes<#n> },
-            Self::Bytes => quote! { alloy_sol_types::sol_data::Bytes },
-            Self::String => quote! { alloy_sol_types::sol_data::String },
+            Self::Bool => quote! { ::alloy_sol_types::sol_data::Bool },
+            Self::Address => quote! { ::alloy_sol_types::sol_data::Address },
+            Self::Uint(bits) => {
+                let bits = proc_macro2::Literal::usize_unsuffixed(*bits);
+                quote! { ::alloy_sol_types::sol_data::Uint<#bits> }
+            }
+            Self::Int(bits) => {
+                let bits = proc_macro2::Literal::usize_unsuffixed(*bits);
+                quote! { ::alloy_sol_types::sol_data::Int<#bits> }
+            }
+            Self::FixedBytes(n) => {
+                let n = proc_macro2::Literal::usize_unsuffixed(*n);
+                quote! { ::alloy_sol_types::sol_data::FixedBytes<#n> }
+            }
+            Self::Bytes => quote! { ::alloy_sol_types::sol_data::Bytes },
+            Self::String => quote! { ::alloy_sol_types::sol_data::String },
             Self::Array(inner) => {
                 let inner_ts = inner.to_sol_data();
-                quote! { alloy_sol_types::sol_data::Array<#inner_ts> }
+                quote! { ::alloy_sol_types::sol_data::Array<#inner_ts> }
             }
             Self::FixedArray(inner, len) => {
                 let inner_ts = inner.to_sol_data();
-                quote! { alloy_sol_types::sol_data::FixedArray<#inner_ts, #len> }
+                let len = proc_macro2::Literal::usize_unsuffixed(*len);
+                quote! { ::alloy_sol_types::sol_data::FixedArray<#inner_ts, #len> }
             }
             Self::Tuple(elems) if elems.is_empty() => quote! { () },
             Self::Tuple(elems) => {
@@ -192,7 +202,7 @@ pub(super) struct EncodedParams {
 pub(super) fn encode_params(names: &[Ident], types: &[Type]) -> syn::Result<EncodedParams> {
     let sol_types = types_to_sol_types(types)?;
     let param_tuple = quote! { (#(#sol_types,)*) };
-    let tokenize_impl = expand_tokenize_simple(names, &sol_types);
+    let tokenize_impl = expand_tokenize_simple(names, &sol_types, &quote!(alloy_sol_types));
     Ok(EncodedParams {
         param_tuple,
         tokenize_impl,
@@ -200,20 +210,38 @@ pub(super) fn encode_params(names: &[Ident], types: &[Type]) -> syn::Result<Enco
 }
 
 /// Generate signature doc string with selector.
-pub(super) fn signature_doc(kind: &str, signature: &str) -> String {
-    let sel = selector(signature);
-    format!(
-        "{} with signature `{}` and selector `0x{}`.",
-        kind,
-        signature,
-        hex::encode(sel)
-    )
+///
+/// For events, `use_full_hash` should be true to show the full 32-byte keccak256 hash.
+/// For errors and functions, use the 4-byte selector.
+pub(super) fn signature_doc(
+    kind: &str,
+    signature: &str,
+    use_full_hash: bool,
+    solidity_decl: Option<String>,
+) -> String {
+    let hash = if use_full_hash {
+        hex::encode(alloy::primitives::keccak256(signature))
+    } else {
+        hex::encode(selector(signature))
+    };
+
+    if let Some(sol) = solidity_decl {
+        format!(
+            "{} with signature `{}` and selector `0x{}`.\n```solidity\n{}\n```",
+            kind, signature, hash, sol
+        )
+    } else {
+        format!(
+            "{} with signature `{}` and selector `0x{}`.",
+            kind, signature, hash
+        )
+    }
 }
 
 /// Generate a `SolInterface` container enum (`Calls`, `Error`, or `Event`).
 ///
 /// Takes variant names, type names, signatures, and field counts to build
-/// the `SolInterfaceData` and expand it.
+/// the `InterfaceCodegen` and expand it.
 ///
 /// NOTE: Generated container enums are always `pub` within the module,
 /// regardless of the original item's visibility.
@@ -225,16 +253,16 @@ pub(super) fn generate_sol_interface_container(
     field_counts: &[usize],
     kind: SolInterfaceKind,
 ) -> TokenStream {
-    let data = SolInterfaceData {
-        name: format_ident!("{}", container_name),
-        variants: variants.to_vec(),
-        types: types.to_vec(),
-        selectors: signatures.iter().map(selector).collect(),
-        min_data_len: field_counts.iter().copied().min().unwrap_or(0) * 32,
-        signatures: signatures.to_vec(),
+    InterfaceCodegen::precomputed(
+        format_ident!("{}", container_name),
+        variants.to_vec(),
+        types.to_vec(),
+        signatures.iter().map(selector).collect(),
+        signatures.to_vec(),
+        field_counts.iter().copied().min().unwrap_or(0) * 32,
         kind,
-    };
-    expand_sol_interface(data)
+    )
+    .expand(&quote!(::alloy_sol_types))
 }
 
 /// Generate Error container enum from variants.
@@ -303,6 +331,7 @@ pub(super) fn generate_simple_struct(
     if fields.is_empty() {
         quote! {
             #[doc = #doc]
+            #[allow(non_camel_case_types, non_snake_case, clippy::pub_underscore_fields, clippy::style)]
             #[derive(Clone, Debug, PartialEq, Eq)]
             pub struct #name;
         }
@@ -311,9 +340,13 @@ pub(super) fn generate_simple_struct(
         let types: Vec<_> = fields.iter().map(|(_, t)| *t).collect();
         quote! {
             #[doc = #doc]
+            #[allow(non_camel_case_types, non_snake_case, clippy::pub_underscore_fields, clippy::style)]
             #[derive(Clone, Debug, PartialEq, Eq)]
             pub struct #name {
-                #(pub #names: #types),*
+                #(
+                    #[allow(missing_docs)]
+                    pub #names: #types
+                ),*
             }
         }
     }
