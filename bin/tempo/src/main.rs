@@ -53,8 +53,8 @@ struct TempoArgs {
     )]
     pub follow: Option<String>,
 
-    /// Run in minimal storage mode. Sets all prune distances to 10064 and blocks-per-file to
-    /// 50000. Note: merkle_changesets uses the default value of 128 blocks (set via config file
+    /// Run in minimal storage mode. Sets all prune distances to 10064 and keeps 50000 blocks
+    /// per static file. Note: merkle_changesets uses the default value of 128 blocks (set via config file
     /// if different value needed).
     #[arg(long)]
     pub minimal: bool,
