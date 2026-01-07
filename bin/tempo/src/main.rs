@@ -15,7 +15,14 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(all(feature = "jemalloc-prof", not(target_env = "msvc")))]
+#[allow(non_upper_case_globals)]
+#[unsafe(export_name = "malloc_conf")]
+pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
+
 mod defaults;
+#[cfg(feature = "jemalloc-prof")]
+mod heap_profile;
 mod tempo_cmd;
 
 use clap::Parser;
@@ -66,6 +73,19 @@ struct TempoArgs {
     #[command(flatten)]
     #[cfg(feature = "pyroscope")]
     pub pyroscope_args: PyroscopeArgs,
+
+    #[command(flatten)]
+    #[cfg(feature = "jemalloc-prof")]
+    pub heap_profile_args: HeapProfileArgs,
+}
+
+#[cfg(feature = "jemalloc-prof")]
+#[derive(Debug, Clone, PartialEq, Eq, clap::Args)]
+struct HeapProfileArgs {
+    /// Enable jemalloc heap profiling endpoint at /debug/pprof/heap on the
+    /// consensus metrics port.
+    #[arg(long = "heap-profile.enabled", default_value_t = false)]
+    pub enabled: bool,
 }
 
 /// Command line arguments for configuring Pyroscope continuous profiling.
@@ -168,11 +188,22 @@ fn main() -> eyre::Result<()> {
                 // not forget.
                 let ctx = ctx.with_label("consensus");
 
-                let mut metrics_server = tempo_commonware_node::metrics::install(
-                    ctx.with_label("metrics"),
-                    args.consensus.metrics_address,
-                )
-                .fuse();
+                #[cfg(feature = "jemalloc-prof")]
+                let extra_routes = if args.heap_profile_args.enabled {
+                    heap_profile::router()
+                } else {
+                    axum::Router::new()
+                };
+                #[cfg(not(feature = "jemalloc-prof"))]
+                let extra_routes = axum::Router::new();
+
+                let mut metrics_server =
+                    tempo_commonware_node::metrics::install_with_extra_routes(
+                        ctx.with_label("metrics"),
+                        args.consensus.metrics_address,
+                        extra_routes,
+                    )
+                    .fuse();
                 let consensus_stack = run_consensus_stack(&ctx, args.consensus, node);
                 tokio::pin!(consensus_stack);
                 loop {

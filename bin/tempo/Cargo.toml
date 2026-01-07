@@ -39,6 +39,8 @@ tokio-util.workspace = true
 tracing.workspace = true
 pyroscope = { workspace = true, optional = true }
 pyroscope_pprofrs = { workspace = true, optional = true }
+jemalloc_pprof = { workspace = true, optional = true }
+axum.workspace = true
 
 [[bin]]
 name = "tempo"
@@ -75,7 +77,8 @@ jemalloc-prof = [
 	"reth-cli-util/jemalloc",
 	"reth-cli-util/jemalloc-prof",
 	"reth-ethereum-cli/jemalloc-prof",
-	"tempo-node/jemalloc-prof"
+	"tempo-node/jemalloc-prof",
+	"dep:jemalloc_pprof"
 ]
 
 min-error-logs = [

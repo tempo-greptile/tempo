@@ -16,6 +16,15 @@ use tokio::net::TcpListener;
 /// because it also wants to install a tracing subscriber, which clashes with
 /// reth ethereum cli doing the same thing.
 pub fn install(context: Context, listen_addr: SocketAddr) -> Handle<eyre::Result<()>> {
+    install_with_extra_routes(context, listen_addr, Router::new())
+}
+
+/// Installs a metrics server with additional routes merged in.
+pub fn install_with_extra_routes(
+    context: Context,
+    listen_addr: SocketAddr,
+    extra_routes: Router,
+) -> Handle<eyre::Result<()>> {
     context.spawn(move |context| async move {
         // Create a tokio listener for the metrics server.
         //
@@ -38,6 +47,7 @@ pub fn install(context: Context, listen_addr: SocketAddr) -> Handle<eyre::Result
                         .expect("Failed to create response")
                 }),
             )
+            .merge(extra_routes)
             .layer(Extension(context));
 
         // Serve the metrics over HTTP.
