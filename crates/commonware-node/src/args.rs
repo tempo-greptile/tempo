@@ -1,7 +1,8 @@
 //! Command line arguments for configuring the consensus layer of a tempo node.
-use std::{net::SocketAddr, path::PathBuf, sync::OnceLock};
+use std::{net::SocketAddr, num::NonZeroU32, path::PathBuf, sync::OnceLock};
 
 use commonware_cryptography::ed25519::PublicKey;
+use commonware_utils::NZU32;
 use eyre::Context;
 use tempo_commonware_node_config::SigningKey;
 
@@ -121,6 +122,10 @@ pub struct Args {
     /// Only enable in trusted network environments.
     #[arg(long = "consensus.allow-private-ips", default_value_t = false)]
     pub allow_private_ips: bool,
+
+    /// Quota for connection attempts per peer per minute (incoming or outgoing).
+    #[arg(long = "consensus.p2p-peer-connection-rate", default_value_t = NZU32!(1))]
+    pub p2p_peer_connection_rate: NonZeroU32,
 
     /// The interval at which to broadcast subblocks to the next proposer.
     /// Each built subblock is immediately broadcasted to the next proposer (if it's known).
