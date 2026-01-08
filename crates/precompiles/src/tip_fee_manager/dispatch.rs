@@ -75,6 +75,11 @@ impl Precompile for TipFeeManager {
             ITIPFeeAMM::MIN_LIQUIDITYCall::SELECTOR => {
                 view::<ITIPFeeAMM::MIN_LIQUIDITYCall>(calldata, |_call| Ok(MIN_LIQUIDITY))
             }
+            IFeeManager::collectedFeesCall::SELECTOR => {
+                view::<IFeeManager::collectedFeesCall>(calldata, |call| {
+                    self.collected_fees[call.validator][call.token].read()
+                })
+            }
 
             // State changing functions
             IFeeManager::setValidatorTokenCall::SELECTOR => {
@@ -92,11 +97,6 @@ impl Precompile for TipFeeManager {
             IFeeManager::distributeFeesCall::SELECTOR => {
                 mutate_void::<IFeeManager::distributeFeesCall>(calldata, msg_sender, |_s, call| {
                     self.distribute_fees(call.validator, call.token)
-                })
-            }
-            IFeeManager::collectedFeesCall::SELECTOR => {
-                view::<IFeeManager::collectedFeesCall>(calldata, |call| {
-                    self.collected_fees[call.validator][call.token].read()
                 })
             }
             ITIPFeeAMM::mintCall::SELECTOR => {
