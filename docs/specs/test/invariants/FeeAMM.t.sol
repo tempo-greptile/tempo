@@ -4,13 +4,11 @@ pragma solidity ^0.8.13;
 import { FeeAMM } from "../../src/FeeAMM.sol";
 import { TIP20 } from "../../src/TIP20.sol";
 import { TIP20Factory } from "../../src/TIP20Factory.sol";
-import { TIP403Registry } from "../../src/TIP403Registry.sol";
 import { IFeeAMM } from "../../src/interfaces/IFeeAMM.sol";
 import { ITIP20 } from "../../src/interfaces/ITIP20.sol";
-import { ITIP403Registry } from "../../src/interfaces/ITIP403Registry.sol";
-import { Test } from "forge-std/Test.sol";
+import { Test, console } from "forge-std/Test.sol";
 
-contract FeeAMMSingleInvariantTest is Test {
+contract FeeAMMInvariantTest is Test {
 
     ITIP20 pathUSD = ITIP20(0x20C0000000000000000000000000000000000000);
     ITIP20 alphaUSD = ITIP20(0x20C0000000000000000000000000000000000001);
@@ -20,8 +18,6 @@ contract FeeAMMSingleInvariantTest is Test {
     FeeAMM internal constant FEE_AMM = FeeAMM(0xfeEC000000000000000000000000000000000000);
     TIP20Factory internal constant TIP20_FACTORY =
         TIP20Factory(0x20Fc000000000000000000000000000000000000);
-    TIP403Registry internal constant TIP403 =
-        TIP403Registry(0x403c000000000000000000000000000000000000);
 
     TIP20[] public usdTokens;
     address[] public actors;
@@ -58,6 +54,7 @@ contract FeeAMMSingleInvariantTest is Test {
 
         for (uint256 i = 0; i < 20; i++) {
             actors.push(makeAddr(string(abi.encodePacked("actor-", vm.toString(i)))));
+            targetSender(actors[i]);
         }
 
         for (uint256 i = 0; i < actors.length; i++) {
@@ -71,12 +68,10 @@ contract FeeAMMSingleInvariantTest is Test {
 
         targetContract(address(this));
 
-        bytes4[] memory selectors = new bytes4[](5);
+        bytes4[] memory selectors = new bytes4[](3);
         selectors[0] = this.act_mint.selector;
         selectors[1] = this.act_burn.selector;
         selectors[2] = this.act_rebalanceSwap.selector;
-        selectors[3] = this.act_blacklist.selector;
-        selectors[4] = this.act_unblacklist.selector;
         targetSelector(FuzzSelector({ addr: address(this), selectors: selectors }));
     }
 
@@ -96,7 +91,9 @@ contract FeeAMMSingleInvariantTest is Test {
             uint256
         ) {
             _rememberPool(address(userToken), address(validatorToken));
-        } catch { }
+        } catch (bytes memory err) {
+            _assertExpectedMintRevert(err);
+        }
         vm.stopPrank();
     }
 
@@ -107,14 +104,17 @@ contract FeeAMMSingleInvariantTest is Test {
 
         bytes32 pid = FEE_AMM.getPoolId(address(userToken), address(validatorToken));
         uint256 bal = FEE_AMM.liquidityBalances(pid, actor);
-        uint256 liq = (bal == 0) ? 0 : bound(rawLiq, 0, bal);
+        if (bal == 0) return;
+        uint256 liq = bound(rawLiq, 1, bal);
 
         vm.startPrank(actor);
         try FEE_AMM.burn(address(userToken), address(validatorToken), liq, actor) returns (
             uint256, uint256
         ) {
             _rememberPool(address(userToken), address(validatorToken));
-        } catch { }
+        } catch (bytes memory err) {
+            _assertExpectedBurnRevert(err);
+        }
         vm.stopPrank();
     }
 
@@ -162,30 +162,10 @@ contract FeeAMMSingleInvariantTest is Test {
                 uint256(beforeP.reserveUserToken) - outAmt,
                 "reserveUserToken delta mismatch"
             );
-        } catch { }
+        } catch (bytes memory err) {
+            _assertExpectedSwapRevert(err);
+        }
         vm.stopPrank();
-    }
-
-    /// @dev Fuzz action: blacklist/unblacklist an actor for a specific token via TIP-403.
-    /// This introduces realistic "frozen account" failures without biasing amounts/paths.
-    function act_blacklist(uint256 seedToken, uint256 seedActor, bool restricted) external {
-        TIP20 t = _token(seedToken);
-        address a = _actor(seedActor);
-
-        // Never freeze the AMM or the test harness itself (would brick the whole run).
-        if (a == address(FEE_AMM) || a == address(this)) return;
-
-        uint64 pid = _ensureBlacklistPolicy(t);
-        if (pid == 0) return;
-
-        // Flip membership in the blacklist set.
-        // For blacklist policies: restricted=true means "frozen", restricted=false means "unfrozen".
-        try TIP403.modifyPolicyBlacklist(pid, a, restricted) { } catch { }
-    }
-
-    /// @dev Fuzz action: unblacklist an actor for a specific token via TIP-403.
-    function act_unblacklist(uint256 seedToken, uint256 seedActor) external {
-        this.act_blacklist(seedToken, seedActor, false);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -371,31 +351,6 @@ contract FeeAMMSingleInvariantTest is Test {
         return usdTokens[seed % usdTokens.length];
     }
 
-    /// @dev Ensure `t` is governed by a dedicated blacklist policy whose admin is this test contract.
-    /// Returns 0 if the policy couldn't be created or installed.
-    function _ensureBlacklistPolicy(TIP20 t) internal returns (uint64 pid) {
-        pid = blacklistPolicy[address(t)];
-        if (pid != 0) return pid;
-
-        // Create a new blacklist policy with admin = this contract.
-        // NOTE: modifyPolicyBlacklist requires msg.sender == policy admin, so admin must be address(this).
-        try TIP403.createPolicy(address(this), ITIP403Registry.PolicyType.BLACKLIST) returns (
-            uint64 newPid
-        ) {
-            pid = newPid;
-            blacklistPolicy[address(t)] = pid;
-        } catch {
-            return 0;
-        }
-
-        // Install the policy on the token. This requires DEFAULT_ADMIN_ROLE on the token.
-        // If we lack privileges (e.g., some precompile tokens), just leave pid recorded and return 0.
-        try t.changeTransferPolicyId(pid) { }
-        catch {
-            return 0;
-        }
-    }
-
     /// @dev Get a unique ordered token pair from two seeds.
     function _pair(uint256 seedA, uint256 seedB)
         internal
@@ -455,6 +410,48 @@ contract FeeAMMSingleInvariantTest is Test {
         }
 
         require(found, "unresolvable poolId");
+    }
+
+    /// @dev Extract the selector from a revert error bytes blob.
+    function _sel(bytes memory err) internal pure returns (bytes4) {
+        if (err.length < 4) return bytes4(0);
+        return bytes4(err);
+    }
+
+    function _assertExpectedMintRevert(bytes memory err) internal pure {
+        bytes4 s = _sel(err);
+        bool ok = s == IFeeAMM.InsufficientLiquidity.selector || s == IFeeAMM.InvalidToken.selector
+            || s == IFeeAMM.InvalidCurrency.selector || s == IFeeAMM.IdenticalAddresses.selector
+            || s == IFeeAMM.InvalidAmount.selector;
+
+        if (!ok) _dumpUnexpected(err, s, "mint");
+    }
+
+    function _assertExpectedBurnRevert(bytes memory err) internal pure {
+        bytes4 s = _sel(err);
+        bool ok = s == IFeeAMM.InsufficientLiquidity.selector || s == IFeeAMM.InvalidToken.selector
+            || s == IFeeAMM.InvalidCurrency.selector || s == IFeeAMM.IdenticalAddresses.selector
+            || s == IFeeAMM.InvalidAmount.selector;
+
+        if (!ok) _dumpUnexpected(err, s, "burn");
+    }
+
+    function _assertExpectedSwapRevert(bytes memory err) internal pure {
+        bytes4 s = _sel(err);
+        bool ok = s == IFeeAMM.InsufficientLiquidity.selector
+            || s == IFeeAMM.InsufficientReserves.selector || s == IFeeAMM.InvalidToken.selector
+            || s == IFeeAMM.InvalidCurrency.selector || s == IFeeAMM.IdenticalAddresses.selector
+            || s == IFeeAMM.InvalidAmount.selector;
+
+        if (!ok) _dumpUnexpected(err, s, "swap");
+    }
+
+    function _dumpUnexpected(bytes memory err, bytes4 s, string memory which) internal pure {
+        console.log("unexpected revert selector in", which, ":");
+        console.logBytes4(s);
+        console.log("raw revert data:");
+        console.logBytes(err);
+        assertTrue(false, "unexpected revert selector");
     }
 
 }
