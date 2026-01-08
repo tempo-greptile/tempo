@@ -4,8 +4,10 @@ pragma solidity ^0.8.13;
 import { FeeAMM } from "../../src/FeeAMM.sol";
 import { TIP20 } from "../../src/TIP20.sol";
 import { TIP20Factory } from "../../src/TIP20Factory.sol";
+import { TIP403Registry } from "../../src/TIP403Registry.sol";
 import { IFeeAMM } from "../../src/interfaces/IFeeAMM.sol";
 import { ITIP20 } from "../../src/interfaces/ITIP20.sol";
+import { ITIP403Registry } from "../../src/interfaces/ITIP403Registry.sol";
 import { Test } from "forge-std/Test.sol";
 
 contract FeeAMMSingleInvariantTest is Test {
@@ -18,12 +20,15 @@ contract FeeAMMSingleInvariantTest is Test {
     FeeAMM internal constant FEE_AMM = FeeAMM(0xfeEC000000000000000000000000000000000000);
     TIP20Factory internal constant TIP20_FACTORY =
         TIP20Factory(0x20Fc000000000000000000000000000000000000);
+    TIP403Registry internal constant TIP403 =
+        TIP403Registry(0x403c000000000000000000000000000000000000);
 
     TIP20[] public usdTokens;
     address[] public actors;
 
     bytes32[] public poolIds;
     mapping(bytes32 => bool) public seenPool;
+    mapping(address => uint64) public blacklistPolicy;
 
     function setUp() public {
         usdTokens.push(TIP20(address(pathUSD)));
@@ -66,10 +71,12 @@ contract FeeAMMSingleInvariantTest is Test {
 
         targetContract(address(this));
 
-        bytes4[] memory selectors = new bytes4[](3);
+        bytes4[] memory selectors = new bytes4[](5);
         selectors[0] = this.act_mint.selector;
         selectors[1] = this.act_burn.selector;
         selectors[2] = this.act_rebalanceSwap.selector;
+        selectors[3] = this.act_blacklist.selector;
+        selectors[4] = this.act_unblacklist.selector;
         targetSelector(FuzzSelector({ addr: address(this), selectors: selectors }));
     }
 
@@ -157,6 +164,28 @@ contract FeeAMMSingleInvariantTest is Test {
             );
         } catch { }
         vm.stopPrank();
+    }
+
+    /// @dev Fuzz action: blacklist/unblacklist an actor for a specific token via TIP-403.
+    /// This introduces realistic "frozen account" failures without biasing amounts/paths.
+    function act_blacklist(uint256 seedToken, uint256 seedActor, bool restricted) external {
+        TIP20 t = _token(seedToken);
+        address a = _actor(seedActor);
+
+        // Never freeze the AMM or the test harness itself (would brick the whole run).
+        if (a == address(FEE_AMM) || a == address(this)) return;
+
+        uint64 pid = _ensureBlacklistPolicy(t);
+        if (pid == 0) return;
+
+        // Flip membership in the blacklist set.
+        // For blacklist policies: restricted=true means "frozen", restricted=false means "unfrozen".
+        try TIP403.modifyPolicyBlacklist(pid, a, restricted) { } catch { }
+    }
+
+    /// @dev Fuzz action: unblacklist an actor for a specific token via TIP-403.
+    function act_unblacklist(uint256 seedToken, uint256 seedActor) external {
+        this.act_blacklist(seedToken, seedActor, false);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -340,6 +369,31 @@ contract FeeAMMSingleInvariantTest is Test {
     /// @dev Get a token from a seed.
     function _token(uint256 seed) internal view returns (TIP20) {
         return usdTokens[seed % usdTokens.length];
+    }
+
+    /// @dev Ensure `t` is governed by a dedicated blacklist policy whose admin is this test contract.
+    /// Returns 0 if the policy couldn't be created or installed.
+    function _ensureBlacklistPolicy(TIP20 t) internal returns (uint64 pid) {
+        pid = blacklistPolicy[address(t)];
+        if (pid != 0) return pid;
+
+        // Create a new blacklist policy with admin = this contract.
+        // NOTE: modifyPolicyBlacklist requires msg.sender == policy admin, so admin must be address(this).
+        try TIP403.createPolicy(address(this), ITIP403Registry.PolicyType.BLACKLIST) returns (
+            uint64 newPid
+        ) {
+            pid = newPid;
+            blacklistPolicy[address(t)] = pid;
+        } catch {
+            return 0;
+        }
+
+        // Install the policy on the token. This requires DEFAULT_ADMIN_ROLE on the token.
+        // If we lack privileges (e.g., some precompile tokens), just leave pid recorded and return 0.
+        try t.changeTransferPolicyId(pid) { }
+        catch {
+            return 0;
+        }
     }
 
     /// @dev Get a unique ordered token pair from two seeds.
