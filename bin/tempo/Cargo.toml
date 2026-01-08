@@ -41,7 +41,7 @@ name = "tempo"
 path = "src/main.rs"
 
 [features]
-default = ["asm-keccak", "jemalloc", "jemalloc-prof"]
+default = ["asm-keccak", "jemalloc", "jemalloc-prof", "jemalloc-symbols"]
 
 asm-keccak = [
 	"tempo-node/asm-keccak",
@@ -72,7 +72,15 @@ jemalloc-prof = [
 	"reth-cli-util/jemalloc",
 	"reth-cli-util/jemalloc-prof",
 	"reth-ethereum-cli/jemalloc-prof",
-	"tempo-node/jemalloc-prof"
+	"tempo-node/jemalloc-prof",
+]
+
+jemalloc-symbols = [
+    "reth-cli-util/jemalloc",
+	"reth-cli-util/jemalloc-prof",
+	"reth-ethereum-cli/jemalloc-prof",
+	"reth-ethereum-cli/jemalloc-symbols",
+	"tempo-node/jemalloc-prof",
 ]
 
 min-error-logs = [
