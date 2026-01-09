@@ -1,28 +1,63 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.13;
 
+import { FeeManager } from "../../src/FeeManager.sol";
 import { TIP20 } from "../../src/TIP20.sol";
 import { IFeeAMM } from "../../src/interfaces/IFeeAMM.sol";
 import { BaseTest } from "../BaseTest.t.sol";
-import { FeeIntegrationHandler } from "./FeeIntegrationHandler.sol";
 import { StdInvariant } from "forge-std/StdInvariant.sol";
 import { console } from "forge-std/console.sol";
 
 /// @title FeeIntegrationInvariantTest
 /// @notice Integration invariant tests for FeeManager + FeeAMM combined
-/// @dev Tests cross-contract invariants that involve both fee collection and AMM operations
+/// @dev Uses inline handler approach - handlers are functions in this contract
 contract FeeIntegrationInvariantTest is StdInvariant, BaseTest {
 
-    FeeIntegrationHandler public handler;
+    // Storage slot for pools mapping in FeeAMM (slot 0)
+    uint256 internal constant POOLS_SLOT = 0;
+
     TIP20 public userToken;
     TIP20 public validatorToken;
     bytes32 public poolId;
 
     uint256 public constant M = 9970;
+    uint256 public constant N = 9985;
     uint256 public constant SCALE = 10_000;
+
+    // Ghost state - Fee tracking
+    uint256 public ghost_totalFeesIn;
+    uint256 public ghost_totalFeesCollected;
+    uint256 public ghost_totalRefunds;
+    uint256 public ghost_totalFeesDistributed;
+
+    // Ghost state - AMM tracking
+    uint256 public ghost_totalMinted;
+    uint256 public ghost_totalBurned;
+    uint256 public ghost_rebalanceIn;
+    uint256 public ghost_rebalanceOut;
+
+    // Ghost state - Cross-token fee tracking
+    uint256 public ghost_crossTokenFeesIn;
+    uint256 public ghost_crossTokenFeesOut;
+
+    // Track LP balances per actor
+    mapping(address => uint256) public ghost_lpBalances;
+
+    address[] public actors;
+
+    // Call counters
+    uint256 public sameTokenFeeCalls;
+    uint256 public crossTokenFeeCalls;
+    uint256 public mintCalls;
+    uint256 public burnCalls;
+    uint256 public rebalanceCalls;
+    uint256 public distributeFeeCalls;
 
     function setUp() public override {
         super.setUp();
+
+        // Target this contract - handlers are inline functions here
+        targetContract(address(this));
 
         // Create tokens for testing
         userToken =
@@ -36,9 +71,10 @@ contract FeeIntegrationInvariantTest is StdInvariant, BaseTest {
         // Grant issuer role for minting
         userToken.grantRole(_ISSUER_ROLE, admin);
         validatorToken.grantRole(_ISSUER_ROLE, admin);
+        userToken.grantRole(_ISSUER_ROLE, address(this));
+        validatorToken.grantRole(_ISSUER_ROLE, address(this));
 
-        // Setup initial pool liquidity (validator token only via mint)
-        // User token reserves will accumulate through simulateCrossTokenFee during testing
+        // Setup initial pool liquidity
         uint256 initialLiquidity = 10_000_000e18;
         validatorToken.mint(admin, initialLiquidity);
         validatorToken.approve(address(amm), initialLiquidity);
@@ -46,39 +82,229 @@ contract FeeIntegrationInvariantTest is StdInvariant, BaseTest {
 
         poolId = amm.getPoolId(address(userToken), address(validatorToken));
 
-        // Create handler with admin for minting tokens
-        handler = new FeeIntegrationHandler(amm, userToken, validatorToken, admin);
+        // Setup actors
+        actors.push(address(0x4001));
+        actors.push(address(0x4002));
+        actors.push(address(0x4003));
 
-        // Grant issuer role to handler so it can mint tokens directly
-        userToken.grantRole(_ISSUER_ROLE, address(handler));
-        validatorToken.grantRole(_ISSUER_ROLE, address(handler));
+        // Target specific selectors for fuzzing
+        bytes4[] memory selectors = new bytes4[](6);
+        selectors[0] = this.simulateSameTokenFee.selector;
+        selectors[1] = this.simulateCrossTokenFee.selector;
+        selectors[2] = this.addLiquidity.selector;
+        selectors[3] = this.removeLiquidity.selector;
+        selectors[4] = this.rebalancePool.selector;
+        selectors[5] = this.distributeFees.selector;
+        targetSelector(FuzzSelector({ addr: address(this), selectors: selectors }));
+    }
 
-        // Target only the handler
-        targetContract(address(handler));
+    /*//////////////////////////////////////////////////////////////
+                           FUZZ HANDLERS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Simulate same-token fee collection
+    function simulateSameTokenFee(uint256 actorSeed, uint256 maxAmount, uint256 actualUsedPct)
+        external
+    {
+        address actor = actors[actorSeed % actors.length];
+
+        maxAmount = bound(maxAmount, 1e6, 1_000_000e18);
+        actualUsedPct = bound(actualUsedPct, 0, 100);
+        uint256 actualUsed = (maxAmount * actualUsedPct) / 100;
+        uint256 refund = maxAmount - actualUsed;
+
+        userToken.mint(actor, maxAmount);
+
+        vm.prank(actor);
+        userToken.transfer(address(amm), maxAmount);
+        ghost_totalFeesIn += maxAmount;
+
+        if (refund > 0) {
+            vm.prank(address(amm));
+            userToken.transfer(actor, refund);
+            ghost_totalRefunds += refund;
+        }
+
+        ghost_totalFeesCollected += actualUsed;
+        sameTokenFeeCalls++;
+    }
+
+    /// @notice Simulate cross-token fee collection (userToken -> validatorToken swap)
+    function simulateCrossTokenFee(uint256 actorSeed, uint256 maxAmount, uint256 actualUsedPct)
+        external
+    {
+        address actor = actors[actorSeed % actors.length];
+
+        maxAmount = bound(maxAmount, 1e6, 1_000_000e18);
+        actualUsedPct = bound(actualUsedPct, 1, 100);
+        uint256 actualUsed = (maxAmount * actualUsedPct) / 100;
+        uint256 refund = maxAmount - actualUsed;
+
+        IFeeAMM.Pool memory pool = amm.getPool(address(userToken), address(validatorToken));
+        uint256 amountOutNeeded = (actualUsed * M) / SCALE;
+        if (pool.reserveValidatorToken < amountOutNeeded) return;
+
+        userToken.mint(actor, maxAmount);
+
+        vm.prank(actor);
+        userToken.transfer(address(amm), maxAmount);
+        ghost_totalFeesIn += maxAmount;
+        ghost_crossTokenFeesIn += actualUsed;
+
+        if (refund > 0) {
+            vm.prank(address(amm));
+            userToken.transfer(actor, refund);
+            ghost_totalRefunds += refund;
+        }
+
+        uint256 amountOut = (actualUsed * M) / SCALE;
+        ghost_crossTokenFeesOut += amountOut;
+        ghost_totalFeesCollected += amountOut;
+
+        _updatePoolReserves(poolId, int256(actualUsed), -int256(amountOut));
+
+        crossTokenFeeCalls++;
+    }
+
+    /// @notice Add liquidity to the pool
+    function addLiquidity(uint256 actorSeed, uint256 amount) external {
+        address actor = actors[actorSeed % actors.length];
+
+        amount = bound(amount, 2002, 10_000_000e18);
+
+        validatorToken.mint(actor, amount);
+
+        vm.startPrank(actor);
+        validatorToken.approve(address(amm), amount);
+
+        try amm.mint(address(userToken), address(validatorToken), amount, actor) returns (
+            uint256 liquidity
+        ) {
+            ghost_totalMinted += liquidity;
+            ghost_lpBalances[actor] += liquidity;
+            mintCalls++;
+        } catch { }
+        vm.stopPrank();
+    }
+
+    /// @notice Remove liquidity from the pool
+    function removeLiquidity(uint256 actorSeed, uint256 pct) external {
+        address actor = actors[actorSeed % actors.length];
+
+        uint256 balance = amm.liquidityBalances(poolId, actor);
+        if (balance == 0) return;
+
+        pct = bound(pct, 1, 100);
+        uint256 amount = (balance * pct) / 100;
+        if (amount == 0) return;
+
+        vm.startPrank(actor);
+        try amm.burn(address(userToken), address(validatorToken), amount, actor) returns (
+            uint256, uint256
+        ) {
+            ghost_totalBurned += amount;
+            ghost_lpBalances[actor] -= amount;
+            burnCalls++;
+        } catch { }
+        vm.stopPrank();
+    }
+
+    /// @notice Rebalance swap (validatorToken -> userToken)
+    function rebalancePool(uint256 actorSeed, uint256 amountOut) external {
+        address actor = actors[actorSeed % actors.length];
+
+        IFeeAMM.Pool memory pool = amm.getPool(address(userToken), address(validatorToken));
+        if (pool.reserveUserToken == 0) return;
+
+        amountOut = bound(amountOut, 1, pool.reserveUserToken);
+
+        uint256 amountIn = (amountOut * N) / SCALE + 1;
+
+        validatorToken.mint(actor, amountIn);
+
+        vm.startPrank(actor);
+        validatorToken.approve(address(amm), amountIn);
+
+        try amm.rebalanceSwap(
+            address(userToken), address(validatorToken), amountOut, actor
+        ) returns (
+            uint256 actualIn
+        ) {
+            ghost_rebalanceIn += actualIn;
+            ghost_rebalanceOut += amountOut;
+            rebalanceCalls++;
+        } catch { }
+        vm.stopPrank();
+    }
+
+    /// @notice Distribute accumulated fees
+    function distributeFees(uint256 actorSeed) external {
+        address actor = actors[actorSeed % actors.length];
+
+        uint256 userTokenFees = amm.collectedFees(actor, address(userToken));
+        if (userTokenFees > 0) {
+            amm.distributeFees(actor, address(userToken));
+            ghost_totalFeesDistributed += userTokenFees;
+            distributeFeeCalls++;
+            return;
+        }
+
+        uint256 validatorTokenFees = amm.collectedFees(actor, address(validatorToken));
+        if (validatorTokenFees > 0) {
+            amm.distributeFees(actor, address(validatorToken));
+            ghost_totalFeesDistributed += validatorTokenFees;
+            distributeFeeCalls++;
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                               HELPERS
+    //////////////////////////////////////////////////////////////*/
+
+    function _updatePoolReserves(bytes32 _poolId, int256 deltaUser, int256 deltaValidator)
+        internal
+    {
+        bytes32 poolSlot = keccak256(abi.encode(_poolId, POOLS_SLOT));
+        bytes32 currentData = vm.load(address(amm), poolSlot);
+
+        uint128 currentUserReserve = uint128(uint256(currentData));
+        uint128 currentValidatorReserve = uint128(uint256(currentData) >> 128);
+
+        uint128 newUserReserve = uint128(uint256(int256(uint256(currentUserReserve)) + deltaUser));
+        uint128 newValidatorReserve =
+            uint128(uint256(int256(uint256(currentValidatorReserve)) + deltaValidator));
+
+        bytes32 newData = bytes32((uint256(newValidatorReserve) << 128) | uint256(newUserReserve));
+        vm.store(address(amm), poolSlot, newData);
+    }
+
+    function sumLPBalances() public view returns (uint256 total) {
+        for (uint256 i = 0; i < actors.length; i++) {
+            total += ghost_lpBalances[actors[i]];
+        }
+    }
+
+    function actorCount() public view returns (uint256) {
+        return actors.length;
+    }
+
+    function getActor(uint256 index) public view returns (address) {
+        return actors[index];
     }
 
     /*//////////////////////////////////////////////////////////////
             INVARIANT I1: CROSS-TOKEN FEE RATE CORRECTNESS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Cross-token fees must be collected at rate M/SCALE (0.997)
-    /// @dev Due to rounding errors accumulating across multiple operations,
-    ///      we check bounds instead of exact equality. Each operation can lose
-    ///      up to 1 unit to rounding, so total error <= crossTokenFeeCalls.
     function invariant_crossTokenFeeRate() public view {
-        uint256 feesIn = handler.ghost_crossTokenFeesIn();
-        uint256 feesOut = handler.ghost_crossTokenFeesOut();
+        uint256 feesIn = ghost_crossTokenFeesIn;
+        uint256 feesOut = ghost_crossTokenFeesOut;
 
         if (feesIn == 0) return;
 
-        // Expected output if calculated in aggregate: feesIn * M / SCALE
         uint256 expectedOut = (feesIn * M) / SCALE;
+        uint256 maxRoundingError = crossTokenFeeCalls;
 
-        // feesOut is sum of individually rounded values, so it can be less than expectedOut
-        // by up to 1 per operation due to floor division
-        uint256 maxRoundingError = handler.crossTokenFeeCalls();
-
-        // Actual output should be within rounding error bounds
         assertLe(feesOut, expectedOut, "Cross-token fees exceed expected");
         assertGe(
             feesOut + maxRoundingError, expectedOut, "Cross-token fees too low beyond rounding"
@@ -89,49 +315,29 @@ contract FeeIntegrationInvariantTest is StdInvariant, BaseTest {
             INVARIANT I2: NO ARBITRAGE FROM SWAP SEQUENCES
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Consecutive swaps should not create value
-    /// @dev Fee swaps take 0.3% (M=9970), rebalance gives back at 0.15% markup (N=9985)
-    ///      So fee swap -> rebalance should result in net loss for arbitrageur
     function invariant_noArbitrage() public view {
-        uint256 rebalanceIn = handler.ghost_rebalanceIn();
-        uint256 rebalanceOut = handler.ghost_rebalanceOut();
+        uint256 rebalIn = ghost_rebalanceIn;
+        uint256 rebalOut = ghost_rebalanceOut;
 
-        if (rebalanceOut == 0) return;
+        if (rebalOut == 0) return;
 
-        // Rebalance swaps: validatorToken in -> userToken out
-        // amountIn >= (amountOut * 9985) / 10000 + 1
-        // So for every 1 userToken out, you pay ~1.0015 validatorToken in
-        // Combined with fee swap rate of 0.997, arbitrage is unprofitable
-
-        // Check that rebalance in is at least the minimum required
-        uint256 minExpectedIn = (rebalanceOut * 9985) / 10_000 + handler.rebalanceCalls();
-        assertGe(rebalanceIn, minExpectedIn, "Rebalance rate too favorable");
+        uint256 minExpectedIn = (rebalOut * 9985) / 10_000 + rebalanceCalls;
+        assertGe(rebalIn, minExpectedIn, "Rebalance rate too favorable");
     }
 
     /*//////////////////////////////////////////////////////////////
             INVARIANT I3: SYSTEM SOLVENCY
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice The system must always have enough tokens to cover the sum of all pool reserves
-    /// @dev Checks both directional pools: (userToken, validatorToken) and (validatorToken, userToken)
     function invariant_systemSolvency() public view {
-        // Get both directional pools
         IFeeAMM.Pool memory poolUV = amm.getPool(address(userToken), address(validatorToken));
         IFeeAMM.Pool memory poolVU = amm.getPool(address(validatorToken), address(userToken));
 
-        // Sum reserves for userToken across both pools
-        // In poolUV: userToken is the "user" token (reserveUserToken)
-        // In poolVU: userToken is the "validator" token (reserveValidatorToken)
         uint256 totalUserTokenReserves =
             uint256(poolUV.reserveUserToken) + uint256(poolVU.reserveValidatorToken);
-
-        // Sum reserves for validatorToken across both pools
-        // In poolUV: validatorToken is the "validator" token (reserveValidatorToken)
-        // In poolVU: validatorToken is the "user" token (reserveUserToken)
         uint256 totalValidatorTokenReserves =
             uint256(poolUV.reserveValidatorToken) + uint256(poolVU.reserveUserToken);
 
-        // AMM must hold at least the sum of all reserves for each token
         uint256 userBalance = userToken.balanceOf(address(amm));
         uint256 validatorBalance = validatorToken.balanceOf(address(amm));
 
@@ -149,27 +355,18 @@ contract FeeIntegrationInvariantTest is StdInvariant, BaseTest {
             INVARIANT I4: LP TOKEN ACCOUNTING (INTEGRATION)
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice LP token accounting must be correct across all operations
     function invariant_lpTokenAccountingIntegration() public view {
         uint256 totalSupply = amm.totalSupply(poolId);
 
         if (totalSupply == 0) return;
 
-        uint256 sumBalances = handler.sumLPBalances();
+        uint256 sumBal = sumLPBalances();
         uint256 minLiquidity = amm.MIN_LIQUIDITY();
-
-        // Total supply includes:
-        // - MIN_LIQUIDITY (locked)
-        // - Admin's initial liquidity
-        // - Handler actors' liquidity
-
-        // We track handler actors' balances in ghost state
-        // Admin's balance is separate
         uint256 adminBalance = amm.liquidityBalances(poolId, admin);
 
         assertEq(
             totalSupply,
-            minLiquidity + adminBalance + sumBalances,
+            minLiquidity + adminBalance + sumBal,
             "LP token accounting mismatch in integration"
         );
     }
@@ -178,17 +375,11 @@ contract FeeIntegrationInvariantTest is StdInvariant, BaseTest {
             INVARIANT I5: FEE CONSERVATION
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Total fees in must equal fees collected + refunds
     function invariant_feeConservation() public view {
-        uint256 totalIn = handler.ghost_totalFeesIn();
-        uint256 collected = handler.ghost_totalFeesCollected();
-        uint256 refunds = handler.ghost_totalRefunds();
+        uint256 totalIn = ghost_totalFeesIn;
+        uint256 collected = ghost_totalFeesCollected;
+        uint256 refunds = ghost_totalRefunds;
 
-        // For same-token: in = collected + refunds
-        // For cross-token: in = (collected / 0.997) + refunds (approximately)
-        // Since we track collected as the output amount for cross-token
-
-        // We can verify that collected + refunds <= totalIn
         assertLe(collected + refunds, totalIn, "Fee conservation violated");
     }
 
@@ -196,16 +387,12 @@ contract FeeIntegrationInvariantTest is StdInvariant, BaseTest {
             INVARIANT I6: DIRECTIONAL POOL SEPARATION
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Pool(A,B) and Pool(B,A) are separate pools with independent reserves
-    /// @dev Each ordered pair has its own pool
     function invariant_directionalPoolSeparation() public view {
         bytes32 poolAB = amm.getPoolId(address(userToken), address(validatorToken));
         bytes32 poolBA = amm.getPoolId(address(validatorToken), address(userToken));
 
-        // Pool IDs must be different
         assertTrue(poolAB != poolBA, "Pool IDs should be different for reversed pairs");
 
-        // We only interact with poolAB in our tests, so poolBA should be empty
         IFeeAMM.Pool memory reversePool = amm.getPool(address(validatorToken), address(userToken));
         assertEq(reversePool.reserveUserToken, 0, "Reverse pool should have no user reserves");
         assertEq(
@@ -217,19 +404,13 @@ contract FeeIntegrationInvariantTest is StdInvariant, BaseTest {
             INVARIANT I7: LP VALUE NEVER DECREASES (EXCLUDING FEES)
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice LP tokens should represent at least their share of reserves
-    /// @dev Due to rounding, actual withdrawn amount may be slightly less
     function invariant_lpValuePreserved() public view {
         uint256 ts = amm.totalSupply(poolId);
         if (ts == 0) return;
 
         IFeeAMM.Pool memory pool = amm.getPool(address(userToken), address(validatorToken));
-
-        // Total value in pool (using 1:1 assumption for stablecoins)
         uint256 totalValue = pool.reserveUserToken + pool.reserveValidatorToken;
 
-        // Value per LP token should be positive if pool is initialized
-        // (totalValue / totalSupply) >= 0
         if (ts > 0) {
             assertTrue(totalValue >= 0, "Pool value should be non-negative");
         }
@@ -239,20 +420,11 @@ contract FeeIntegrationInvariantTest is StdInvariant, BaseTest {
             INVARIANT I8: SWAP SPREAD ENSURES LP PROFITABILITY
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice The spread between fee swap (0.997) and rebalance (0.9985) ensures LP profit
-    /// @dev For every fee swap, LPs earn 0.3%; for every rebalance, arbitrageurs pay 0.15%
     function invariant_swapSpreadPositive() public view {
-        // M = 9970 (fee swap: user gets 0.997 per 1 paid)
-        // N = 9985 (rebalance: user pays 0.9985 + 1 per 1 received)
-        // The spread (N - M) / SCALE = 0.0015 or 0.15% goes to LPs on rebalance
-
         uint256 feeSwapRate = amm.M();
         uint256 rebalanceRate = amm.N();
 
-        // Rebalance rate must be higher than fee swap rate (arbitrageur pays more than fee swapper receives)
         assertGt(rebalanceRate, feeSwapRate, "Rebalance rate must exceed fee swap rate");
-
-        // Spread should be exactly 15 basis points
         assertEq(rebalanceRate - feeSwapRate, 15, "Spread should be 15 basis points");
     }
 
@@ -260,26 +432,25 @@ contract FeeIntegrationInvariantTest is StdInvariant, BaseTest {
                         CALL SUMMARY
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Log call statistics for debugging
     function invariant_callSummary() public view {
         console.log("=== Integration Invariant Call Summary ===");
-        console.log("Same token fee calls:", handler.sameTokenFeeCalls());
-        console.log("Cross token fee calls:", handler.crossTokenFeeCalls());
-        console.log("Mint calls:", handler.mintCalls());
-        console.log("Burn calls:", handler.burnCalls());
-        console.log("Rebalance calls:", handler.rebalanceCalls());
-        console.log("Distribute calls:", handler.distributeFeeCalls());
+        console.log("Same token fee calls:", sameTokenFeeCalls);
+        console.log("Cross token fee calls:", crossTokenFeeCalls);
+        console.log("Mint calls:", mintCalls);
+        console.log("Burn calls:", burnCalls);
+        console.log("Rebalance calls:", rebalanceCalls);
+        console.log("Distribute calls:", distributeFeeCalls);
         console.log("---");
-        console.log("Total fees in:", handler.ghost_totalFeesIn());
-        console.log("Total fees collected:", handler.ghost_totalFeesCollected());
-        console.log("Total refunds:", handler.ghost_totalRefunds());
-        console.log("Cross-token fees in:", handler.ghost_crossTokenFeesIn());
-        console.log("Cross-token fees out:", handler.ghost_crossTokenFeesOut());
+        console.log("Total fees in:", ghost_totalFeesIn);
+        console.log("Total fees collected:", ghost_totalFeesCollected);
+        console.log("Total refunds:", ghost_totalRefunds);
+        console.log("Cross-token fees in:", ghost_crossTokenFeesIn);
+        console.log("Cross-token fees out:", ghost_crossTokenFeesOut);
         console.log("---");
-        console.log("Total LP minted:", handler.ghost_totalMinted());
-        console.log("Total LP burned:", handler.ghost_totalBurned());
-        console.log("Total rebalance in:", handler.ghost_rebalanceIn());
-        console.log("Total rebalance out:", handler.ghost_rebalanceOut());
+        console.log("Total LP minted:", ghost_totalMinted);
+        console.log("Total LP burned:", ghost_totalBurned);
+        console.log("Total rebalance in:", ghost_rebalanceIn);
+        console.log("Total rebalance out:", ghost_rebalanceOut);
     }
 
 }
