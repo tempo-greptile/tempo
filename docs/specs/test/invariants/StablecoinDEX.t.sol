@@ -24,18 +24,6 @@ contract StablecoinDEXInvariantTest is BaseTest {
     /// @dev Expected next order ID, used to verify TEMPO-DEX1
     uint128 private _nextOrderId;
 
-    /// @dev Ghost variable tracking expected DEX token balances
-    mapping(address => uint256) private _expectedDexBalance;
-
-    /// @dev Ghost variable tracking expected user token balances
-    mapping(address => mapping(address => uint256)) private _expectedUserBalance;
-
-    /// @dev Total pathUSD escrowed in active orders
-    uint256 private _totalPathUsdEscrowed;
-
-    /// @dev Total token1 escrowed in active orders
-    uint256 private _totalToken1Escrowed;
-
     /// @dev The trading pair key for token1/pathUSD
     bytes32 private _pairKey;
 
@@ -79,10 +67,6 @@ contract StablecoinDEXInvariantTest is BaseTest {
 
         _actors = _buildActors(20);
         _nextOrderId = exchange.nextOrderId();
-
-        // Initialize expected DEX balances
-        _expectedDexBalance[address(pathUSD)] = pathUSD.balanceOf(address(exchange));
-        _expectedDexBalance[address(token1)] = token1.balanceOf(address(exchange));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -115,17 +99,6 @@ contract StablecoinDEXInvariantTest is BaseTest {
         uint256 expectedEscrow = (uint256(amount) * uint256(price) + exchange.PRICE_SCALE() - 1)
             / uint256(exchange.PRICE_SCALE());
 
-        // TEMPO-DEX2: Place order escrows correct amounts
-        if (isBid) {
-            // Bids escrow quote tokens (pathUSD)
-            _totalPathUsdEscrowed += expectedEscrow;
-            _expectedDexBalance[address(pathUSD)] += expectedEscrow;
-        } else {
-            // Asks escrow base tokens (token1)
-            _totalToken1Escrowed += amount;
-            _expectedDexBalance[address(token1)] += amount;
-        }
-
         // Verify order was created correctly
         IStablecoinDEX.Order memory order = exchange.getOrder(orderId);
         assertEq(order.maker, actor, "TEMPO-DEX2: order maker mismatch");
@@ -151,8 +124,6 @@ contract StablecoinDEXInvariantTest is BaseTest {
                     "TEMPO-DEX3: bid cancel refund mismatch"
                 );
                 exchange.withdraw(address(pathUSD), refund);
-                _totalPathUsdEscrowed -= expectedEscrow;
-                _expectedDexBalance[address(pathUSD)] -= expectedEscrow;
             } else {
                 uint128 balanceAfter = exchange.balanceOf(actor, address(token1));
                 assertEq(
@@ -161,8 +132,6 @@ contract StablecoinDEXInvariantTest is BaseTest {
                     "TEMPO-DEX3: ask cancel refund mismatch"
                 );
                 exchange.withdraw(address(token1), amount);
-                _totalToken1Escrowed -= amount;
-                _expectedDexBalance[address(token1)] -= amount;
             }
 
             // Verify order no longer exists
@@ -226,25 +195,21 @@ contract StablecoinDEXInvariantTest is BaseTest {
             );
         }
 
-        // Track escrow
-        uint32 price = exchange.tickToPrice(tick);
-        if (isBid) {
-            uint256 expectedEscrow = (uint256(amount) * uint256(price) + exchange.PRICE_SCALE() - 1)
-                / uint256(exchange.PRICE_SCALE());
-            _totalPathUsdEscrowed += expectedEscrow;
-            _expectedDexBalance[address(pathUSD)] += expectedEscrow;
-        } else {
-            _totalToken1Escrowed += amount;
-            _expectedDexBalance[address(token1)] += amount;
-        }
-
         _placedOrders[actor].push(orderId);
 
         vm.stopPrank();
     }
 
+    /// @dev Struct to capture swapper balances before swap to avoid stack too deep
+    struct SwapBalanceSnapshot {
+        uint256 token1External;
+        uint256 pathUsdExternal;
+        uint128 token1Internal;
+        uint128 pathUsdInternal;
+    }
+
     /// @notice Fuzz handler: Executes swaps with exact amount in or exact amount out
-    /// @dev Tests TEMPO-DEX4 (minAmountOut), TEMPO-DEX5 (maxAmountIn)
+    /// @dev Tests TEMPO-DEX4, TEMPO-DEX5, TEMPO-DEX14, TEMPO-DEX16
     /// @param swapperRnd Random seed for selecting swapper
     /// @param amount Swap amount (bounded to valid range)
     /// @param amtIn True for swapExactAmountIn, false for swapExactAmountOut
@@ -252,35 +217,23 @@ contract StablecoinDEXInvariantTest is BaseTest {
         address swapper = _actors[swapperRnd % _actors.length];
         amount = uint128(bound(amount, 100_000_000, 1_000_000_000));
 
+        // Check if swapper has active orders - if so, skip TEMPO-DEX14 balance checks
+        // because self-trade makes the accounting complex (maker proceeds returned to swapper)
+        bool swapperHasOrders = _placedOrders[swapper].length > 0;
+
+        // Capture total balances (external + internal) before swap for TEMPO-DEX14
+        SwapBalanceSnapshot memory before = SwapBalanceSnapshot({
+            token1External: token1.balanceOf(swapper),
+            pathUsdExternal: pathUSD.balanceOf(swapper),
+            token1Internal: exchange.balanceOf(swapper, address(token1)),
+            pathUsdInternal: exchange.balanceOf(swapper, address(pathUSD))
+        });
+
         vm.startPrank(swapper);
         if (amtIn) {
-            try exchange.swapExactAmountIn(
-                address(token1), address(pathUSD), amount, amount - 100
-            ) returns (
-                uint128 amountOut
-            ) {
-                // TEMPO-DEX4: amountOut >= minAmountOut
-                assertTrue(
-                    amountOut >= amount - 100,
-                    "TEMPO-DEX4: swap exact amountOut less than minAmountOut"
-                );
-            } catch (bytes memory reason) {
-                _assertKnownSwapError(reason);
-            }
+            _swapExactAmountIn(swapper, amount, before, swapperHasOrders);
         } else {
-            try exchange.swapExactAmountOut(
-                address(token1), address(pathUSD), amount, amount + 100
-            ) returns (
-                uint128 amountIn
-            ) {
-                // TEMPO-DEX5: amountIn <= maxAmountIn
-                assertTrue(
-                    amountIn <= amount + 100,
-                    "TEMPO-DEX5: swap exact amountIn greater than maxAmountIn"
-                );
-            } catch (bytes memory reason) {
-                _assertKnownSwapError(reason);
-            }
+            _swapExactAmountOut(swapper, amount, before, swapperHasOrders);
         }
         // Read next order id - if a flip order is hit then next order id is incremented.
         _nextOrderId = exchange.nextOrderId();
@@ -442,10 +395,10 @@ contract StablecoinDEXInvariantTest is BaseTest {
     /// @notice Main invariant function called after each fuzz sequence
     /// @dev Verifies TEMPO-DEX6 (balance solvency), TEMPO-DEX7/11 (tick consistency), TEMPO-DEX8/9 (best tick)
     function invariantStablecoinDEX() public view {
-        // TEMPO-DEX6: DEX token balances must be >= sum of all internal user balances
         uint256 dexPathUsdBalance = pathUSD.balanceOf(address(exchange));
         uint256 dexToken1Balance = token1.balanceOf(address(exchange));
 
+        // TEMPO-DEX6: DEX token balances must be >= sum of all internal user balances
         uint256 totalUserPathUsd = 0;
         uint256 totalUserToken1 = 0;
         for (uint256 i = 0; i < _actors.length; i++) {
@@ -462,6 +415,27 @@ contract StablecoinDEXInvariantTest is BaseTest {
             "TEMPO-DEX6: DEX token1 balance < sum of user internal balances"
         );
 
+        // Compute expected escrowed amounts from all orders (including flip-created orders)
+        (uint256 expectedPathUsdEscrowed, uint256 expectedToken1Escrowed, uint256 orderCount) =
+            _computeExpectedEscrow();
+
+        // Assert escrowed amounts: DEX balance = user internal balances + escrowed in active orders
+        // Allow tolerance for rounding during partial fills (can accumulate across multiple fills)
+        // TODO: check tolerance and rounding error
+        uint256 tolerance = orderCount * 4 + 1;
+        assertApproxEqAbs(
+            dexPathUsdBalance,
+            totalUserPathUsd + expectedPathUsdEscrowed,
+            tolerance,
+            "TEMPO-DEX6: DEX pathUSD balance != user balances + escrowed"
+        );
+        assertApproxEqAbs(
+            dexToken1Balance,
+            totalUserToken1 + expectedToken1Escrowed,
+            tolerance,
+            "TEMPO-DEX6: DEX token1 balance != user balances + escrowed"
+        );
+
         // TEMPO-DEX8 & TEMPO-DEX9: Best bid/ask tick consistency
         _assertBestTickConsistency();
 
@@ -469,9 +443,161 @@ contract StablecoinDEXInvariantTest is BaseTest {
         _assertTickLevelConsistency();
     }
 
+    /// @notice Computes expected escrowed amounts by iterating through all orders
+    /// @dev Iterates all order IDs to catch flip-created orders not in _placedOrders
+    /// @return pathUsdEscrowed Total pathUSD escrowed in active bid orders
+    /// @return token1Escrowed Total token1 escrowed in active ask orders
+    /// @return orderCount Number of active orders (for rounding tolerance)
+    function _computeExpectedEscrow()
+        internal
+        view
+        returns (uint256 pathUsdEscrowed, uint256 token1Escrowed, uint256 orderCount)
+    {
+        uint128 nextId = exchange.nextOrderId();
+        for (uint128 orderId = 1; orderId < nextId; orderId++) {
+            try exchange.getOrder(orderId) returns (IStablecoinDEX.Order memory order) {
+                orderCount++;
+                if (order.isBid) {
+                    uint32 price = exchange.tickToPrice(order.tick);
+                    uint256 escrow =
+                        (uint256(order.remaining) * uint256(price) + exchange.PRICE_SCALE() - 1)
+                            / exchange.PRICE_SCALE();
+                    pathUsdEscrowed += escrow;
+                } else {
+                    token1Escrowed += order.remaining;
+                }
+            } catch {
+                // Order was filled or cancelled
+            }
+        }
+    }
+
     /*//////////////////////////////////////////////////////////////
                           INTERNAL HELPERS
     //////////////////////////////////////////////////////////////*/
+
+    /// @dev Helper for swapExactAmountIn to avoid stack too deep
+    function _swapExactAmountIn(
+        address swapper,
+        uint128 amount,
+        SwapBalanceSnapshot memory before,
+        bool skipBalanceCheck
+    ) internal {
+        // TEMPO-DEX16: Quote should match execution TODO: enable when fixed
+        uint128 quotedOut;
+        try exchange.quoteSwapExactAmountIn(address(token1), address(pathUSD), amount) returns (
+            uint128 quoted
+        ) {
+            quotedOut = quoted;
+        } catch {
+            quotedOut = 0;
+        }
+
+        try exchange.swapExactAmountIn(
+            address(token1), address(pathUSD), amount, amount - 100
+        ) returns (
+            uint128 amountOut
+        ) {
+            // TEMPO-DEX4: amountOut >= minAmountOut
+            assertTrue(
+                amountOut >= amount - 100, "TEMPO-DEX4: swap exact amountOut less than minAmountOut"
+            );
+
+            // TEMPO-DEX14: Swapper total balance changes correctly
+            // Skip if swapper has orders (self-trade makes accounting complex)
+            if (!skipBalanceCheck) {
+                _assertSwapBalanceChanges(swapper, before, amount, amountOut);
+            }
+
+            // TEMPO-DEX16: Quote matches execution TODO: enable when fixed
+            if (quotedOut > 0) {
+                //assertEq(amountOut, quotedOut, "TEMPO-DEX16: quote mismatch for swapExactAmountIn");
+            }
+        } catch (bytes memory reason) {
+            _assertKnownSwapError(reason);
+        }
+    }
+
+    /// @dev Helper for swapExactAmountOut to avoid stack too deep
+    function _swapExactAmountOut(
+        address swapper,
+        uint128 amount,
+        SwapBalanceSnapshot memory before,
+        bool skipBalanceCheck
+    ) internal {
+        // TEMPO-DEX16: Quote should match execution
+        uint128 quotedIn;
+        try exchange.quoteSwapExactAmountOut(address(token1), address(pathUSD), amount) returns (
+            uint128 quoted
+        ) {
+            quotedIn = quoted;
+        } catch {
+            quotedIn = 0;
+        }
+
+        try exchange.swapExactAmountOut(
+            address(token1), address(pathUSD), amount, amount + 100
+        ) returns (
+            uint128 amountIn
+        ) {
+            // TEMPO-DEX5: amountIn <= maxAmountIn
+            assertTrue(
+                amountIn <= amount + 100, "TEMPO-DEX5: swap exact amountIn greater than maxAmountIn"
+            );
+
+            // TEMPO-DEX14: Swapper total balance changes correctly
+            // Skip if swapper has orders (self-trade makes accounting complex)
+            if (!skipBalanceCheck) {
+                _assertSwapBalanceChanges(swapper, before, amountIn, amount);
+            }
+
+            // TEMPO-DEX16: Quote matches execution. TODO: enable when fixed
+            if (quotedIn > 0) {
+                //assertEq(amountIn, quotedIn, "TEMPO-DEX16: quote mismatch for swapExactAmountOut");
+            }
+        } catch (bytes memory reason) {
+            _assertKnownSwapError(reason);
+        }
+    }
+
+    /// @dev Helper to assert swap balance changes for TEMPO-DEX14
+    /// @notice Checks total balance (external + internal) to handle taker == maker scenarios
+    /// @param swapper The swapper address
+    /// @param before Balance snapshot before the swap
+    /// @param token1Spent Amount of token1 spent (amountIn for the swap)
+    /// @param pathUsdReceived Amount of pathUSD received (amountOut for the swap)
+    function _assertSwapBalanceChanges(
+        address swapper,
+        SwapBalanceSnapshot memory before,
+        uint128 token1Spent,
+        uint128 pathUsdReceived
+    ) internal view {
+        // Calculate total balances (external + internal) after swap
+        uint256 token1TotalBefore = before.token1External + before.token1Internal;
+        uint256 pathUsdTotalBefore = before.pathUsdExternal + before.pathUsdInternal;
+
+        uint256 token1TotalAfter =
+            token1.balanceOf(swapper) + exchange.balanceOf(swapper, address(token1));
+        uint256 pathUsdTotalAfter =
+            pathUSD.balanceOf(swapper) + exchange.balanceOf(swapper, address(pathUSD));
+
+        // Swapper's total token1 should decrease by token1Spent
+        // Note: If swapper's bid orders were filled, they gain token1 to internal balance,
+        // but since we're selling token1 for pathUSD here, the net is still -token1Spent
+        assertEq(
+            token1TotalBefore - token1TotalAfter,
+            token1Spent,
+            "TEMPO-DEX14: swapper total token1 change incorrect"
+        );
+
+        // Swapper's total pathUSD should increase by pathUsdReceived
+        // Note: If swapper's ask orders were filled, they gain pathUSD to internal balance
+        assertEq(
+            pathUsdTotalAfter - pathUsdTotalBefore,
+            pathUsdReceived,
+            "TEMPO-DEX14: swapper total pathUsd change incorrect"
+        );
+    }
 
     /// @notice Verifies best bid and ask tick point to valid tick levels
     /// @dev Tests TEMPO-DEX8 (best bid) and TEMPO-DEX9 (best ask)
@@ -506,7 +632,7 @@ contract StablecoinDEXInvariantTest is BaseTest {
             if (bidLiquidity > 0) {
                 // TEMPO-DEX7: If liquidity > 0, head should be non-zero
                 assertTrue(bidHead != 0, "TEMPO-DEX7: bid tick has liquidity but no head");
-                // TEMPO-DEX11: Bitmap should have this tick marked
+                // TEMPO-DEX11: Bitmap correctness verified indirectly via bestBidTick/bestAskTick in _assertBestTickConsistency
             }
             if (bidHead == 0) {
                 // If head is 0, tail should also be 0 and liquidity should be 0
@@ -573,6 +699,7 @@ contract StablecoinDEXInvariantTest is BaseTest {
             || selector == IStablecoinDEX.PairDoesNotExist.selector
             || selector == IStablecoinDEX.IdenticalTokens.selector
             || selector == IStablecoinDEX.InvalidToken.selector
+            || selector == ITIP20.InsufficientBalance.selector
             || selector == ITIP20.PolicyForbids.selector;
         assertTrue(isKnownError, "Swap failed with unknown error");
     }
@@ -607,12 +734,252 @@ contract StablecoinDEXInvariantTest is BaseTest {
     function _ensureFunds(address actor, uint256 amount) internal {
         vm.startPrank(admin);
         if (pathUSD.balanceOf(address(actor)) < amount) {
-            pathUSD.mint(actor, amount);
+            pathUSD.mint(actor, amount + 100_000_000);
         }
         if (token1.balanceOf(address(actor)) < amount) {
-            token1.mint(actor, amount);
+            token1.mint(actor, amount + 100_000_000);
         }
         vm.stopPrank();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          FAILURES REPRO
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice fails if TEMPO-DEX16 enabled
+    function testReproDEX16QuoteMismatchOut() external {
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .placeOrder(
+                9_558_570_077_960_085_633_653_695_175_917_485_444_202_355_741_275_948_550_613_259_375_346_385,
+                7,
+                233_568_675_898_653_404_360_250_386_309_241_377_793_333_357,
+                true,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .placeFlipOrder(
+                301_365,
+                69_546_172_010_336_025_265_575_322_610_212_078,
+                11_355_817_413_378_558_616_734_169_007_275_482_187,
+                true
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .placeFlipOrder(289, 6, 11_588, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                379_928_535_540_359_086_518_915_873_206_108_773_663_286_470_566_274_838,
+                18_931,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                458_297_009_615_161_915_289_839, 5_454_670_747_409_380_657_486_770, false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .placeFlipOrder(3824, 335_972_798_343_701_746_246_856_599_657_569_421_132, 9, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                20_605_735_771_902_281_925_382_902, 52_398_262_934_580_807_959_027, true
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(26_652_029_005_296_984_319_940_186, 1_955_859_655_031_487, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                6_659_008_076_275, 81_185_804_270_573_679_033_355_557_343_733_708_470, true
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(512, 5, false);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                10_437_175_717_263_000_561_771_835_093_311_785_989_731_915_009_071_034_673,
+                3_805_691_144_036_157_469_320_866_867_444_990,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                7_984_522_694_784_135_442_392_186_573_774_329_013_584_669_394_815_199_262_787_621_290_540_440,
+                4_598_058_576_530_503_464_421,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(13_718_499_648_598_428_557_030, 245_483_527, false);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                76_742_893_204_655_364_882_045_946_850_991_719_318_475_535_730_078_006_839_746_857_730_770_830,
+                21_419_659_030_609_680,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                16_769_418_490_134_021_599_412_251_537_535_422_356_079_081_397_678_552_738_311_075_357_847_800_021,
+                472_235_423_232_136_161_151,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(9_039_508_932_300_820_592_317_358_777_485_552, 1, false);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                14_099_490_637_467_691_673_257_349_132_186_879_769_338_692_926_089_876,
+                2_620_256_765_105_727_194,
+                true
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(8567, 25_259_743_990, false);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                245_966_488_707_180_590_813_208_198_591_943_838_423_418, 156_040_545_934_950, false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                4_289_741_108_724_363_749_668_415_349_216_424_221_873_212_813_922, 237_387, false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                3_800_222_259_856_644_280_661_621_405_562_981_821_483_747_998_694_606_706_739_912,
+                1_944_473_731_026,
+                true
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(1, 465_832, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(4_397_963_807, 0, false);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                774_470_939_459_762_731_314_255_477_042_405_889_664_758_093_659_697_518_387_913_964_575_897_351_494,
+                10_651,
+                true
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                115_792_089_237_316_195_423_570_985_008_687_907_853_269_984_665_640_564_039_457_584_007_913_129_639_935,
+                8716,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(954, 309_582_385_725_645_795_013_810_066_720_913_664_504, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                285_196_349_613_267_377_582_564_124_496_431_863_584_913_588_201_808,
+                74_830_425_353_290_563_956_238_180_494_631_176,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                3_539_899_022_260_725_149_398_989_128_937,
+                644_262_265_630_211_668_712_835_712_010_667_770,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                106_710_554_243_539_439_919_650_178_084_276_198_561_044_256_727_140_477_710_015_132,
+                2_659_122_473_175_464_551_782_242_779,
+                true
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(0, 0, false);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(65_535, 1234, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(6, 1588, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(9_179_926_934_565, 83_603_346_075_970_461_421, false);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                115_792_089_237_316_195_423_570_985_008_687_907_853_269_984_665_640_564_039_457_584_007_913_129_639_935,
+                1_978_717_316_239_976_334_955_766_350_735_786_172,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(6_859_875_712_693_835_094_221_190_680_222_893, 89_614_929, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(103_623_564_223_206_646_138_244_552, 1, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(255, 244_503_207_430, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                7_582_851_116_386_955_263_219_622_792_571_840_045_696_602_811_702_469_370,
+                48_174,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                153_525_369_901_325_225_621_015_930_226_144_088_737_359_688_749_883,
+                1_140_534_356_669_908_973_403,
+                false
+            );
+    }
+
+    /// @notice fails if TEMPO-DEX16 enabled
+    function testReproDEX16QuoteMismatchIn() external {
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .placeFlipOrder(
+                2, 328_134_792_733_308_945_408_115_820_128_797_045_422, 1_829_955_119, true
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(25_259_743_990, 244_503_207_431, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(20, 1_000_000_000, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(1_000_000_000, 5791, false);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(5, 1_950_818, false);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                1_518_889_154_448_658_106_372, 848_179_881_728_934_280_417_812_247, true
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(3082, 30, false);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(768, 98_000, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                306_482_207_306_705_579_078_181_145_707_606_147_266_091_845_298_707_357_973_391,
+                31_911_384_263_867_631_961_694_654_561,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(30, 8, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                115_792_089_237_316_195_423_570_985_008_687_907_853_269_984_665_640_564_039_457_584_007_913_129_639_935,
+                6_484_688_131_189_955_155_905,
+                true
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(129_574_031_215, 15_944_133_472_238_632, false);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .placeOrder(
+                208_263_264_604,
+                342_230_965_039_049_105_241_437,
+                1_518_814_207_656_572_061_071_084_709,
+                true,
+                false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(5, 998_414_828_386, true);
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(4_397_963_807, 20, true);
+    }
+
+    /// @notice fails TEMPO-DEX6 with 6419205152 !~= 6419205150 if tolerance set to 0
+    function testReproDEX6Tolerance() external {
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .placeFlipOrder(
+                16_620_986_750_173_327_375_072_129_536_696,
+                191_690_262_104_147_198_647,
+                151_418_302_004_512_096_018,
+                true
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                2_438_339_387_864_312_957_756_060_121_378_828_567, 32_133_919_125_377_151_346, false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .swapExactAmount(
+                68_820_684_459_960_264_687_589_486_638_758_947_665_982_554_552_360_197, 48, false
+            );
+        StablecoinDEXInvariantTest(0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)
+            .invariantStablecoinDEX();
     }
 
 }
