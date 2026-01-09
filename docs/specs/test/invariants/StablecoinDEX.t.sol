@@ -116,13 +116,18 @@ contract StablecoinDEXInvariantTest is BaseTest {
         assertEq(order.isBid, isBid, "TEMPO-DEX2: order side mismatch");
 
         if (cancel) {
+            // Capture balance before cancel to verify refund amount
+            uint128 balanceBeforePathUsd = exchange.balanceOf(actor, address(pathUSD));
+            uint128 balanceBeforeToken1 = exchange.balanceOf(actor, address(token1));
+
             exchange.cancel(orderId);
 
             // TEMPO-DEX3: Cancel refunds correct amounts to internal balance
             if (isBid) {
                 uint128 refund = uint128(expectedEscrow);
+                uint128 balanceAfter = exchange.balanceOf(actor, address(pathUSD));
                 assertEq(
-                    exchange.balanceOf(actor, address(pathUSD)),
+                    balanceAfter - balanceBeforePathUsd,
                     refund,
                     "TEMPO-DEX3: bid cancel refund mismatch"
                 );
@@ -130,8 +135,9 @@ contract StablecoinDEXInvariantTest is BaseTest {
                 _totalPathUsdEscrowed -= expectedEscrow;
                 _expectedDexBalance[address(pathUSD)] -= expectedEscrow;
             } else {
+                uint128 balanceAfter = exchange.balanceOf(actor, address(token1));
                 assertEq(
-                    exchange.balanceOf(actor, address(token1)),
+                    balanceAfter - balanceBeforeToken1,
                     amount,
                     "TEMPO-DEX3: ask cancel refund mismatch"
                 );
