@@ -488,3 +488,13 @@ where
         Ok(TempoEthApi::new(eth_api, self.validator_key))
     }
 }
+
+/// Enum representing custom Tempo RPC modules.
+#[derive(Debug, Clone, Copy, derive_more::FromStr, derive_more::Display)]
+#[display(rename_all = "lowercase")]
+pub enum TempoRpcModule {
+    Amm,
+    Dex,
+    Token,
+    Policy,
+}

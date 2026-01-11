@@ -11828,6 +11828,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "clap",
+ "derive_more",
  "eyre",
  "futures",
  "jsonrpsee",

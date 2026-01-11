@@ -4,7 +4,7 @@ use crate::{
     rpc::{
         TempoAdminApi, TempoAdminApiServer, TempoAmm, TempoAmmApiServer, TempoDex,
         TempoDexApiServer, TempoEthApiBuilder, TempoEthExt, TempoEthExtApiServer, TempoPolicy,
-        TempoPolicyApiServer, TempoToken, TempoTokenApiServer,
+        TempoPolicyApiServer, TempoRpcModule, TempoToken, TempoTokenApiServer,
     },
 };
 use alloy_primitives::B256;
@@ -208,19 +208,19 @@ where
                 let admin = TempoAdminApi::new(self.validator_key);
 
                 modules.merge_if_module_configured(
-                    RethRpcModule::Other("dex".to_string()),
+                    RethRpcModule::Other(TempoRpcModule::Dex.to_string()),
                     dex.into_rpc(),
                 )?;
                 modules.merge_if_module_configured(
-                    RethRpcModule::Other("amm".to_string()),
+                    RethRpcModule::Other(TempoRpcModule::Amm.to_string()),
                     amm.into_rpc(),
                 )?;
                 modules.merge_if_module_configured(
-                    RethRpcModule::Other("token".to_string()),
+                    RethRpcModule::Other(TempoRpcModule::Token.to_string()),
                     token.into_rpc(),
                 )?;
                 modules.merge_if_module_configured(
-                    RethRpcModule::Other("policy".to_string()),
+                    RethRpcModule::Other(TempoRpcModule::Policy.to_string()),
                     policy.into_rpc(),
                 )?;
                 modules.merge_if_module_configured(RethRpcModule::Eth, eth_ext.into_rpc())?;

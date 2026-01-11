@@ -46,7 +46,10 @@ use tempo_faucet::{
 use tempo_node::{
     TempoFullNode, TempoNodeArgs,
     node::TempoNode,
-    rpc::consensus::{TempoConsensusApiServer, TempoConsensusRpc},
+    rpc::{
+        TempoRpcModule,
+        consensus::{TempoConsensusApiServer, TempoConsensusRpc},
+    },
 };
 use tokio::sync::oneshot;
 use tracing::{info, info_span};
@@ -64,7 +67,7 @@ impl RpcModuleValidator for TempoRpcModuleParser {
         if let RpcModuleSelection::Selection(modules) = &selection {
             for module in modules {
                 if let RethRpcModule::Other(name) = module
-                    && !matches!(name.as_str(), "amm" | "dex" | "token" | "policy")
+                    && TempoRpcModule::from_str(name).is_err()
                 {
                     {
                         return Err(format!("Unknown RPC module: '{name}'"));
