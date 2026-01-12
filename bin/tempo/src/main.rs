@@ -27,7 +27,7 @@ use reth_ethereum::{
     cli::{Cli, Commands},
     evm::revm::primitives::B256,
 };
-use reth_ethereum_cli as _;
+use reth_ethereum_cli as _; // Used for feature flags
 use reth_node_builder::{NodeHandle, WithLaunchContext};
 use std::{sync::Arc, thread};
 use tempo_chainspec::spec::{TempoChainSpec, TempoChainSpecParser};

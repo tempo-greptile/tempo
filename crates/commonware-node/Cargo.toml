@@ -27,6 +27,8 @@ alloy-rlp.workspace = true
 axum.workspace = true
 bytes.workspace = true
 clap.workspace = true
+comfy-table.workspace = true
+dirs.workspace = true
 
 commonware-broadcast.workspace = true
 commonware-codec.workspace = true
@@ -43,6 +45,7 @@ commonware-utils.workspace = true
 eyre.workspace = true
 futures.workspace = true
 governor.workspace = true
+human_bytes.workspace = true
 indexmap.workspace = true
 jiff = { workspace = true, features = ["std"] }
 parking_lot.workspace = true

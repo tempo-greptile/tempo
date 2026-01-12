@@ -5,6 +5,7 @@
 
 pub(crate) mod alias;
 mod args;
+pub mod cli;
 pub(crate) mod config;
 pub mod consensus;
 pub(crate) mod dkg;

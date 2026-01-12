@@ -31,6 +31,8 @@ enum ConsensusSubcommand {
     GeneratePrivateKey(GeneratePrivateKey),
     /// Calculates the public key from an ed25519 signing key.
     CalculatePublicKey(CalculatePublicKey),
+    /// Database utilities.
+    Db(tempo_commonware_node::cli::ConsensusDbCommand),
 }
 
 #[derive(Debug, clap::Args)]
@@ -85,6 +87,7 @@ pub(crate) fn try_run_tempo_subcommand() -> Option<eyre::Result<()>> {
             TempoCommand::Consensus(cmd) => match cmd.command {
                 ConsensusSubcommand::GeneratePrivateKey(args) => Some(args.run()),
                 ConsensusSubcommand::CalculatePublicKey(args) => Some(args.run()),
+                ConsensusSubcommand::Db(args) => Some(args.execute()),
             },
         },
         Err(e) => match e.kind() {
