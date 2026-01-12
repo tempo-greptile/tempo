@@ -379,10 +379,13 @@ fn can_restart_after_joining_from_snapshot() {
             "restarting the node and waiting for it to catch up"
         );
 
+        // Wait for all 4 validators to have processed beyond network_head.
+        // This ensures the restarted receiver has caught up.
         'progress: loop {
             context.sleep(Duration::from_secs(1)).await;
 
             let metrics = context.encode();
+            let mut validators_past_head = 0;
 
             for line in metrics.lines() {
                 if !line.starts_with(CONSENSUS_NODE_PREFIX) {
@@ -393,12 +396,17 @@ fn can_restart_after_joining_from_snapshot() {
                 let metric = parts.next().unwrap();
                 let value = parts.next().unwrap();
 
-                if metric.contains(&receiver.uid)
-                    && metric.ends_with("_marshal_processed_height")
+                if metric.ends_with("_marshal_processed_height")
                     && value.parse::<u64>().unwrap() > network_head
                 {
-                    break 'progress;
+                    validators_past_head += 1;
                 }
+            }
+
+            // All 4 validators (3 original + restarted receiver) should have
+            // processed beyond network_head.
+            if validators_past_head == 4 {
+                break 'progress;
             }
         }
     });
