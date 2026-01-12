@@ -64,19 +64,7 @@ export function AddFunds() {
 
 ```tsx twoslash [config.ts] filename="config.ts"
 // @noErrors
-import { createConfig, http } from 'wagmi'
-import { tempoModerato } from 'viem/chains'
-import { KeyManager, webAuthn } from 'wagmi/tempo'
-
-export const config = createConfig({
-  chains: [tempoModerato],
-  connectors: [webAuthn({
-    keyManager: KeyManager.localStorage(),
-  })],
-  transports: {
-    [tempo.id]: http(),
-  },
-})
+// [!include ~/snippets/wagmi.config.ts:setup]
 ```
 
 :::
@@ -125,19 +113,7 @@ export function CreateStablecoin() {
 
 ```tsx twoslash [config.ts] filename="config.ts"
 // @noErrors
-import { createConfig, http } from 'wagmi'
-import { tempoModerato } from 'viem/chains'
-import { KeyManager, webAuthn } from 'wagmi/tempo'
-
-export const config = createConfig({
-  chains: [tempoModerato],
-  connectors: [webAuthn({
-    keyManager: KeyManager.localStorage(),
-  })],
-  transports: {
-    [tempo.id]: http(),
-  },
-})
+// [!include ~/snippets/wagmi.config.ts:setup]
 ```
 
 :::
@@ -189,19 +165,7 @@ export function CreateStablecoin() {
 
 ```tsx twoslash [config.ts] filename="config.ts"
 // @noErrors
-import { createConfig, http } from 'wagmi'
-import { tempoModerato } from 'viem/chains'
-import { KeyManager, webAuthn } from 'wagmi/tempo'
-
-export const config = createConfig({
-  chains: [tempoModerato],
-  connectors: [webAuthn({
-    keyManager: KeyManager.localStorage(),
-  })],
-  transports: {
-    [tempo.id]: http(),
-  },
-})
+// [!include ~/snippets/wagmi.config.ts:setup]
 ```
 
 :::
@@ -257,19 +221,7 @@ export function CreateStablecoin() {
 
 ```tsx twoslash [config.ts] filename="config.ts"
 // @noErrors
-import { createConfig, http } from 'wagmi'
-import { tempoModerato } from 'viem/chains'
-import { KeyManager, webAuthn } from 'wagmi/tempo'
-
-export const config = createConfig({
-  chains: [tempoModerato],
-  connectors: [webAuthn({
-    keyManager: KeyManager.localStorage(),
-  })],
-  transports: {
-    [tempo.id]: http(),
-  },
-})
+// [!include ~/snippets/wagmi.config.ts:setup]
 ```
 
 :::

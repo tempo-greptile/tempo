@@ -127,11 +127,11 @@ The example above uses a fee payer server to sign and sponsor transactions. If y
 // @noErrors
 import { createClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { tempoModerato } from 'viem/chains'
+import { tempo } from 'viem/chains'
 
 const client = createClient({
-  chain: tempoModerato,
-  transport: http(),
+  chain: tempo,
+  transport: http('https://username:password@rpc.tempo.xyz'),
 })
 
 const { receipt } = await client.token.transferSync({

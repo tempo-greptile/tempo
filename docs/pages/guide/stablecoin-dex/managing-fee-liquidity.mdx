@@ -54,22 +54,7 @@ function ManageFeeLiquidity() {
 
 ```ts twoslash [wagmi.config.ts]
 // @noErrors
-import { tempoModerato } from 'viem/chains'
-import { KeyManager, webAuthn } from 'wagmi/tempo'
-import { createConfig, http } from 'wagmi'
-
-export const config = createConfig({
-  connectors: [
-    webAuthn({
-      keyManager: KeyManager.localStorage(),
-    }),
-  ],
-  chains: [tempoModerato],
-  multiInjectedProviderDiscovery: false,
-  transports: {
-    [tempo.id]: http(),
-  },
-})
+// [!include ~/snippets/wagmi.config.ts:setup]
 ```
 
 :::
@@ -122,22 +107,7 @@ function ManageFeeLiquidity() {
 
 ```ts twoslash [wagmi.config.ts]
 // @noErrors
-import { tempoModerato } from 'viem/chains'
-import { KeyManager, webAuthn } from 'wagmi/tempo'
-import { createConfig, http } from 'wagmi'
-
-export const config = createConfig({
-  connectors: [
-    webAuthn({
-      keyManager: KeyManager.localStorage(),
-    }),
-  ],
-  chains: [tempoModerato],
-  multiInjectedProviderDiscovery: false,
-  transports: {
-    [tempo.id]: http(),
-  },
-})
+// [!include ~/snippets/wagmi.config.ts:setup]
 ```
 
 :::
@@ -197,22 +167,7 @@ function ManageFeeLiquidity() {
 
 ```ts twoslash [wagmi.config.ts]
 // @noErrors
-import { tempoModerato } from 'viem/chains'
-import { KeyManager, webAuthn } from 'wagmi/tempo'
-import { createConfig, http } from 'wagmi'
-
-export const config = createConfig({
-  connectors: [
-    webAuthn({
-      keyManager: KeyManager.localStorage(),
-    }),
-  ],
-  chains: [tempoModerato],
-  multiInjectedProviderDiscovery: false,
-  transports: {
-    [tempo.id]: http(),
-  },
-})
+// [!include ~/snippets/wagmi.config.ts:setup]
 ```
 
 :::
@@ -284,22 +239,7 @@ function ManageFeeLiquidity() {
 
 ```ts twoslash [wagmi.config.ts]
 // @noErrors
-import { tempoModerato } from 'viem/chains'
-import { KeyManager, webAuthn } from 'wagmi/tempo'
-import { createConfig, http } from 'wagmi'
-
-export const config = createConfig({
-  connectors: [
-    webAuthn({
-      keyManager: KeyManager.localStorage(),
-    }),
-  ],
-  chains: [tempoModerato],
-  multiInjectedProviderDiscovery: false,
-  transports: {
-    [tempo.id]: http(),
-  },
-})
+// [!include ~/snippets/wagmi.config.ts:setup]
 ```
 
 :::
@@ -354,22 +294,7 @@ function MonitorSwaps() {
 
 ```ts twoslash [wagmi.config.ts]
 // @noErrors
-import { tempoModerato } from 'viem/chains'
-import { KeyManager, webAuthn } from 'wagmi/tempo'
-import { createConfig, http } from 'wagmi'
-
-export const config = createConfig({
-  connectors: [
-    webAuthn({
-      keyManager: KeyManager.localStorage(),
-    }),
-  ],
-  chains: [tempoModerato],
-  multiInjectedProviderDiscovery: false,
-  transports: {
-    [tempo.id]: http(),
-  },
-})
+// [!include ~/snippets/wagmi.config.ts:setup]
 ```
 
 :::
@@ -422,22 +347,7 @@ function RebalancePool() {
 
 ```ts twoslash [wagmi.config.ts]
 // @noErrors
-import { tempoModerato } from 'viem/chains'
-import { KeyManager, webAuthn } from 'wagmi/tempo'
-import { createConfig, http } from 'wagmi'
-
-export const config = createConfig({
-  connectors: [
-    webAuthn({
-      keyManager: KeyManager.localStorage(),
-    }),
-  ],
-  chains: [tempoModerato],
-  multiInjectedProviderDiscovery: false,
-  transports: {
-    [tempo.id]: http(),
-  },
-})
+// [!include ~/snippets/wagmi.config.ts:setup]
 ```
 
 :::

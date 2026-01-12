@@ -79,16 +79,12 @@ forge test
 forge script script/Mail.s.sol
 ```
 
-### Test & deploy with `forge` on Tempo Testnet
+### Test & deploy with `forge` on Tempo
 
 ```bash
 # Set environment variables
-export TEMPO_RPC_URL=https://rpc.moderato.tempo.xyz
-export VERIFIER_URL=https://contracts.tempo.xyz
-
-# Optional: create a new keypair and request some testnet tokens from the faucet.
-cast wallet new
-cast rpc tempo_fundAddress <YOUR_WALLET_ADDRESS> --rpc-url $TEMPO_RPC_URL
+export TEMPO_RPC_URL=https://user:pass@rpc.tempo.xyz
+export VERIFIER_URL=https://user:pass@contracts.tempo.xyz/v2/contract
 
 # Run all tests on Tempo's testnet
 forge test
