@@ -968,11 +968,11 @@ contract StablecoinDEXInvariantTest is BaseTest {
                 assertEq(askLiquidity, 0, "TEMPO-DEX7: ask liquidity non-zero but head is zero");
             } else {
                 // TEMPO-DEX17: head.prev should be 0
-                IStablecoinDEX.Order memory headOrder = exchange.getOrder(bidHead);
-                assertEq(headOrder.prev, 0, "TEMPO-DEX17: bid head.prev is not None");
+                IStablecoinDEX.Order memory headOrder = exchange.getOrder(askHead);
+                assertEq(headOrder.prev, 0, "TEMPO-DEX17: ask head.prev is not None");
                 // TEMPO-DEX17: tail.next should be 0
-                IStablecoinDEX.Order memory tailOrder = exchange.getOrder(bidTail);
-                assertEq(tailOrder.next, 0, "TEMPO-DEX17: bid tail.next is not None");
+                IStablecoinDEX.Order memory tailOrder = exchange.getOrder(askTail);
+                assertEq(tailOrder.next, 0, "TEMPO-DEX17: ask tail.next is not None");
             }
         }
     }
