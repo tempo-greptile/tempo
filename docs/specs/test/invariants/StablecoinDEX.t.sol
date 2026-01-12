@@ -40,6 +40,9 @@ contract StablecoinDEXInvariantTest is BaseTest {
     TIP20 public token3;
     TIP20 public token4;
 
+    /// @dev Log file path for recording exchange actions
+    string private constant LOG_FILE = "exchange.log";
+
     /// @notice Sets up the test environment
     /// @dev Initializes BaseTest, creates trading pair, builds actors, and sets initial state
     function setUp() public override {
@@ -82,6 +85,25 @@ contract StablecoinDEXInvariantTest is BaseTest {
 
         _actors = _buildActors(20);
         _nextOrderId = exchange.nextOrderId();
+
+        // Initialize log file
+        try vm.removeFile(LOG_FILE) { } catch { }
+        _log("=== StablecoinDEX Invariant Test Log ===");
+        _log(
+            string.concat(
+                "Tokens: T1=",
+                token1.symbol(),
+                ", T2=",
+                token2.symbol(),
+                ", T3=",
+                token3.symbol(),
+                ", T4=",
+                token4.symbol()
+            )
+        );
+        _log(string.concat("Actors: ", vm.toString(_actors.length)));
+        _log("");
+        _logBalances();
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -112,6 +134,10 @@ contract StablecoinDEXInvariantTest is BaseTest {
         // Ensure funds for the token being escrowed (pathUSD for bids, base token for asks)
         _ensureFunds(actor, TIP20(isBid ? address(pathUSD) : token), amount);
 
+        // Capture actor's token balance before placing order (for cancel verification)
+        uint256 actorBalanceBeforePlace =
+            isBid ? pathUSD.balanceOf(actor) : TIP20(token).balanceOf(actor);
+
         vm.startPrank(actor);
         uint128 orderId = exchange.place(token, amount, isBid, tick);
 
@@ -121,8 +147,14 @@ contract StablecoinDEXInvariantTest is BaseTest {
         // Verify order was created correctly
         _assertOrderCreated(orderId, actor, amount, tick, isBid);
 
+        // Log the action
+        _logPlaceOrder(actor, orderId, amount, TIP20(token).symbol(), tick, isBid);
+
         if (cancel) {
-            _cancelAndVerifyRefund(orderId, actor, token, amount, tick, isBid);
+            _cancelAndVerifyRefund(
+                orderId, actor, token, amount, tick, isBid, actorBalanceBeforePlace
+            );
+            _logCancelOrder(actor, orderId, isBid, TIP20(token).symbol());
         } else {
             _placedOrders[actor].push(orderId);
 
@@ -132,6 +164,7 @@ contract StablecoinDEXInvariantTest is BaseTest {
         }
 
         vm.stopPrank();
+        _logBalances();
     }
 
     /// @dev Helper to verify order was created correctly (TEMPO-DEX2)
@@ -157,29 +190,13 @@ contract StablecoinDEXInvariantTest is BaseTest {
         address token,
         uint128 amount,
         int16 tick,
-        bool isBid
+        bool isBid,
+        uint256 actorBalanceBeforePlace
     ) internal {
-        uint128 balanceBeforePathUsd = exchange.balanceOf(actor, address(pathUSD));
-        uint128 balanceBeforeToken = exchange.balanceOf(actor, token);
-
-        exchange.cancel(orderId);
-
-        // TEMPO-DEX3: Cancel refunds correct amounts to internal balance
         if (isBid) {
-            uint32 price = exchange.tickToPrice(tick);
-            uint128 expectedEscrow = uint128(
-                (uint256(amount) * uint256(price) + exchange.PRICE_SCALE() - 1)
-                    / uint256(exchange.PRICE_SCALE())
-            );
-            uint128 balanceAfter = exchange.balanceOf(actor, address(pathUSD));
-            assertEq(
-                balanceAfter - balanceBeforePathUsd, expectedEscrow, "TEMPO-DEX3: bid cancel refund mismatch"
-            );
-            exchange.withdraw(address(pathUSD), expectedEscrow);
+            _cancelAndVerifyBidRefund(orderId, actor, token, amount, tick, actorBalanceBeforePlace);
         } else {
-            uint128 balanceAfter = exchange.balanceOf(actor, token);
-            assertEq(balanceAfter - balanceBeforeToken, amount, "TEMPO-DEX3: ask cancel refund mismatch");
-            exchange.withdraw(token, amount);
+            _cancelAndVerifyAskRefund(orderId, actor, token, amount, actorBalanceBeforePlace);
         }
 
         // Verify order no longer exists
@@ -192,6 +209,91 @@ contract StablecoinDEXInvariantTest is BaseTest {
                 "TEMPO-DEX3: unexpected error on getOrder"
             );
         }
+    }
+
+    /// @dev Helper to cancel and verify bid refund (TEMPO-DEX3)
+    function _cancelAndVerifyBidRefund(
+        uint128 orderId,
+        address actor,
+        address token,
+        uint128 amount,
+        int16 tick,
+        uint256 actorBalanceBeforePlace
+    ) internal {
+        uint128 balanceBefore = exchange.balanceOf(actor, address(pathUSD));
+        uint256 dexBalanceBefore = pathUSD.balanceOf(address(exchange));
+        uint256 actorExternalBefore = pathUSD.balanceOf(actor);
+
+        exchange.cancel(orderId);
+
+        uint32 price = exchange.tickToPrice(tick);
+        uint128 expectedEscrow = uint128(
+            (uint256(amount) * uint256(price) + exchange.PRICE_SCALE() - 1)
+                / uint256(exchange.PRICE_SCALE())
+        );
+
+        uint128 balanceAfter = exchange.balanceOf(actor, address(pathUSD));
+        assertEq(
+            balanceAfter - balanceBefore, expectedEscrow, "TEMPO-DEX3: bid cancel refund mismatch"
+        );
+
+        uint128 withdrawAmount = balanceAfter;
+        exchange.withdraw(address(pathUSD), withdrawAmount);
+
+        uint256 dexBalanceAfter = pathUSD.balanceOf(address(exchange));
+        assertEq(
+            dexBalanceBefore - dexBalanceAfter,
+            withdrawAmount,
+            "TEMPO-DEX3: DEX pathUSD balance did not decrease correctly"
+        );
+        assertEq(
+            pathUSD.balanceOf(actor),
+            actorExternalBefore + withdrawAmount,
+            "TEMPO-DEX3: actor pathUSD balance did not increase correctly"
+        );
+        assertGe(
+            pathUSD.balanceOf(actor),
+            actorBalanceBeforePlace,
+            "TEMPO-DEX3: actor pathUSD balance less than before place"
+        );
+    }
+
+    /// @dev Helper to cancel and verify ask refund (TEMPO-DEX3)
+    function _cancelAndVerifyAskRefund(
+        uint128 orderId,
+        address actor,
+        address token,
+        uint128 amount,
+        uint256 actorBalanceBeforePlace
+    ) internal {
+        uint128 balanceBefore = exchange.balanceOf(actor, token);
+        uint256 dexBalanceBefore = TIP20(token).balanceOf(address(exchange));
+        uint256 actorExternalBefore = TIP20(token).balanceOf(actor);
+
+        exchange.cancel(orderId);
+
+        uint128 balanceAfter = exchange.balanceOf(actor, token);
+        assertEq(balanceAfter - balanceBefore, amount, "TEMPO-DEX3: ask cancel refund mismatch");
+
+        uint128 withdrawAmount = balanceAfter;
+        exchange.withdraw(token, withdrawAmount);
+
+        uint256 dexBalanceAfter = TIP20(token).balanceOf(address(exchange));
+        assertEq(
+            dexBalanceBefore - dexBalanceAfter,
+            withdrawAmount,
+            "TEMPO-DEX3: DEX token balance did not decrease correctly"
+        );
+        assertEq(
+            TIP20(token).balanceOf(actor),
+            actorExternalBefore + withdrawAmount,
+            "TEMPO-DEX3: actor token balance did not increase correctly"
+        );
+        assertGe(
+            TIP20(token).balanceOf(actor),
+            actorBalanceBeforePlace,
+            "TEMPO-DEX3: actor token balance less than before place"
+        );
     }
 
     /// @notice Fuzz handler: Places a flip order that auto-flips when filled
@@ -247,7 +349,47 @@ contract StablecoinDEXInvariantTest is BaseTest {
 
         _placedOrders[actor].push(orderId);
 
+        // Log the action
+        _logFlipOrder(actor, orderId, amount, token.symbol(), tick, flipTick, isBid);
+
         vm.stopPrank();
+        _logBalances();
+    }
+
+    /// @dev Helper to log flip order placement to avoid stack too deep
+    function _logFlipOrder(
+        address actor,
+        uint128 orderId,
+        uint128 amount,
+        string memory tokenSymbol,
+        int16 tick,
+        int16 flipTick,
+        bool isBid
+    ) internal {
+        string memory escrowToken = isBid ? "pathUSD" : tokenSymbol;
+        string memory receiveToken = isBid ? tokenSymbol : "pathUSD";
+        _log(
+            string.concat(
+                _getActorIndex(actor),
+                " placed flip ",
+                isBid ? "bid" : "ask",
+                " order #",
+                vm.toString(orderId),
+                " for ",
+                vm.toString(amount),
+                " ",
+                tokenSymbol,
+                " at tick ",
+                vm.toString(tick),
+                " -> flipTick ",
+                vm.toString(flipTick),
+                " (escrow: ",
+                escrowToken,
+                ", receive: ",
+                receiveToken,
+                ")"
+            )
+        );
     }
 
     /// @dev Struct to capture swapper balances before swap to avoid stack too deep
@@ -277,21 +419,18 @@ contract StablecoinDEXInvariantTest is BaseTest {
         address swapper = _actors[swapperRnd % _actors.length];
         amount = uint128(bound(amount, 100_000_000, 1_000_000_000));
 
-        // Select tokenIn and tokenOut from available tokens (base tokens + pathUSD)
-        // tokenIn can be a base token or pathUSD, tokenOut is the opposite side
-        TIP20 baseToken = _tokens[tokenInRnd % _tokens.length];
+        // Select tokenIn and tokenOut from all available tokens (base tokens + pathUSD)
+        // This allows any-to-any token swaps (e.g., T1->T2, T1->pathUSD, pathUSD->T3, etc.)
+        address tokenIn = _selectToken(tokenInRnd);
+        address tokenOut = _selectToken(tokenOutRnd);
 
-        // Determine swap direction: base -> pathUSD or pathUSD -> base
-        bool sellBase = tokenOutRnd % 2 == 0;
-        address tokenIn = sellBase ? address(baseToken) : address(pathUSD);
-        address tokenOut = sellBase ? address(pathUSD) : address(baseToken);
+        // Skip if same token (can't swap token for itself)
+        if (tokenIn == tokenOut) {
+            return;
+        }
 
         // Ensure swapper has enough of tokenIn
-        if (sellBase) {
-            _ensureFunds(swapper, baseToken, amount);
-        } else {
-            _ensureFunds(swapper, pathUSD, amount);
-        }
+        _ensureFunds(swapper, TIP20(tokenIn), amount);
 
         // Check if swapper has active orders - if so, skip TEMPO-DEX14 balance checks
         // because self-trade makes the accounting complex (maker proceeds returned to swapper)
@@ -317,6 +456,7 @@ contract StablecoinDEXInvariantTest is BaseTest {
         _nextOrderId = exchange.nextOrderId();
 
         vm.stopPrank();
+        _logBalances();
     }
 
     /// @notice Fuzz handler: Blacklists an actor, has another actor cancel their stale orders, then whitelists again
@@ -412,12 +552,24 @@ contract StablecoinDEXInvariantTest is BaseTest {
                             "TEMPO-DEX13: unexpected error on getOrder"
                         );
                     }
+
+                    // Log successful stale order cancellation
+                    _log(
+                        string.concat(
+                            _getActorIndex(canceller),
+                            " cancelled stale order #",
+                            vm.toString(orderId),
+                            " of blacklisted ",
+                            _getActorIndex(blacklistedActor)
+                        )
+                    );
                 }
             } catch {
                 // Order was already filled or cancelled
             }
         }
         vm.stopPrank();
+        _logBalances();
 
         // Whitelist the actor again so they can continue to be used in tests
         if (forBids) {
@@ -617,8 +769,11 @@ contract StablecoinDEXInvariantTest is BaseTest {
             quotedOut = 0;
         }
 
-        try exchange.swapExactAmountIn(before.tokenIn, before.tokenOut, amount, amount - 100)
-        returns (uint128 amountOut) {
+        try exchange.swapExactAmountIn(
+            before.tokenIn, before.tokenOut, amount, amount - 100
+        ) returns (
+            uint128 amountOut
+        ) {
             // TEMPO-DEX4: amountOut >= minAmountOut
             assertTrue(
                 amountOut >= amount - 100, "TEMPO-DEX4: swap exact amountOut less than minAmountOut"
@@ -634,6 +789,21 @@ contract StablecoinDEXInvariantTest is BaseTest {
             if (quotedOut > 0) {
                 //assertEq(amountOut, quotedOut, "TEMPO-DEX16: quote mismatch for swapExactAmountIn");
             }
+
+            // Log successful swap
+            _log(
+                string.concat(
+                    _getActorIndex(swapper),
+                    " swapExactAmountIn: ",
+                    vm.toString(amount),
+                    " ",
+                    TIP20(before.tokenIn).symbol(),
+                    " -> ",
+                    vm.toString(amountOut),
+                    " ",
+                    TIP20(before.tokenOut).symbol()
+                )
+            );
         } catch (bytes memory reason) {
             _assertKnownSwapError(reason);
         }
@@ -656,8 +826,11 @@ contract StablecoinDEXInvariantTest is BaseTest {
             quotedIn = 0;
         }
 
-        try exchange.swapExactAmountOut(before.tokenIn, before.tokenOut, amount, amount + 100)
-        returns (uint128 amountIn) {
+        try exchange.swapExactAmountOut(
+            before.tokenIn, before.tokenOut, amount, amount + 100
+        ) returns (
+            uint128 amountIn
+        ) {
             // TEMPO-DEX5: amountIn <= maxAmountIn
             assertTrue(
                 amountIn <= amount + 100, "TEMPO-DEX5: swap exact amountIn greater than maxAmountIn"
@@ -673,6 +846,21 @@ contract StablecoinDEXInvariantTest is BaseTest {
             if (quotedIn > 0) {
                 //assertEq(amountIn, quotedIn, "TEMPO-DEX16: quote mismatch for swapExactAmountOut");
             }
+
+            // Log successful swap
+            _log(
+                string.concat(
+                    _getActorIndex(swapper),
+                    " swapExactAmountOut: ",
+                    vm.toString(amountIn),
+                    " ",
+                    TIP20(before.tokenIn).symbol(),
+                    " -> ",
+                    vm.toString(amount),
+                    " ",
+                    TIP20(before.tokenOut).symbol()
+                )
+            );
         } catch (bytes memory reason) {
             _assertKnownSwapError(reason);
         }
@@ -847,6 +1035,19 @@ contract StablecoinDEXInvariantTest is BaseTest {
         return actorsAddress;
     }
 
+    /// @dev Selects a token from all available tokens (base tokens + pathUSD)
+    /// @param rnd Random seed for selection
+    /// @return The selected token address
+    function _selectToken(uint256 rnd) internal view returns (address) {
+        // Pool of tokens: pathUSD + all base tokens
+        uint256 totalTokens = _tokens.length + 1;
+        uint256 index = rnd % totalTokens;
+        if (index == 0) {
+            return address(pathUSD);
+        }
+        return address(_tokens[index - 1]);
+    }
+
     /// @notice Ensures an actor has sufficient token balances for testing
     /// @dev Mints tokens if actor's balance is below the required amount
     /// @param actor The actor address to fund
@@ -875,6 +1076,92 @@ contract StablecoinDEXInvariantTest is BaseTest {
             }
         }
         vm.stopPrank();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                              LOGGING
+    //////////////////////////////////////////////////////////////*/
+
+    /// @dev Logs an action message to the exchange.log file
+    function _log(string memory message) internal {
+        vm.writeLine(LOG_FILE, message);
+    }
+
+    /// @dev Logs exchange balances for all tokens
+    function _logBalances() internal {
+        string memory balanceStr = string.concat(
+            "DEX balances: pathUSD=", vm.toString(pathUSD.balanceOf(address(exchange)))
+        );
+        for (uint256 t = 0; t < _tokens.length; t++) {
+            balanceStr = string.concat(
+                balanceStr,
+                ", ",
+                _tokens[t].symbol(),
+                "=",
+                vm.toString(_tokens[t].balanceOf(address(exchange)))
+            );
+        }
+        _log(balanceStr);
+    }
+
+    /// @dev Gets actor index from address for logging
+    function _getActorIndex(address actor) internal view returns (string memory) {
+        for (uint256 i = 0; i < _actors.length; i++) {
+            if (_actors[i] == actor) {
+                return string.concat("Actor", vm.toString(i));
+            }
+        }
+        return vm.toString(actor);
+    }
+
+    /// @dev Helper to log order placement to avoid stack too deep
+    function _logPlaceOrder(
+        address actor,
+        uint128 orderId,
+        uint128 amount,
+        string memory tokenSymbol,
+        int16 tick,
+        bool isBid
+    ) internal {
+        string memory escrowToken = isBid ? "pathUSD" : tokenSymbol;
+        string memory receiveToken = isBid ? tokenSymbol : "pathUSD";
+        _log(
+            string.concat(
+                _getActorIndex(actor),
+                " placed ",
+                isBid ? "bid" : "ask",
+                " order #",
+                vm.toString(orderId),
+                " for ",
+                vm.toString(amount),
+                " ",
+                tokenSymbol,
+                " at tick ",
+                vm.toString(tick),
+                " (escrow: ",
+                escrowToken,
+                ", receive: ",
+                receiveToken,
+                ")"
+            )
+        );
+    }
+
+    /// @dev Helper to log order cancellation to avoid stack too deep
+    function _logCancelOrder(address actor, uint128 orderId, bool isBid, string memory tokenSymbol)
+        internal
+    {
+        string memory refundToken = isBid ? "pathUSD" : tokenSymbol;
+        _log(
+            string.concat(
+                _getActorIndex(actor),
+                " cancelled order #",
+                vm.toString(orderId),
+                " (refund: ",
+                refundToken,
+                ")"
+            )
+        );
     }
 
 }
