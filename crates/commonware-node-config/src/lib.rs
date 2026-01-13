@@ -133,7 +133,7 @@ impl EncryptionKey {
         buf
     }
 
-    pub fn decrypt(&self, encoded: &[u8]) -> Result<Vec<u8>, DecryptError> {
+    fn decrypt(&self, encoded: &[u8]) -> Result<Vec<u8>, DecryptError> {
         let Some((nonce, ciphertext)) =
             encoded.split_at_checked(<ChaCha20Poly1305 as AeadCore>::NonceSize::USIZE)
         else {
