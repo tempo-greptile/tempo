@@ -49,6 +49,7 @@ use crate::{
     error::{FeePaymentError, TempoHaltReason},
     evm::TempoContext,
 };
+use tempo_chainspec::hardfork::TempoHardfork;
 
 /// Additional gas for P256 signature verification
 /// P256 precompile cost (6900 from EIP-7951) + 1100 for 129 bytes extra signature size - ecrecover savings (3000)
@@ -244,6 +245,7 @@ where
         &mut self,
         evm: &mut TempoEvm<DB, I>,
         init_and_floor_gas: &InitialAndFloorGas,
+        spec: TempoHardfork,
         mut run_loop: F,
     ) -> Result<FrameResult, EVMError<DB::Error, TempoInvalidTransaction>>
     where
@@ -253,7 +255,18 @@ where
             <<TempoEvm<DB, I> as EvmTr>::Frame as FrameTr>::FrameInit,
         ) -> Result<FrameResult, EVMError<DB::Error, TempoInvalidTransaction>>,
     {
-        let gas_limit = evm.ctx().tx().gas_limit() - init_and_floor_gas.initial_gas;
+        let gas_limit = if spec.is_t0() {
+            evm.ctx()
+                .tx()
+                .gas_limit()
+                .checked_sub(init_and_floor_gas.initial_gas)
+                .ok_or(TempoInvalidTransaction::ArithmeticUnderOverflow)?
+        } else {
+            #[allow(clippy::arithmetic_side_effects)]
+            {
+                evm.ctx().tx().gas_limit() - init_and_floor_gas.initial_gas
+            }
+        };
 
         // Create first frame action
         let first_frame_input = self.first_frame_input(evm, gas_limit)?;
@@ -274,8 +287,9 @@ where
         &mut self,
         evm: &mut TempoEvm<DB, I>,
         init_and_floor_gas: &InitialAndFloorGas,
+        spec: TempoHardfork,
     ) -> Result<FrameResult, EVMError<DB::Error, TempoInvalidTransaction>> {
-        self.execute_single_call_with(evm, init_and_floor_gas, Self::run_exec_loop)
+        self.execute_single_call_with(evm, init_and_floor_gas, spec, Self::run_exec_loop)
     }
 
     /// Generic multi-call execution that works with both standard and inspector exec loops.
@@ -298,6 +312,7 @@ where
         evm: &mut TempoEvm<DB, I>,
         init_and_floor_gas: &InitialAndFloorGas,
         calls: Vec<tempo_primitives::transaction::Call>,
+        spec: TempoHardfork,
         mut execute_single: F,
     ) -> Result<FrameResult, EVMError<DB::Error, TempoInvalidTransaction>>
     where
@@ -311,7 +326,16 @@ where
         let checkpoint = evm.ctx().journal_mut().checkpoint();
 
         let gas_limit = evm.ctx().tx().gas_limit();
-        let mut remaining_gas = gas_limit - init_and_floor_gas.initial_gas;
+        let mut remaining_gas = if spec.is_t0() {
+            gas_limit
+                .checked_sub(init_and_floor_gas.initial_gas)
+                .ok_or(TempoInvalidTransaction::ArithmeticUnderOverflow)?
+        } else {
+            #[allow(clippy::arithmetic_side_effects)]
+            {
+                gas_limit - init_and_floor_gas.initial_gas
+            }
+        };
         let mut accumulated_gas_refund = 0i64;
 
         // Store original TxEnv values to restore after batch execution
@@ -380,7 +404,17 @@ where
 
                 // Include gas from all previous successful calls + failed call
                 let gas_spent_by_failed_call = frame_result.gas().spent();
-                let total_gas_spent = (gas_limit - remaining_gas)
+                let gas_used_so_far = if spec.is_t0() {
+                    gas_limit
+                        .checked_sub(remaining_gas)
+                        .ok_or(TempoInvalidTransaction::ArithmeticUnderOverflow)?
+                } else {
+                    #[allow(clippy::arithmetic_side_effects)]
+                    {
+                        gas_limit - remaining_gas
+                    }
+                };
+                let total_gas_spent = gas_used_so_far
                     .checked_add(gas_spent_by_failed_call)
                     .ok_or_else(|| EVMError::Custom("total gas spent overflow".to_string()))?;
 
@@ -420,7 +454,16 @@ where
         let mut result =
             final_result.ok_or_else(|| EVMError::Custom("No calls executed".into()))?;
 
-        let total_gas_spent = gas_limit - remaining_gas;
+        let total_gas_spent = if spec.is_t0() {
+            gas_limit
+                .checked_sub(remaining_gas)
+                .ok_or(TempoInvalidTransaction::ArithmeticUnderOverflow)?
+        } else {
+            #[allow(clippy::arithmetic_side_effects)]
+            {
+                gas_limit - remaining_gas
+            }
+        };
 
         // Create new Gas with correct limit, because Gas does not have a set_limit method
         // (the frame_result has the limit from just the last call)
@@ -438,8 +481,11 @@ where
         evm: &mut TempoEvm<DB, I>,
         init_and_floor_gas: &InitialAndFloorGas,
         calls: Vec<tempo_primitives::transaction::Call>,
+        spec: TempoHardfork,
     ) -> Result<FrameResult, EVMError<DB::Error, TempoInvalidTransaction>> {
-        self.execute_multi_call_with(evm, init_and_floor_gas, calls, Self::execute_single_call)
+        self.execute_multi_call_with(evm, init_and_floor_gas, calls, spec, |handler, evm, gas| {
+            handler.execute_single_call(evm, gas, spec)
+        })
     }
 
     /// Executes a standard single-call transaction with inspector support.
@@ -450,11 +496,12 @@ where
         &mut self,
         evm: &mut TempoEvm<DB, I>,
         init_and_floor_gas: &InitialAndFloorGas,
+        spec: TempoHardfork,
     ) -> Result<FrameResult, EVMError<DB::Error, TempoInvalidTransaction>>
     where
         I: Inspector<TempoContext<DB>, EthInterpreter>,
     {
-        self.execute_single_call_with(evm, init_and_floor_gas, Self::inspect_run_exec_loop)
+        self.execute_single_call_with(evm, init_and_floor_gas, spec, Self::inspect_run_exec_loop)
     }
 
     /// Executes a multi-call AA transaction atomically with inspector support.
@@ -466,16 +513,14 @@ where
         evm: &mut TempoEvm<DB, I>,
         init_and_floor_gas: &InitialAndFloorGas,
         calls: Vec<tempo_primitives::transaction::Call>,
+        spec: TempoHardfork,
     ) -> Result<FrameResult, EVMError<DB::Error, TempoInvalidTransaction>>
     where
         I: Inspector<TempoContext<DB>, EthInterpreter>,
     {
-        self.execute_multi_call_with(
-            evm,
-            init_and_floor_gas,
-            calls,
-            Self::inspect_execute_single_call,
-        )
+        self.execute_multi_call_with(evm, init_and_floor_gas, calls, spec, |handler, evm, gas| {
+            handler.inspect_execute_single_call(evm, gas, spec)
+        })
     }
 }
 
@@ -527,14 +572,32 @@ where
             init_and_floor_gas.floor_gas,
         );
 
+        // Extract spec and gas_limit before the if-let to avoid borrow checker issues
+        let spec: TempoHardfork = evm.ctx_ref().cfg().spec();
+        let gas_limit = evm.ctx().tx().gas_limit();
+        let aa_calls = evm
+            .ctx()
+            .tx()
+            .tempo_tx_env
+            .as_ref()
+            .map(|env| env.aa_calls.clone());
+
         // Check if this is an AA transaction by checking for tempo_tx_env
-        if let Some(tempo_tx_env) = evm.ctx().tx().tempo_tx_env.as_ref() {
+        if let Some(calls) = aa_calls {
+            // T0: Ensure gas limit covers 2D nonce cost before AA execution
+            if spec.is_t0() && gas_limit < adjusted_gas.initial_gas {
+                return Err(TempoInvalidTransaction::InsufficientGasForIntrinsicCost {
+                    gas_limit,
+                    intrinsic_gas: adjusted_gas.initial_gas,
+                }
+                .into());
+            }
+
             // AA transaction - use batch execution with calls field
-            let calls = tempo_tx_env.aa_calls.clone();
-            self.execute_multi_call(evm, &adjusted_gas, calls)
+            self.execute_multi_call(evm, &adjusted_gas, calls, spec)
         } else {
             // Standard transaction - use single-call execution
-            self.execute_single_call(evm, &adjusted_gas)
+            self.execute_single_call(evm, &adjusted_gas, spec)
         }
     }
 
@@ -1484,14 +1547,32 @@ where
             init_and_floor_gas.floor_gas,
         );
 
+        // Extract spec and gas_limit before the if-let to avoid borrow checker issues
+        let spec: TempoHardfork = evm.ctx_ref().cfg().spec();
+        let gas_limit = evm.ctx().tx().gas_limit();
+        let aa_calls = evm
+            .ctx()
+            .tx()
+            .tempo_tx_env
+            .as_ref()
+            .map(|env| env.aa_calls.clone());
+
         // Check if this is an AA transaction by checking for tempo_tx_env
-        if let Some(tempo_tx_env) = evm.ctx().tx().tempo_tx_env.as_ref() {
+        if let Some(calls) = aa_calls {
+            // T0: Ensure gas limit covers 2D nonce cost before AA execution
+            if spec.is_t0() && gas_limit < adjusted_gas.initial_gas {
+                return Err(TempoInvalidTransaction::InsufficientGasForIntrinsicCost {
+                    gas_limit,
+                    intrinsic_gas: adjusted_gas.initial_gas,
+                }
+                .into());
+            }
+
             // AA transaction - use batch execution with calls field
-            let calls = tempo_tx_env.aa_calls.clone();
-            self.inspect_execute_multi_call(evm, &adjusted_gas, calls)
+            self.inspect_execute_multi_call(evm, &adjusted_gas, calls, spec)
         } else {
             // Standard transaction - use single-call execution
-            self.inspect_execute_single_call(evm, &adjusted_gas)
+            self.inspect_execute_single_call(evm, &adjusted_gas, spec)
         }
     }
 }
@@ -2299,6 +2380,7 @@ mod tests {
             &mut evm,
             &InitialAndFloorGas::new(INTRINSIC_GAS, 0),
             calls,
+            TempoHardfork::default(),
             |_handler, _evm, _gas| {
                 let (spent, refund) = calls_gas[call_idx];
                 call_idx += 1;
@@ -2334,5 +2416,76 @@ mod tests {
             INTRINSIC_GAS + SPENT.0 + SPENT.1 - (REFUND.0 + REFUND.1) as u64,
             "used() should be spent - refund"
         );
+    }
+
+    #[test]
+    fn test_2d_nonce_gas_limit_validation() {
+        use crate::evm::TempoEvm;
+        use alloy_primitives::{Bytes, TxKind};
+        use revm::{
+            Context, Journal,
+            context::CfgEnv,
+            database::{CacheDB, EmptyDB},
+            handler::Handler,
+        };
+        use tempo_primitives::transaction::Call;
+
+        const INTRINSIC_GAS: u64 = 21_000;
+
+        // Test cases: (gas_limit, should_succeed)
+        let cases = [
+            (INTRINSIC_GAS + 10_000, false), // Insufficient for 2D nonce
+            (INTRINSIC_GAS + NEW_NONCE_KEY_GAS + 1000, true), // Sufficient
+        ];
+
+        for (gas_limit, should_succeed) in cases {
+            let db = CacheDB::new(EmptyDB::default());
+            let journal = Journal::new(db);
+            let ctx = Context::mainnet()
+                .with_db(CacheDB::new(EmptyDB::default()))
+                .with_block(TempoBlockEnv::default())
+                .with_cfg(CfgEnv::<TempoHardfork>::default().with_spec(TempoHardfork::T0))
+                .with_tx(TempoTxEnv {
+                    inner: revm::context::TxEnv {
+                        gas_limit,
+                        ..Default::default()
+                    },
+                    // Set tempo_tx_env with a call to trigger AA path
+                    tempo_tx_env: Some(Box::new(TempoBatchCallEnv {
+                        aa_calls: vec![Call {
+                            to: TxKind::Call(Address::random()),
+                            value: U256::ZERO,
+                            input: Bytes::new(),
+                        }],
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })
+                .with_new_journal(journal);
+
+            let mut evm: TempoEvm<_, ()> = TempoEvm::new(ctx, ());
+            evm.nonce_2d_gas = NEW_NONCE_KEY_GAS;
+
+            let mut handler: TempoEvmHandler<CacheDB<EmptyDB>, ()> = TempoEvmHandler::new();
+            let init_and_floor_gas = InitialAndFloorGas::new(INTRINSIC_GAS, 0);
+
+            let result = handler.execution(&mut evm, &init_and_floor_gas);
+
+            if should_succeed {
+                assert!(result.is_ok());
+            } else {
+                let err = result.expect_err("gas_limit={gas_limit}: should fail");
+                match err.as_invalid_tx_err() {
+                    Some(TempoInvalidTransaction::InsufficientGasForIntrinsicCost {
+                        gas_limit: gl,
+                        intrinsic_gas,
+                    }) => {
+                        assert_eq!(*gl, gas_limit);
+                        assert_eq!(*intrinsic_gas, INTRINSIC_GAS + NEW_NONCE_KEY_GAS);
+                    }
+                    _ => panic!("Expected InsufficientGasForIntrinsicCost, got: {err:?}"),
+                }
+            }
+        }
     }
 }
