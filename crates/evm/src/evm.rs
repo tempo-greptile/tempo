@@ -11,7 +11,6 @@ use alloy_primitives::{Address, Bytes, Log, TxKind};
 use reth_revm::{
     InspectSystemCallEvm, MainContext,
     context::result::ExecutionResult,
-    revm::context_interface::cfg::{GasId, GasParams},
 };
 use std::ops::{Deref, DerefMut};
 use tempo_chainspec::hardfork::TempoHardfork;

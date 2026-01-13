@@ -545,6 +545,7 @@ where
     #[inline]
     fn apply_eip7702_auth_list(&self, evm: &mut Self::Evm) -> Result<u64, Self::Error> {
         let ctx = evm.ctx();
+        let spec = *ctx.cfg().spec();
 
         // Check if this is an AA transaction with an authorization list
         let has_aa_auth_list = ctx
@@ -560,15 +561,22 @@ where
             let chain_id = ctx.cfg().chain_id();
             let (tx, journal) = evm.ctx().tx_journal_mut();
 
-            let refunded_gas = apply_auth_list::<_, EVMError<DB::Error, TempoInvalidTransaction>>(
-                chain_id,
-                tx.tempo_tx_env
-                    .as_ref()
-                    .unwrap()
-                    .tempo_authorization_list
-                    .iter(),
-                journal,
-            )?;
+            let mut refunded_gas =
+                apply_auth_list::<_, EVMError<DB::Error, TempoInvalidTransaction>>(
+                    chain_id,
+                    tx.tempo_tx_env
+                        .as_ref()
+                        .unwrap()
+                        .tempo_authorization_list
+                        .iter(),
+                    journal,
+                )?;
+            // TIP-1000: State Creation Cost Increase
+            // Authorization lists: There is no refund if the account already exists
+            if spec.t1_active() {
+                refunded_gas = 0;
+            }
+
             return Ok(refunded_gas);
         }
 
@@ -1127,7 +1135,7 @@ where
         // Tempo transactions with any `nonce_key` and `nonce == 0` require an additional 250,000 gas
         // TODO(rakita): check if this is needed for `validate_aa_initial_tx_gas` function.
         if tx.nonce == 0 {
-            // TODO(rakita): make simpler function
+            // TODO(rakita): make simpler function that give only the value without additional checks.
             init_gas.initial_gas += gas_params.new_account_cost(true, true);
         }
 

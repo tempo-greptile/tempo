@@ -47,6 +47,12 @@ hardfork!(
     }
 );
 
+impl TempoHardfork {
+    pub fn t1_active(&self) -> bool {
+       *self >= Self::T1
+    }
+}
+
 /// Trait for querying Tempo-specific hardfork activations.
 pub trait TempoHardforks: EthereumHardforks {
     /// Retrieves activation condition for a Tempo-specific hardfork
