@@ -58,8 +58,10 @@ contract TIP20InvariantTest is InvariantBaseTest {
         _actors = _buildActors(20);
 
         // Track initial mints from _buildActors
+        // _ensureFundsAll mints (amount + 100_000_000) per actor when balance < amount
+        // = 1_000_000_000_000 + 100_000_000 = 1_000_100_000_000 per actor
         for (uint256 i = 0; i < _tokens.length; i++) {
-            _tokenMintSum[address(_tokens[i])] = 20 * 1_000_000_000_000;
+            _tokenMintSum[address(_tokens[i])] = 20 * 1_000_100_000_000;
         }
 
         // Register all initially known addresses for each token
@@ -1117,16 +1119,14 @@ contract TIP20InvariantTest is InvariantBaseTest {
         }
     }
 
-    /// @notice TEMPO-TIP18: Supply conservation - totalSupply = initial + mints - burns per token
+    /// @notice TEMPO-TIP18: Supply conservation - totalSupply = mints - burns per token
     function _invariantSupplyConservation() internal view {
         for (uint256 i = 0; i < _tokens.length; i++) {
             TIP20 token = _tokens[i];
             address tokenAddr = address(token);
 
-            // Initial supply from _buildActors: 20 actors * 1_000_000_000_000 each
-            uint256 initialSupply = 20 * 1_000_000_000_000;
-            uint256 expectedSupply =
-                initialSupply + _tokenMintSum[tokenAddr] - _tokenBurnSum[tokenAddr];
+            // _tokenMintSum includes the initial supply from _buildActors (set in setUp)
+            uint256 expectedSupply = _tokenMintSum[tokenAddr] - _tokenBurnSum[tokenAddr];
 
             assertEq(
                 token.totalSupply(), expectedSupply, "TEMPO-TIP18: Supply conservation violated"
