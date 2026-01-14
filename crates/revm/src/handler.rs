@@ -926,6 +926,13 @@ where
             })?;
         }
 
+        // Set the fee token in transient storage so smart contracts can query it.
+        // This must happen before the short-circuit below to ensure fee_token is always available.
+        StorageCtx::enter_evm(journal, &block, cfg, || {
+            TipFeeManager::new().set_fee_token(self.fee_token)
+        })
+        .map_err(|e| EVMError::Custom(e.to_string()))?;
+
         // Short-circuit if there is no spending for this transaction and `collectFeePreTx`
         // call will not collect any fees.
         if gas_balance_spending.is_zero() {

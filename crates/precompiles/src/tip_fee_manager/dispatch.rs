@@ -37,6 +37,11 @@ impl Precompile for TipFeeManager {
             .map_err(|_| PrecompileError::OutOfGas)?;
 
         dispatch_call(calldata, TipFeeManagerCall::decode, |call| match call {
+            // IFeeManager transaction introspection
+            TipFeeManagerCall::FeeManager(IFeeManagerCalls::feeToken(call)) => {
+                view(call, |_| self.get_fee_token())
+            }
+
             // IFeeManager view functions
             TipFeeManagerCall::FeeManager(IFeeManagerCalls::userTokens(call)) => {
                 view(call, |c| self.user_tokens(c))
@@ -153,6 +158,34 @@ mod tests {
     use tempo_contracts::precompiles::{
         IFeeManager, IFeeManager::IFeeManagerCalls, ITIPFeeAMM, ITIPFeeAMM::ITIPFeeAMMCalls,
     };
+
+    #[test]
+    fn test_fee_token() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let sender = Address::random();
+        let fee_token = Address::random();
+        StorageCtx::enter(&mut storage, || {
+            let mut fee_manager = TipFeeManager::new();
+
+            // Initially fee_token should be zero
+            let calldata = IFeeManager::feeTokenCall {}.abi_encode();
+            let result = fee_manager.call(&calldata, sender)?;
+            assert!(!result.reverted);
+            let returned_token = Address::abi_decode(&result.bytes)?;
+            assert_eq!(returned_token, Address::ZERO);
+
+            // Set fee token via transient storage
+            fee_manager.set_fee_token(fee_token)?;
+
+            // Now it should return the set fee token
+            let result = fee_manager.call(&calldata, sender)?;
+            assert!(!result.reverted);
+            let returned_token = Address::abi_decode(&result.bytes)?;
+            assert_eq!(returned_token, fee_token);
+
+            Ok(())
+        })
+    }
 
     #[test]
     fn test_set_validator_token() -> eyre::Result<()> {

@@ -25,6 +25,12 @@ pub struct TipFeeManager {
     pools: Mapping<B256, Pool>,
     total_supply: Mapping<B256, U256>,
     liquidity_balances: Mapping<B256, Mapping<Address, U256>>,
+
+    // WARNING(rusowsky): transient storage slots must always be placed at the very end until the `contract`
+    // macro is refactored and has 2 independent layouts (persistent and transient).
+    // If new (persistent) storage fields need to be added to the precompile, they must go above this one.
+    /// The fee token for the current transaction. Set by the handler before execution.
+    fee_token: Address,
 }
 
 impl TipFeeManager {
@@ -38,6 +44,23 @@ impl TipFeeManager {
     /// This ensures the [`TipFeeManager`] isn't empty and prevents state clear.
     pub fn initialize(&mut self) -> Result<()> {
         self.__initialize()
+    }
+
+    /// Returns the fee token for the current transaction.
+    ///
+    /// This value is set by the handler before transaction execution using `set_fee_token`.
+    /// Uses transient storage, so it's automatically cleared after the transaction.
+    pub fn get_fee_token(&self) -> Result<Address> {
+        self.fee_token.t_read()
+    }
+
+    /// Sets the fee token for the current transaction.
+    ///
+    /// Called by the handler before transaction execution to make the fee token
+    /// accessible to smart contracts during execution.
+    /// Uses transient storage, so it's automatically cleared after the transaction.
+    pub fn set_fee_token(&mut self, token: Address) -> Result<()> {
+        self.fee_token.t_write(token)
     }
 
     pub fn get_validator_token(&self, beneficiary: Address) -> Result<Address> {

@@ -23,6 +23,11 @@ crate::sol! {
             bool hasBeenSet;
         }
 
+        // Transaction introspection
+        /// Returns the fee token for the current transaction.
+        /// This is stored in transient storage at the start of each transaction.
+        function feeToken() external view returns (address);
+
         // User preferences
         function userTokens(address user) external view returns (address);
         function validatorTokens(address validator) external view returns (address);
