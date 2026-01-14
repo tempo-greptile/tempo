@@ -83,8 +83,19 @@ contract StablecoinDEXInvariantTest is InvariantBaseTest {
         address token = address(_tokens[tokenRnd % _tokens.length]);
         amount = uint128(bound(amount, 100_000_000, 10_000_000_000));
 
+        // TEMPO-DEX2: For bids, escrow is ceil(amount * price / PRICE_SCALE)
+        // For asks, escrow is exactly the base token amount
+        uint256 escrowAmount;
+        if (isBid) {
+            uint32 price = exchange.tickToPrice(tick);
+            escrowAmount = (uint256(amount) * uint256(price) + exchange.PRICE_SCALE() - 1)
+                / exchange.PRICE_SCALE();
+        } else {
+            escrowAmount = amount;
+        }
+
         // Ensure funds for the token being escrowed (pathUSD for bids, base token for asks)
-        _ensureFunds(actor, TIP20(isBid ? address(pathUSD) : token), amount);
+        _ensureFunds(actor, TIP20(isBid ? address(pathUSD) : token), escrowAmount);
 
         // Capture actor's token balance before placing order (for cancel verification)
         uint256 actorBalanceBeforePlace =
@@ -174,9 +185,14 @@ contract StablecoinDEXInvariantTest is InvariantBaseTest {
         uint256 totalAfter = externalAfter + internalAfter;
         uint256 escrowed = totalBefore - totalAfter;
 
-        if (escrowed <= expectedEscrow + 1 && escrowed >= expectedEscrow) {
-            _ghostDivisibleEscrowCorrect++;
-        }
+        // TEMPO-DEX20: When (amount * price) % PRICE_SCALE == 0, escrow must be EXACT
+        // No +1 tolerance allowed - ceil should equal floor when perfectly divisible
+        assertEq(
+            escrowed,
+            expectedEscrow,
+            "TEMPO-DEX20: Divisible escrow should be exact (no +1 rounding)"
+        );
+        _ghostDivisibleEscrowCorrect++;
         _placedOrders[actor].push(orderId);
     }
 

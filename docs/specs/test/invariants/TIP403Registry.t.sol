@@ -20,6 +20,9 @@ contract TIP403RegistryInvariantTest is InvariantBaseTest {
     uint256 private _totalBlacklistModifications;
     uint256 private _totalAuthorizationChecks;
 
+    /// @dev Ghost variable for counter monotonicity tracking (TEMPO-REG15)
+    uint64 private _lastSeenCounter;
+
     /// @dev Track created policies
     uint64[] private _createdPolicies;
     mapping(uint64 => address) private _policyCreators;
@@ -469,7 +472,7 @@ contract TIP403RegistryInvariantTest is InvariantBaseTest {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Run all invariant checks
-    function invariant_globalInvariants() public view {
+    function invariant_globalInvariants() public {
         _invariantCounterMonotonicity();
         _invariantSpecialPoliciesExist();
         _invariantCreatedPoliciesExist();
@@ -477,16 +480,23 @@ contract TIP403RegistryInvariantTest is InvariantBaseTest {
         _invariantPolicyMembershipConsistency();
     }
 
-    /// @notice TEMPO-REG15: Policy counter only increases
-    function _invariantCounterMonotonicity() internal view {
+    /// @notice TEMPO-REG15: Policy counter only increases and equals 2 + totalPoliciesCreated
+    function _invariantCounterMonotonicity() internal {
         uint64 counter = registry.policyIdCounter();
-        // Counter starts at 2 (skipping special policies)
+
+        // Counter starts at 2 (skipping special policies 0 and 1)
         assertTrue(counter >= 2, "TEMPO-REG15: Counter should be at least 2");
-        // Counter should be at least 2 + policies created in base + policies created in this test
-        uint64 expectedMin = 2 + uint64(_totalPoliciesCreatedInBase());
-        assertTrue(
-            counter >= expectedMin, "TEMPO-REG15: Counter should be at least base policies + 2"
+
+        // TEMPO-REG15: Counter must equal exactly 2 + total policies created
+        uint64 expectedCounter =
+            2 + uint64(_totalPoliciesCreatedInBase()) + uint64(_totalPoliciesCreated);
+        assertEq(
+            counter, expectedCounter, "TEMPO-REG15: Counter must equal 2 + totalPoliciesCreated"
         );
+
+        // TEMPO-REG15: Counter must only increase (monotonicity)
+        assertGe(counter, _lastSeenCounter, "TEMPO-REG15: Counter must never decrease");
+        _lastSeenCounter = counter;
     }
 
     /// @notice TEMPO-REG13: Special policies 0 and 1 always exist

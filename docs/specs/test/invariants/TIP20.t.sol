@@ -579,12 +579,14 @@ contract TIP20InvariantTest is InvariantBaseTest {
             _registerHolder(address(token), actor);
             _registerHolder(address(token), address(token));
 
-            // TEMPO-TIP12: Global reward per token should increase (or stay same for very small amounts)
+            // TEMPO-TIP12: Global reward per token should increase by exact floor division
+            // Formula: delta = floor(amount * ACC_PRECISION / optedInSupply)
             uint256 globalRPTAfter = token.globalRewardPerToken();
-            assertGe(
+            uint256 expectedDelta = (amount * ACC_PRECISION) / optedInSupply;
+            assertEq(
                 globalRPTAfter,
-                globalRPTBefore,
-                "TEMPO-TIP12: Global reward per token should not decrease"
+                globalRPTBefore + expectedDelta,
+                "TEMPO-TIP12: globalRewardPerToken delta must equal floor(amount * ACC_PRECISION / optedInSupply)"
             );
 
             // TEMPO-TIP13: Tokens should be transferred to the token contract
@@ -608,6 +610,96 @@ contract TIP20InvariantTest is InvariantBaseTest {
             vm.stopPrank();
             _assertKnownError(reason);
         }
+    }
+
+    /// @notice Handler for distributing tiny rewards where delta == 0
+    /// @dev Tests TEMPO-TIP12 edge case: when amount << optedInSupply, delta is 0
+    function distributeRewardTiny(uint256 actorSeed, uint256 tokenSeed) external {
+        address actor = _selectActor(actorSeed);
+        TIP20 token = _selectBaseToken(tokenSeed);
+
+        vm.assume(_isAuthorized(address(token), actor));
+        vm.assume(!token.paused());
+
+        uint128 optedInSupply = token.optedInSupply();
+        vm.assume(optedInSupply > ACC_PRECISION); // Ensure division will result in 0
+
+        // Use amount = 1 where delta = floor(1 * ACC_PRECISION / optedInSupply) = 0
+        uint256 amount = 1;
+        uint256 expectedDelta = (amount * ACC_PRECISION) / optedInSupply;
+        vm.assume(expectedDelta == 0); // Confirm this is indeed a zero-delta case
+
+        uint256 actorBalance = token.balanceOf(actor);
+        vm.assume(actorBalance >= amount);
+
+        uint256 globalRPTBefore = token.globalRewardPerToken();
+
+        vm.startPrank(actor);
+        try token.distributeReward(amount) {
+            vm.stopPrank();
+
+            _registerHolder(address(token), actor);
+            _registerHolder(address(token), address(token));
+
+            // TEMPO-TIP12: When delta == 0, globalRewardPerToken must stay constant
+            uint256 globalRPTAfter = token.globalRewardPerToken();
+            assertEq(
+                globalRPTAfter,
+                globalRPTBefore,
+                "TEMPO-TIP12: Zero-delta distribution should not change globalRewardPerToken"
+            );
+
+            _log(
+                string.concat(
+                    "DISTRIBUTE_REWARD_TINY: ",
+                    _getActorIndex(actor),
+                    " distributed 1 ",
+                    token.symbol(),
+                    " (delta=0)"
+                )
+            );
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            _assertKnownError(reason);
+        }
+    }
+
+    /// @notice Handler for attempting to distribute rewards when optedInSupply == 0
+    /// @dev Tests TEMPO-TIP12 edge case: must revert with NoOptedInSupply when nobody is opted in
+    function distributeRewardZeroOptedIn(uint256 actorSeed, uint256 tokenSeed) external {
+        address actor = _selectActor(actorSeed);
+        TIP20 token = _selectBaseToken(tokenSeed);
+
+        vm.assume(_isAuthorized(address(token), actor));
+        vm.assume(!token.paused());
+
+        uint128 optedInSupply = token.optedInSupply();
+        vm.assume(optedInSupply == 0); // Only test when nobody is opted in
+
+        uint256 actorBalance = token.balanceOf(actor);
+        vm.assume(actorBalance >= 1000);
+
+        vm.startPrank(actor);
+        try token.distributeReward(1000) {
+            vm.stopPrank();
+            revert("TEMPO-TIP12: distributeReward should revert when optedInSupply == 0");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(
+                bytes4(reason),
+                ITIP20.NoOptedInSupply.selector,
+                "TEMPO-TIP12: Should revert with NoOptedInSupply when optedInSupply == 0"
+            );
+        }
+
+        _log(
+            string.concat(
+                "DISTRIBUTE_REWARD_ZERO_OPTED: ",
+                _getActorIndex(actor),
+                " correctly rejected on ",
+                token.symbol()
+            )
+        );
     }
 
     /// @notice Handler for claiming rewards

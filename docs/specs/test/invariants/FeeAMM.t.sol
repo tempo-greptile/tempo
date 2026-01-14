@@ -644,12 +644,15 @@ contract FeeAMMInvariantTest is InvariantBaseTest {
         try amm.rebalanceSwap(userToken, validatorToken, amountOut, actor) returns (
             uint256 amountIn
         ) {
-            // TEMPO-AMM18: Small swaps should still pay >= theoretical rate
-            uint256 theoretical = (amountOut * N) / SCALE;
-            assertTrue(
-                amountIn >= theoretical, "TEMPO-AMM18: Small swap should pay >= theoretical rate"
+            // TEMPO-AMM10/18: Rebalance swap must follow exact formula: amountIn = floor(amountOut * N / SCALE) + 1
+            // This is the exact rounding-up formula that always favors the pool
+            uint256 expectedAmountIn = (amountOut * N) / SCALE + 1;
+            assertEq(
+                amountIn,
+                expectedAmountIn,
+                "TEMPO-AMM18: Small swap amountIn must equal exact formula (floor + 1)"
             );
-            // TEMPO-AMM19: Small swaps should not allow profit
+            // TEMPO-AMM19: Must pay at least 1 for any swap (implicit from +1 in formula)
             assertTrue(amountIn >= 1, "TEMPO-AMM19: Must pay at least 1 for any swap");
         } catch (bytes memory reason) {
             _assertKnownError(reason);

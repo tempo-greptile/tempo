@@ -6,7 +6,7 @@ import { InvariantBaseTest } from "./InvariantBaseTest.t.sol";
 
 /// @title AccountKeychain Invariant Tests
 /// @notice Fuzz-based invariant tests for the AccountKeychain precompile
-/// @dev Tests invariants TEMPO-KEY1 through TEMPO-KEY15 for access key management
+/// @dev Tests invariants TEMPO-KEY1 through TEMPO-KEY16 for access key management
 contract AccountKeychainInvariantTest is InvariantBaseTest {
 
     /// @dev Starting offset for key ID address pool (distinct from zero address)
@@ -575,7 +575,9 @@ contract AccountKeychainInvariantTest is InvariantBaseTest {
         _invariantRevokedKeyState();
     }
 
-    /// @notice TEMPO-KEY13: Key data matches ghost state for all tracked keys
+    /// @notice TEMPO-KEY13 & TEMPO-KEY16: Key data matches ghost state for all tracked keys
+    /// KEY13: expiry, enforceLimits match ghost state
+    /// KEY16: signatureType matches ghost state for all active keys
     function _invariantKeyConsistency() internal view {
         for (uint256 a = 0; a < _actors.length; a++) {
             address account = _actors[a];
@@ -602,10 +604,11 @@ contract AccountKeychainInvariantTest is InvariantBaseTest {
                         _ghostKeyEnforceLimits[account][keyId],
                         "TEMPO-KEY13: EnforceLimits should match"
                     );
+                    // TEMPO-KEY16: Signature type must match ghost state for all active keys
                     assertEq(
                         uint8(info.signatureType),
                         _ghostKeySignatureType[account][keyId],
-                        "TEMPO-KEY13: SignatureType should match"
+                        "TEMPO-KEY16: SignatureType must match ghost state"
                     );
                     assertFalse(info.isRevoked, "TEMPO-KEY13: Active key should not be revoked");
                 }
