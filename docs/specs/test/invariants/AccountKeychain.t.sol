@@ -9,6 +9,9 @@ import { InvariantBaseTest } from "./InvariantBaseTest.t.sol";
 /// @dev Tests invariants TEMPO-KEY1 through TEMPO-KEY15 for access key management
 contract AccountKeychainInvariantTest is InvariantBaseTest {
 
+    /// @dev Starting offset for key ID address pool (distinct from zero address)
+    uint256 private constant KEY_ID_POOL_OFFSET = 1;
+
     /// @dev Potential key IDs
     address[] private _potentialKeyIds;
 
@@ -61,23 +64,14 @@ contract AccountKeychainInvariantTest is InvariantBaseTest {
 
         _setupInvariantBase();
         _actors = _buildActors(10);
-        _potentialKeyIds = _buildKeyIds(20);
+        _potentialKeyIds = _buildAddressPool(20, KEY_ID_POOL_OFFSET);
 
         _initLogFile("account_keychain.log", "AccountKeychain Invariant Test Log");
     }
 
-    /// @dev Creates potential key IDs
-    function _buildKeyIds(uint256 count) internal pure returns (address[] memory) {
-        address[] memory keyIds = new address[](count);
-        for (uint256 i = 0; i < count; i++) {
-            keyIds[i] = address(uint160(0x1001 + i));
-        }
-        return keyIds;
-    }
-
     /// @dev Selects a potential key ID based on seed
     function _selectKeyId(uint256 seed) internal view returns (address) {
-        return _potentialKeyIds[seed % _potentialKeyIds.length];
+        return _selectFromPool(_potentialKeyIds, seed);
     }
 
     /// @dev Generates a valid expiry timestamp

@@ -310,4 +310,61 @@ abstract contract InvariantBaseTest is BaseTest {
             || selector == ITIP20.InvalidQuoteToken.selector;
     }
 
+    /*//////////////////////////////////////////////////////////////
+                          ADDRESS POOL HELPERS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @dev Builds an array of sequential addresses for use as a selection pool
+    /// @param count Number of addresses to generate
+    /// @param startOffset Starting offset for address generation (e.g., 0x1001, 0x2000)
+    /// @return addresses Array of generated addresses
+    function _buildAddressPool(uint256 count, uint256 startOffset)
+        internal
+        pure
+        returns (address[] memory)
+    {
+        address[] memory addresses = new address[](count);
+        for (uint256 i = 0; i < count; i++) {
+            addresses[i] = address(uint160(startOffset + i));
+        }
+        return addresses;
+    }
+
+    /// @dev Selects an address from a pool using a seed
+    /// @param pool The address pool to select from
+    /// @param seed Random seed for selection
+    /// @return Selected address
+    function _selectFromPool(address[] memory pool, uint256 seed) internal pure returns (address) {
+        return pool[seed % pool.length];
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                          STRING UTILITIES
+    //////////////////////////////////////////////////////////////*/
+
+    /// @dev Converts uint8 to string
+    /// @param value The uint8 value to convert
+    /// @return The string representation
+    function _uint8ToString(uint8 value) internal pure returns (string memory) {
+        if (value == 0) {
+            return "0";
+        }
+
+        uint8 temp = value;
+        uint8 digits;
+        while (temp != 0) {
+            digits++;
+            temp /= 10;
+        }
+
+        bytes memory buffer = new bytes(digits);
+        while (value != 0) {
+            digits--;
+            buffer[digits] = bytes1(uint8(48 + value % 10));
+            value /= 10;
+        }
+
+        return string(buffer);
+    }
+
 }

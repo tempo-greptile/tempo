@@ -9,6 +9,9 @@ import { InvariantBaseTest } from "./InvariantBaseTest.t.sol";
 /// @dev Tests invariants TEMPO-VAL1 through TEMPO-VAL15 for validator management
 contract ValidatorConfigInvariantTest is InvariantBaseTest {
 
+    /// @dev Starting offset for validator address pool (distinct from zero address)
+    uint256 private constant VALIDATOR_POOL_OFFSET = 1;
+
     /// @dev Array of potential validator addresses
     address[] private _potentialValidators;
 
@@ -42,24 +45,15 @@ contract ValidatorConfigInvariantTest is InvariantBaseTest {
 
         _setupInvariantBase();
         _actors = _buildActors(10);
-        _potentialValidators = _buildPotentialValidators(20);
+        _potentialValidators = _buildAddressPool(20, VALIDATOR_POOL_OFFSET);
         _ghostOwner = admin;
 
         _initLogFile("validator_config.log", "ValidatorConfig Invariant Test Log");
     }
 
-    /// @dev Creates potential validator addresses
-    function _buildPotentialValidators(uint256 count) internal pure returns (address[] memory) {
-        address[] memory validators = new address[](count);
-        for (uint256 i = 0; i < count; i++) {
-            validators[i] = address(uint160(0x2000 + i));
-        }
-        return validators;
-    }
-
     /// @dev Selects a potential validator address based on seed
     function _selectPotentialValidator(uint256 seed) internal view returns (address) {
-        return _potentialValidators[seed % _potentialValidators.length];
+        return _selectFromPool(_potentialValidators, seed);
     }
 
     /// @dev Generates a public key from seed (non-zero)
@@ -640,29 +634,6 @@ contract ValidatorConfigInvariantTest is InvariantBaseTest {
             || selector == IValidatorConfig.NotHostPort.selector
             || selector == IValidatorConfig.NotIpPort.selector;
         assertTrue(isKnown, "Unknown error encountered");
-    }
-
-    /// @dev Converts uint8 to string
-    function _uint8ToString(uint8 value) internal pure returns (string memory) {
-        if (value == 0) {
-            return "0";
-        }
-
-        uint8 temp = value;
-        uint8 digits;
-        while (temp != 0) {
-            digits++;
-            temp /= 10;
-        }
-
-        bytes memory buffer = new bytes(digits);
-        while (value != 0) {
-            digits--;
-            buffer[digits] = bytes1(uint8(48 + value % 10));
-            value /= 10;
-        }
-
-        return string(buffer);
     }
 
 }
