@@ -3424,4 +3424,348 @@ mod tests {
 
         pool.assert_invariants();
     }
+
+    // ============================================
+    // Transaction ordering / best() priority tests
+    // ============================================
+
+    /// Test that best_transactions() orders by priority fee, not gas limit.
+    #[test]
+    fn test_best_orders_by_fee() {
+        use alloy_consensus::Transaction;
+
+        let mut pool = AA2dPool::default();
+
+        // Two different senders so both transactions are independent/executable
+        let sender_a = Address::from_word(B256::from(U256::from(1)));
+        let sender_b = Address::from_word(B256::from(U256::from(2)));
+
+        // Transaction A: MAX gas limit (30M), but LOWER priority fee (1 gwei)
+        // max_fee = 11 gwei (base_fee + 1 gwei tip)
+        let tx_max_gas_low_fee = TxBuilder::aa(sender_a)
+            .gas_limit(30_000_000) // Max gas limit
+            .max_priority_fee(1_000_000_000) // 1 gwei priority fee
+            .max_fee(11_000_000_000) // 11 gwei max fee (base_fee=10 gwei + 1 gwei tip)
+            .build();
+
+        // Transaction B: normal gas limit (100k), but HIGHER priority fee (5 gwei)
+        // max_fee = 15 gwei (base_fee + 5 gwei tip)
+        let tx_normal_gas_high_fee = TxBuilder::aa(sender_b)
+            .gas_limit(100_000) // Normal gas limit
+            .max_priority_fee(5_000_000_000) // 5 gwei priority fee
+            .max_fee(15_000_000_000) // 15 gwei max fee (base_fee=10 gwei + 5 gwei tip)
+            .build();
+
+        // Verify our test setup: the fees are as expected
+        assert_eq!(
+            tx_max_gas_low_fee.max_priority_fee_per_gas(),
+            Some(1_000_000_000)
+        );
+        assert_eq!(
+            tx_normal_gas_high_fee.max_priority_fee_per_gas(),
+            Some(5_000_000_000)
+        );
+        assert_eq!(tx_max_gas_low_fee.gas_limit(), 30_000_000);
+        assert_eq!(tx_normal_gas_high_fee.gas_limit(), 100_000);
+
+        // Add both transactions to the pool
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_max_gas_low_fee, TransactionOrigin::Local)),
+            0,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_normal_gas_high_fee, TransactionOrigin::Local)),
+            0,
+        )
+        .unwrap();
+
+        // Both should be pending and independent
+        let (pending, queued) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending, 2);
+        assert_eq!(queued, 0);
+        assert_eq!(pool.independent_transactions.len(), 2);
+
+        // Get best transactions - should return HIGH FEE tx first (sender_b)
+        let mut best = pool.best_transactions();
+
+        let first = best.next().expect("Should have first transaction");
+        let second = best.next().expect("Should have second transaction");
+        assert!(best.next().is_none(), "Should only have 2 transactions");
+
+        // The transaction with HIGHER priority fee should come first,
+        // regardless of gas limit
+        assert_eq!(
+            first.sender(),
+            sender_b,
+            "Transaction with higher fee (5 gwei) should come first, but got sender {:?}",
+            first.sender()
+        );
+        assert_eq!(
+            second.sender(),
+            sender_a,
+            "Transaction with lower fee (1 gwei) should come second"
+        );
+
+        // Verify by checking the actual priority fees
+        assert_eq!(
+            first.transaction.max_priority_fee_per_gas(),
+            Some(5_000_000_000),
+            "First tx should have 5 gwei priority fee"
+        );
+        assert_eq!(
+            second.transaction.max_priority_fee_per_gas(),
+            Some(1_000_000_000),
+            "Second tx should have 1 gwei priority fee"
+        );
+
+        pool.assert_invariants();
+    }
+
+    /// Test that equal fees are tie-broken by submission order.
+    #[test]
+    fn test_best_fee_tiebreaker() {
+        let mut pool = AA2dPool::default();
+
+        let sender_a = Address::from_word(B256::from(U256::from(1)));
+        let sender_b = Address::from_word(B256::from(U256::from(2)));
+
+        // Both transactions have the same fees
+        let tx_first = TxBuilder::aa(sender_a)
+            .max_priority_fee(2_000_000_000)
+            .max_fee(12_000_000_000)
+            .build();
+
+        let tx_second = TxBuilder::aa(sender_b)
+            .max_priority_fee(2_000_000_000)
+            .max_fee(12_000_000_000)
+            .build();
+
+        // Add tx_first first
+        pool.add_transaction(Arc::new(wrap_valid_tx(tx_first, TransactionOrigin::Local)), 0)
+            .unwrap();
+        // Add tx_second second
+        pool.add_transaction(Arc::new(wrap_valid_tx(tx_second, TransactionOrigin::Local)), 0)
+            .unwrap();
+
+        let mut best = pool.best_transactions();
+
+        let first = best.next().expect("Should have first transaction");
+        let second = best.next().expect("Should have second transaction");
+
+        // With equal priorities, the one added first (lower submission_id) should come first
+        assert_eq!(
+            first.sender(),
+            sender_a,
+            "Transaction added first should come first when priorities are equal"
+        );
+        assert_eq!(second.sender(), sender_b);
+
+        pool.assert_invariants();
+    }
+
+    // ============================================
+    // Gas limit behavior tests
+    // ============================================
+
+    /// Test that gas limit does NOT affect pool ordering - only fees matter.
+    /// This confirms that TX1 (50k gas) vs TX2 (21k gas) ordering is purely fee-based.
+    #[test]
+    fn test_gas_limit_does_not_affect_ordering() {
+        use alloy_consensus::Transaction;
+
+        let mut pool = AA2dPool::default();
+
+        let sender_high_gas = Address::from_word(B256::from(U256::from(1)));
+        let sender_low_gas = Address::from_word(B256::from(U256::from(2)));
+
+        // Transaction with HIGH gas limit (50k like TX1) but LOWER fee
+        let tx_high_gas = TxBuilder::aa(sender_high_gas)
+            .gas_limit(50_000)
+            .max_priority_fee(1_000_000_000) // 1 gwei
+            .max_fee(11_000_000_000)
+            .build();
+
+        // Transaction with LOW gas limit (21k like TX2) but HIGHER fee
+        let tx_low_gas = TxBuilder::aa(sender_low_gas)
+            .gas_limit(21_000)
+            .max_priority_fee(5_000_000_000) // 5 gwei
+            .max_fee(15_000_000_000)
+            .build();
+
+        assert_eq!(tx_high_gas.gas_limit(), 50_000);
+        assert_eq!(tx_low_gas.gas_limit(), 21_000);
+
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_high_gas, TransactionOrigin::Local)),
+            0,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_low_gas, TransactionOrigin::Local)),
+            0,
+        )
+        .unwrap();
+
+        let mut best = pool.best_transactions();
+
+        let first = best.next().expect("Should have first transaction");
+        let second = best.next().expect("Should have second transaction");
+
+        // LOW gas limit transaction should come FIRST because it has HIGHER fee
+        assert_eq!(
+            first.sender(),
+            sender_low_gas,
+            "Transaction with 21k gas but 5 gwei fee should come first"
+        );
+        assert_eq!(
+            second.sender(),
+            sender_high_gas,
+            "Transaction with 50k gas but 1 gwei fee should come second"
+        );
+
+        // Verify gas limits
+        assert_eq!(first.transaction.gas_limit(), 21_000);
+        assert_eq!(second.transaction.gas_limit(), 50_000);
+
+        pool.assert_invariants();
+    }
+
+    /// Test that transactions with minimal gas limit (21k) can be added to the pool.
+    /// The pool itself doesn't validate intrinsic gas - that's done by the validator.
+    #[test]
+    fn test_minimal_gas_limit_accepted_by_pool() {
+        let mut pool = AA2dPool::default();
+        let sender = Address::random();
+
+        // Create transaction with minimal 21k gas limit (like TX2)
+        let tx = TxBuilder::aa(sender)
+            .gas_limit(21_000)
+            .max_priority_fee(2_000_000_000)
+            .max_fee(12_000_000_000)
+            .build();
+
+        let result = pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+            0,
+        );
+
+        // Pool should accept it - gas validation is done elsewhere
+        assert!(result.is_ok(), "Pool should accept 21k gas limit transaction");
+
+        let (pending, queued) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending, 1);
+        assert_eq!(queued, 0);
+
+        pool.assert_invariants();
+    }
+
+    /// Test that transactions with same fees but different gas limits have consistent ordering.
+    /// When fees are equal, submission order is the tiebreaker, NOT gas limit.
+    #[test]
+    fn test_same_fee_different_gas_uses_submission_order() {
+        let mut pool = AA2dPool::default();
+
+        let sender_high_gas = Address::from_word(B256::from(U256::from(1)));
+        let sender_low_gas = Address::from_word(B256::from(U256::from(2)));
+
+        // Both have same fees, different gas limits
+        let tx_high_gas = TxBuilder::aa(sender_high_gas)
+            .gas_limit(100_000)
+            .max_priority_fee(2_000_000_000)
+            .max_fee(12_000_000_000)
+            .build();
+
+        let tx_low_gas = TxBuilder::aa(sender_low_gas)
+            .gas_limit(21_000)
+            .max_priority_fee(2_000_000_000)
+            .max_fee(12_000_000_000)
+            .build();
+
+        // Add high gas first, then low gas
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_high_gas, TransactionOrigin::Local)),
+            0,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_low_gas, TransactionOrigin::Local)),
+            0,
+        )
+        .unwrap();
+
+        let mut best = pool.best_transactions();
+
+        let first = best.next().expect("Should have first transaction");
+        let second = best.next().expect("Should have second transaction");
+
+        // First submitted (high gas) should come first due to submission order tiebreaker
+        assert_eq!(
+            first.sender(),
+            sender_high_gas,
+            "First submitted tx should come first when fees are equal"
+        );
+        assert_eq!(second.sender(), sender_low_gas);
+
+        pool.assert_invariants();
+    }
+
+    /// Test multiple transactions with varying gas limits all ordered by fee.
+    #[test]
+    fn test_multiple_txs_ordered_by_fee_ignoring_gas() {
+        use alloy_consensus::Transaction;
+
+        let mut pool = AA2dPool::default();
+
+        // Create 4 transactions with different gas limits but descending fees
+        let configs = [
+            (Address::from_word(B256::from(U256::from(1))), 21_000u64, 4_000_000_000u128),
+            (Address::from_word(B256::from(U256::from(2))), 100_000, 3_000_000_000),
+            (Address::from_word(B256::from(U256::from(3))), 50_000, 2_000_000_000),
+            (Address::from_word(B256::from(U256::from(4))), 30_000_000, 1_000_000_000),
+        ];
+
+        // Add in random order (by gas limit: 100k, 30M, 21k, 50k)
+        let order = [1, 3, 0, 2];
+        for &idx in &order {
+            let (sender, gas, fee) = configs[idx];
+            let tx = TxBuilder::aa(sender)
+                .gas_limit(gas)
+                .max_priority_fee(fee)
+                .max_fee(fee + 10_000_000_000)
+                .build();
+            pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                0,
+            )
+            .unwrap();
+        }
+
+        let mut best = pool.best_transactions();
+
+        // Should come out ordered by fee (highest first): 4 gwei, 3 gwei, 2 gwei, 1 gwei
+        let expected_fees = [4_000_000_000u128, 3_000_000_000, 2_000_000_000, 1_000_000_000];
+        let expected_gas = [21_000u64, 100_000, 50_000, 30_000_000];
+
+        for (i, (expected_fee, expected_gas)) in expected_fees.iter().zip(expected_gas.iter()).enumerate() {
+            let tx = best.next().unwrap_or_else(|| panic!("Should have transaction {}", i));
+            assert_eq!(
+                tx.transaction.max_priority_fee_per_gas(),
+                Some(*expected_fee),
+                "Transaction {} should have {} gwei fee",
+                i,
+                expected_fee / 1_000_000_000
+            );
+            assert_eq!(
+                tx.transaction.gas_limit(),
+                *expected_gas,
+                "Transaction {} should have {} gas limit",
+                i,
+                expected_gas
+            );
+        }
+
+        assert!(best.next().is_none());
+        pool.assert_invariants();
+    }
 }
