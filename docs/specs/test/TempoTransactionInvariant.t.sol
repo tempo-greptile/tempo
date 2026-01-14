@@ -362,6 +362,8 @@ contract TempoTransactionInvariantTest is InvariantBase {
             uint256 actualNonce = vm.getNonce(actualSender);
             if (actualNonce > ghost_protocolNonce[actualSender]) {
                 ghost_protocolNonce[actualSender]++;
+                ghost_totalTxExecuted++;
+                ghost_totalCreatesExecuted++;
                 ghost_totalProtocolNonceTxs++;
             }
             ghost_totalTxReverted++;
@@ -403,6 +405,8 @@ contract TempoTransactionInvariantTest is InvariantBase {
             uint256 actualNonce = vm.getNonce(actualSender);
             if (actualNonce > ghost_protocolNonce[actualSender]) {
                 ghost_protocolNonce[actualSender]++;
+                ghost_totalTxExecuted++;
+                ghost_totalCreatesExecuted++;
                 ghost_totalProtocolNonceTxs++;
             }
             ghost_totalTxReverted++;
@@ -508,6 +512,8 @@ contract TempoTransactionInvariantTest is InvariantBase {
             if (actualNonce > ghost_2dNonce[actualSender][nonceKey]) {
                 ghost_2dNonce[actualSender][nonceKey]++;
                 ghost_2dNonceUsed[actualSender][nonceKey] = true;
+                ghost_totalTxExecuted++;
+                ghost_totalCallsExecuted++;
                 ghost_total2dNonceTxs++;
             }
             ghost_totalTxReverted++;
@@ -563,6 +569,8 @@ contract TempoTransactionInvariantTest is InvariantBase {
             uint256 actualNonce = vm.getNonce(actualSender);
             if (actualNonce > ghost_protocolNonce[actualSender]) {
                 ghost_protocolNonce[actualSender]++;
+                ghost_totalTxExecuted++;
+                ghost_totalCallsExecuted++;
                 ghost_totalProtocolNonceTxs++;
             }
             ghost_totalTxReverted++;
@@ -646,6 +654,8 @@ contract TempoTransactionInvariantTest is InvariantBase {
             if (actualNonce > ghost_2dNonce[owner][nonceKey]) {
                 ghost_2dNonce[owner][nonceKey]++;
                 ghost_2dNonceUsed[owner][nonceKey] = true;
+                ghost_totalTxExecuted++;
+                ghost_totalCallsExecuted++;
                 ghost_total2dNonceTxs++;
             }
             ghost_totalTxReverted++;
@@ -731,6 +741,8 @@ contract TempoTransactionInvariantTest is InvariantBase {
             if (actualNonce > ghost_2dNonce[owner][nonceKey]) {
                 ghost_2dNonce[owner][nonceKey]++;
                 ghost_2dNonceUsed[owner][nonceKey] = true;
+                ghost_totalTxExecuted++;
+                ghost_totalCallsExecuted++;
                 ghost_total2dNonceTxs++;
             }
             ghost_totalTxReverted++;
