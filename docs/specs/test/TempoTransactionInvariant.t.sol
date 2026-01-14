@@ -1178,8 +1178,13 @@ contract TempoTransactionInvariantTest is InvariantBase {
     /// @notice INVARIANT: CREATE count matches deployed contracts
     function invariant_createCountConsistent() public view {
         uint256 totalCreates = 0;
+        // Sum secp256k1 actor create counts
         for (uint256 i = 0; i < actors.length; i++) {
             totalCreates += ghost_createCount[actors[i]];
+        }
+        // Sum P256 address create counts
+        for (uint256 i = 0; i < actors.length; i++) {
+            totalCreates += ghost_createCount[actorP256Addresses[i]];
         }
         assertEq(totalCreates, ghost_totalCreatesExecuted, "CREATE count mismatch");
     }
