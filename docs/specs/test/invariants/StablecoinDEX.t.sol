@@ -1209,8 +1209,7 @@ contract StablecoinDEXInvariantTest is InvariantBaseTest {
         bytes4 selector = bytes4(reason);
         bool isKnownError = selector == IStablecoinDEX.OrderDoesNotExist.selector
             || selector == IStablecoinDEX.InsufficientBalance.selector
-            || selector == IStablecoinDEX.PairDoesNotExist.selector
-            || _isKnownTIP20Error(selector);
+            || selector == IStablecoinDEX.PairDoesNotExist.selector || _isKnownTIP20Error(selector);
         assertTrue(isKnownError, "Order operation failed with unknown error");
     }
 
