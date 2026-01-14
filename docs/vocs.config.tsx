@@ -96,11 +96,15 @@ export default defineConfig({
   rootDir: '.',
   banner: {
     content: (
-        <div>
-          <strong>Testnet migration:</strong> We've launched a new testnet. You'll need to update your RPC configuration and redeploy any contracts. The old testnet will be deprecated on March 8th.{' '}
-          <a href="/network-upgrades" style={{ textDecoration: 'underline' }}>Learn more →</a>
-        </div>
-      ),
+      <div>
+        <strong>Testnet migration:</strong> We've launched a new testnet. You'll
+        need to update your RPC configuration and redeploy any contracts. The
+        old testnet will be deprecated on March 8th.{' '}
+        <a href="/network-upgrades" style={{ textDecoration: 'underline' }}>
+          Learn more →
+        </a>
+      </div>
+    ),
     dismissable: true,
   },
   socials: [
@@ -289,6 +293,36 @@ export default defineConfig({
           {
             text: 'Overview',
             link: '/protocol',
+          },
+          {
+            text: 'TIPs',
+            collapsed: true,
+            items: [
+              {
+                text: 'Overview',
+                link: '/protocol/tips',
+              },
+              {
+                text: 'TIP-1000 (Draft)',
+                link: '/protocol/tips/tip-1000',
+              },
+              {
+                text: 'TIP-1002 (Draft)',
+                link: '/protocol/tips/tip-1002',
+              },
+              {
+                text: 'TIP-1003 (Draft)',
+                link: '/protocol/tips/tip-1003',
+              },
+              {
+                text: 'TIP-1004 (Draft)',
+                link: '/protocol/tips/tip-1004',
+              },
+              {
+                text: 'TIP-1005 (Draft)',
+                link: '/protocol/tips/tip-1005',
+              },
+            ],
           },
           {
             text: 'TIP-20 Tokens',
