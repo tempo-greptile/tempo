@@ -47,6 +47,9 @@ impl Precompile for TipFeeManager {
             TipFeeManagerCall::FeeManager(IFeeManagerCalls::collectedFees(call)) => {
                 view(call, |c| self.collected_fees[c.validator][c.token].read())
             }
+            TipFeeManagerCall::FeeManager(IFeeManagerCalls::getFeeToken(call)) => {
+                view(call, |_| self.get_fee_token())
+            }
 
             // IFeeManager mutate functions
             TipFeeManagerCall::FeeManager(IFeeManagerCalls::setValidatorToken(call)) => {
@@ -376,6 +379,50 @@ mod tests {
 
             let result = fee_manager.call(&ITIPFeeAMM::SCALECall {}.abi_encode(), sender)?;
             assert_eq!(U256::abi_decode(&result.bytes)?, SCALE);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_get_fee_token() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let sender = Address::random();
+        let fee_token = Address::random();
+
+        StorageCtx::enter(&mut storage, || {
+            let mut fee_manager = TipFeeManager::new();
+
+            // Set the transaction fee token (simulating what the handler does)
+            fee_manager.set_tx_fee_token(fee_token)?;
+
+            // Call getFeeToken via the dispatch
+            let calldata = IFeeManager::getFeeTokenCall {}.abi_encode();
+            let result = fee_manager.call(&calldata, sender)?;
+
+            assert!(!result.reverted);
+            let returned_token = Address::abi_decode(&result.bytes)?;
+            assert_eq!(returned_token, fee_token);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_get_fee_token_returns_zero_when_not_set() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let sender = Address::random();
+
+        StorageCtx::enter(&mut storage, || {
+            let mut fee_manager = TipFeeManager::new();
+
+            // Call getFeeToken without setting it first
+            let calldata = IFeeManager::getFeeTokenCall {}.abi_encode();
+            let result = fee_manager.call(&calldata, sender)?;
+
+            assert!(!result.reverted);
+            let returned_token = Address::abi_decode(&result.bytes)?;
+            assert_eq!(returned_token, Address::ZERO);
 
             Ok(())
         })

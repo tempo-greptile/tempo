@@ -25,6 +25,13 @@ pub struct TipFeeManager {
     pools: Mapping<B256, Pool>,
     total_supply: Mapping<B256, U256>,
     liquidity_balances: Mapping<B256, Mapping<Address, U256>>,
+
+    // -----------------------------------------------------------------
+    // Transient fields - MUST remain at the end of the struct
+    // -----------------------------------------------------------------
+    /// Current transaction's fee token, set by the handler before execution.
+    /// Allows smart contracts to introspect the fee token via `getFeeToken()`.
+    tx_fee_token: Address,
 }
 
 impl TipFeeManager {
@@ -231,6 +238,29 @@ impl TipFeeManager {
         } else {
             Ok(token)
         }
+    }
+
+    // -----------------------------------------------------------------
+    // Transaction context methods
+    // -----------------------------------------------------------------
+
+    /// Set the current transaction's fee token (transient storage).
+    ///
+    /// This is called by the execution handler before transaction execution begins.
+    /// It allows smart contracts to introspect which token is paying for gas fees
+    /// by calling `getFeeToken()`.
+    ///
+    /// NOTE: This is a protocol-internal function, not exposed via the dispatch interface.
+    pub fn set_tx_fee_token(&mut self, fee_token: Address) -> Result<()> {
+        self.tx_fee_token.t_write(fee_token)
+    }
+
+    /// Get the current transaction's fee token (transient storage).
+    ///
+    /// Returns the fee token that was resolved for the current transaction.
+    /// This is the public ABI entrypoint for `IFeeManager.getFeeToken()`.
+    pub fn get_fee_token(&self) -> Result<Address> {
+        self.tx_fee_token.t_read()
     }
 }
 
@@ -760,6 +790,36 @@ mod tests {
             let fee_manager = TipFeeManager::new();
             let remaining = fee_manager.collected_fees[validator][token.address()].read()?;
             assert_eq!(remaining, U256::ZERO);
+
+            Ok(())
+        })
+    }
+
+    /// Test set_tx_fee_token and get_fee_token transient storage operations
+    #[test]
+    fn test_tx_fee_token_transient_storage() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let fee_token = Address::random();
+
+        StorageCtx::enter(&mut storage, || {
+            let mut fee_manager = TipFeeManager::new();
+
+            // Initially, fee token should be zero (not set)
+            let initial_token = fee_manager.get_fee_token()?;
+            assert_eq!(initial_token, Address::ZERO);
+
+            // Set the fee token
+            fee_manager.set_tx_fee_token(fee_token)?;
+
+            // Now get_fee_token should return the set token
+            let retrieved_token = fee_manager.get_fee_token()?;
+            assert_eq!(retrieved_token, fee_token);
+
+            // Verify it can be overwritten
+            let new_fee_token = Address::random();
+            fee_manager.set_tx_fee_token(new_fee_token)?;
+            let updated_token = fee_manager.get_fee_token()?;
+            assert_eq!(updated_token, new_fee_token);
 
             Ok(())
         })

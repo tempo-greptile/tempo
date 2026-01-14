@@ -32,6 +32,11 @@ crate::sol! {
         // Fee functions
         function distributeFees(address validator, address token) external;
         function collectedFees(address validator, address token) external view returns (uint256);
+
+        // Transaction context
+        /// Returns the fee token being used for the current transaction.
+        /// This allows smart contracts to introspect which token is paying for gas fees.
+        function getFeeToken() external view returns (address);
         // NOTE: collectFeePreTx is a protocol-internal function called directly by the
         // execution handler, not exposed via the dispatch interface.
 

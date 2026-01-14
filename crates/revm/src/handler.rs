@@ -648,6 +648,15 @@ where
         })
         .map_err(|e| EVMError::Custom(e.to_string()))?;
 
+        // Set the transaction fee token in the fee manager's transient storage
+        // so contracts can introspect it via IFeeManager.getFeeToken().
+        let fee_token = self.fee_token;
+        StorageCtx::enter_evm(journal, block, cfg, || {
+            let mut fee_manager = TipFeeManager::new();
+            fee_manager.set_tx_fee_token(fee_token)
+        })
+        .map_err(|e| EVMError::Custom(e.to_string()))?;
+
         // Load the fee payer balance
         let account_balance = get_token_balance(journal, self.fee_token, self.fee_payer)?;
 
