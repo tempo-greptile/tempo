@@ -244,13 +244,13 @@ impl TipFeeManager {
     // Transaction context methods
     // -----------------------------------------------------------------
 
-    /// Set the current transaction's fee token (transient storage).
+    /// Set the current transaction's fee token (transient storage)
     ///
-    /// This is called by the execution handler before transaction execution begins.
-    /// It allows smart contracts to introspect which token is paying for gas fees
-    /// by calling `getFeeToken()`.
+    /// NOTE: Thishis function is only called by the execution handler before 
+    /// transaction execution begins and allows smart contracts to introspect which 
+    /// token is paying for gas fees by calling `getFeeToken()`.
     ///
-    /// NOTE: This is a protocol-internal function, not exposed via the dispatch interface.
+    /// This is a protocol-internal function, not exposed via the dispatch interface.
     pub fn set_tx_fee_token(&mut self, fee_token: Address) -> Result<()> {
         self.tx_fee_token.t_write(fee_token)
     }
