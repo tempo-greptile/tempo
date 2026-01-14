@@ -3,15 +3,17 @@ use crate::{
     error::TempoPrecompileError,
     input_cost, metadata, mutate, mutate_void,
     tip20::{
-        ITIP20, TIP20Error, TIP20Token,
-        rewards::rewards::{self, Interface as IRewards},
-        roles::roles_auth::{self, Interface as IRolesAuth},
+        ITIP20, TIP20Error, TIP20Token, roles_auth,
+        roles_auth::Interface as IRolesAuth,
         tip20::Interface as _,
+        types::rewards,
     },
     view,
 };
 use alloy::{primitives::Address, sol_types::SolInterface};
 use revm::precompile::{PrecompileError, PrecompileResult};
+
+use rewards::Interface as _;
 
 type ITIP20Calls = ITIP20::Calls;
 

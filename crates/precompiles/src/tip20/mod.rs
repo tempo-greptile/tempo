@@ -1,10 +1,26 @@
 pub mod dispatch;
 pub mod rewards;
 pub mod roles;
+pub mod types;
 
-pub use rewards::IRewards;
-use rewards::rewards::Interface as _;
-pub use roles::{IRolesAuth, RolesAuthError, RolesAuthEvent};
+// Re-export types
+pub use types::{
+    // TIP20 core types
+    tip20, Approval, Burn, BurnBlocked, ITIP20, ITIP20Interface, InsufficientAllowance,
+    InsufficientBalance, InvalidAmount, InvalidCurrency, InvalidPayload, InvalidQuoteToken,
+    InvalidRecipient, InvalidSupplyCap, InvalidToken, InvalidTransferPolicyId, Mint,
+    NextQuoteTokenSet, NoOptedInSupply, PauseStateUpdate, PolicyForbids, ProtectedAddress,
+    QuoteTokenUpdate, StringTooLong, SupplyCapExceeded, SupplyCapUpdate, TIP20Calls, TIP20Error,
+    TIP20Event, Transfer, TransferPolicyUpdate, TransferWithMemo, TransfersDisabled, Uninitialized,
+    // Roles auth types
+    roles_auth, IRolesAuth, RolesAuthError, RolesAuthEvent, RoleAdminUpdated,
+    RoleMembershipUpdated, Unauthorized, DEFAULT_ADMIN_ROLE, UNGRANTABLE_ROLE,
+    // Rewards types
+    IRewards, UserRewardInfo, ACC_PRECISION,
+};
+
+// Internal use imports
+use types::rewards::Interface as _;
 use tempo_contracts::precompiles::STABLECOIN_DEX_ADDRESS;
 
 use crate::{
@@ -12,7 +28,6 @@ use crate::{
     account_keychain::AccountKeychain,
     error::{Result, TempoPrecompileError},
     storage::{Handler, Mapping},
-    tip20::{rewards::UserRewardInfo, roles::DEFAULT_ADMIN_ROLE},
     tip20_factory::TIP20Factory,
     tip403_registry::{ITIP403Registry, TIP403Registry},
 };
@@ -21,170 +36,8 @@ use alloy::{
     primitives::{Address, B256, U256, keccak256, uint},
 };
 use std::sync::LazyLock;
-use tempo_precompiles_macros::{contract, solidity};
+use tempo_precompiles_macros::contract;
 use tracing::trace;
-
-#[solidity]
-pub mod tip20 {
-    use alloy::primitives::{Address, B256, U256};
-
-    use crate::error::Result;
-
-    pub enum Error {
-        InsufficientBalance {
-            available: U256,
-            required: U256,
-            token: Address,
-        },
-        InsufficientAllowance,
-        SupplyCapExceeded,
-        InvalidSupplyCap,
-        InvalidPayload,
-        StringTooLong,
-        PolicyForbids,
-        InvalidRecipient,
-        ContractPaused,
-        InvalidCurrency,
-        InvalidQuoteToken,
-        TransfersDisabled,
-        InvalidAmount,
-        NoOptedInSupply,
-        ProtectedAddress,
-        InvalidToken,
-        Uninitialized,
-        InvalidTransferPolicyId,
-    }
-
-    pub enum Event {
-        Transfer {
-            #[indexed]
-            from: Address,
-            #[indexed]
-            to: Address,
-            amount: U256,
-        },
-        Approval {
-            #[indexed]
-            owner: Address,
-            #[indexed]
-            spender: Address,
-            amount: U256,
-        },
-        Mint {
-            #[indexed]
-            to: Address,
-            amount: U256,
-        },
-        Burn {
-            #[indexed]
-            from: Address,
-            amount: U256,
-        },
-        BurnBlocked {
-            #[indexed]
-            from: Address,
-            amount: U256,
-        },
-        TransferWithMemo {
-            #[indexed]
-            from: Address,
-            #[indexed]
-            to: Address,
-            amount: U256,
-            #[indexed]
-            memo: B256,
-        },
-        TransferPolicyUpdate {
-            #[indexed]
-            updater: Address,
-            #[indexed]
-            new_policy_id: u64,
-        },
-        SupplyCapUpdate {
-            #[indexed]
-            updater: Address,
-            #[indexed]
-            new_supply_cap: U256,
-        },
-        PauseStateUpdate {
-            #[indexed]
-            updater: Address,
-            is_paused: bool,
-        },
-        NextQuoteTokenSet {
-            #[indexed]
-            updater: Address,
-            #[indexed]
-            next_quote_token: Address,
-        },
-        QuoteTokenUpdate {
-            #[indexed]
-            updater: Address,
-            #[indexed]
-            new_quote_token: Address,
-        },
-    }
-
-    pub trait Interface {
-        // View functions
-        fn name(&self) -> Result<String>;
-        fn symbol(&self) -> Result<String>;
-        fn decimals(&self) -> Result<u8>;
-        fn total_supply(&self) -> Result<U256>;
-        fn quote_token(&self) -> Result<Address>;
-        fn next_quote_token(&self) -> Result<Address>;
-        fn balance_of(&self, account: Address) -> Result<U256>;
-        fn allowance(&self, owner: Address, spender: Address) -> Result<U256>;
-        fn currency(&self) -> Result<String>;
-        fn supply_cap(&self) -> Result<U256>;
-        fn paused(&self) -> Result<bool>;
-        fn transfer_policy_id(&self) -> Result<u64>;
-        fn PAUSE_ROLE(&self) -> Result<B256>;
-        fn UNPAUSE_ROLE(&self) -> Result<B256>;
-        fn ISSUER_ROLE(&self) -> Result<B256>;
-        fn BURN_BLOCKED_ROLE(&self) -> Result<B256>;
-
-        // Mutating functions
-        fn transfer(&mut self, to: Address, amount: U256) -> Result<bool>;
-        fn approve(&mut self, spender: Address, amount: U256) -> Result<bool>;
-        fn transfer_from(&mut self, from: Address, to: Address, amount: U256) -> Result<bool>;
-        fn mint(&mut self, to: Address, amount: U256) -> Result<()>;
-        fn burn(&mut self, amount: U256) -> Result<()>;
-        fn burn_blocked(&mut self, from: Address, amount: U256) -> Result<()>;
-        fn mint_with_memo(&mut self, to: Address, amount: U256, memo: B256) -> Result<()>;
-        fn burn_with_memo(&mut self, amount: U256, memo: B256) -> Result<()>;
-        fn transfer_with_memo(&mut self, to: Address, amount: U256, memo: B256) -> Result<()>;
-        fn transfer_from_with_memo(
-            &mut self,
-            from: Address,
-            to: Address,
-            amount: U256,
-            memo: B256,
-        ) -> Result<bool>;
-        fn change_transfer_policy_id(&mut self, new_policy_id: u64) -> Result<()>;
-        fn set_supply_cap(&mut self, new_supply_cap: U256) -> Result<()>;
-        fn pause(&mut self) -> Result<()>;
-        fn unpause(&mut self) -> Result<()>;
-        fn set_next_quote_token(&mut self, new_quote_token: Address) -> Result<()>;
-        fn complete_quote_token_update(&mut self) -> Result<()>;
-    }
-}
-
-pub use self::tip20::{
-    Approval, Burn, BurnBlocked, Calls as TIP20Calls, ContractPaused, Error as TIP20Error,
-    Event as TIP20Event, InsufficientAllowance, InsufficientBalance, Interface as ITIP20Interface,
-    InvalidAmount, InvalidCurrency, InvalidPayload, InvalidQuoteToken, InvalidRecipient,
-    InvalidSupplyCap, InvalidToken, InvalidTransferPolicyId, Mint, NextQuoteTokenSet,
-    NoOptedInSupply, PauseStateUpdate, PolicyForbids, ProtectedAddress, QuoteTokenUpdate,
-    SupplyCapExceeded, SupplyCapUpdate, Transfer, TransferPolicyUpdate, TransferWithMemo,
-    TransfersDisabled, Uninitialized,
-};
-
-#[allow(non_snake_case)]
-pub mod ITIP20 {
-    #![allow(ambiguous_glob_reexports)]
-    pub use super::tip20::*;
-}
 
 /// u128::MAX as U256
 pub const U128_MAX: U256 = uint!(0xffffffffffffffffffffffffffffffff_U256);

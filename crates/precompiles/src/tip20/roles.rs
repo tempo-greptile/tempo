@@ -1,63 +1,14 @@
+//! TIP20 Role-based access control implementation.
+
 use alloy::primitives::{Address, B256};
-use tempo_precompiles_macros::solidity;
 
 use crate::{error::Result, storage::Handler, tip20::TIP20Token};
 
-#[solidity]
-pub mod roles_auth {
-    use super::*;
-
-    pub enum Error {
-        Unauthorized,
-    }
-
-    pub enum Event {
-        RoleMembershipUpdated {
-            #[indexed]
-            role: B256,
-            #[indexed]
-            account: Address,
-            #[indexed]
-            sender: Address,
-            has_role: bool,
-        },
-        RoleAdminUpdated {
-            #[indexed]
-            role: B256,
-            #[indexed]
-            new_admin_role: B256,
-            #[indexed]
-            sender: Address,
-        },
-    }
-
-    pub trait Interface {
-        fn has_role(&self, account: Address, role: B256) -> Result<bool>;
-        fn get_role_admin(&self, role: B256) -> Result<B256>;
-        fn grant_role(&mut self, role: B256, account: Address) -> Result<()>;
-        fn revoke_role(&mut self, role: B256, account: Address) -> Result<()>;
-        fn renounce_role(&mut self, role: B256) -> Result<()>;
-        fn set_role_admin(&mut self, role: B256, admin_role: B256) -> Result<()>;
-    }
-}
-
-pub use roles_auth::{
-    Error as RolesAuthError, Event as RolesAuthEvent, RoleAdminUpdated, RoleMembershipUpdated,
-    Unauthorized,
+// Re-export types from types.rs for backwards compatibility
+pub use super::types::{
+    roles_auth, IRolesAuth, RolesAuthError, RolesAuthEvent, RoleAdminUpdated,
+    RoleMembershipUpdated, Unauthorized, DEFAULT_ADMIN_ROLE, UNGRANTABLE_ROLE,
 };
-
-#[allow(non_snake_case)]
-pub mod IRolesAuth {
-    pub use super::roles_auth::{
-        Calls, Interface, getRoleAdminCall, getRoleAdminReturn, grantRoleCall, grantRoleReturn,
-        hasRoleCall, hasRoleReturn, new, renounceRoleCall, renounceRoleReturn, revokeRoleCall,
-        revokeRoleReturn, roles_authInstance as IRolesAuthInstance, setRoleAdminCall,
-        setRoleAdminReturn,
-    };
-}
-
-pub const DEFAULT_ADMIN_ROLE: B256 = B256::ZERO;
-pub const UNGRANTABLE_ROLE: B256 = B256::new([0xff; 32]);
 
 impl roles_auth::Interface for TIP20Token {
     fn has_role(&self, account: Address, role: B256) -> Result<bool> {

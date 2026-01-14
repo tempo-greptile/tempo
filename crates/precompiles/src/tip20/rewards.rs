@@ -1,62 +1,16 @@
+//! TIP20 Rewards distribution and claiming implementation.
+
 use crate::{
     error::{Result, TempoPrecompileError},
     storage::Handler,
     tip20::{TIP20Error, TIP20Event, TIP20Token, Transfer},
 };
-use alloy::primitives::{Address, U256, uint};
-use tempo_precompiles_macros::{Storable, solidity};
+use alloy::primitives::{Address, U256};
 
-pub const ACC_PRECISION: U256 = uint!(1000000000000000000_U256);
-
-#[solidity]
-pub mod rewards {
-    use super::*;
-
-    #[derive(Debug, Clone, PartialEq, Eq, Storable)]
-    pub struct UserRewardInfo {
-        pub reward_recipient: Address,
-        pub reward_per_token: U256,
-        pub reward_balance: U256,
-    }
-
-    pub enum Event {
-        RewardDistributed {
-            #[indexed]
-            funder: Address,
-            amount: U256,
-        },
-        RewardRecipientSet {
-            #[indexed]
-            holder: Address,
-            #[indexed]
-            recipient: Address,
-        },
-    }
-
-    pub trait Interface {
-        fn distribute_reward(&mut self, amount: U256) -> Result<()>;
-        fn set_reward_recipient(&mut self, recipient: Address) -> Result<()>;
-        fn claim_rewards(&mut self) -> Result<U256>;
-        fn opted_in_supply(&self) -> Result<u128>;
-        fn global_reward_per_token(&self) -> Result<U256>;
-        fn user_reward_info(&self, account: Address) -> Result<UserRewardInfo>;
-        fn get_pending_rewards(&self, account: Address) -> Result<u128>;
-    }
-}
+// Re-export types from types.rs for backwards compatibility
+pub use super::types::{rewards, IRewards, UserRewardInfo, ACC_PRECISION};
 
 use rewards::Interface as _;
-pub use rewards::UserRewardInfo;
-
-#[allow(non_snake_case)]
-pub mod IRewards {
-    pub use super::rewards::{
-        Calls, Interface, claimRewardsCall, claimRewardsReturn, distributeRewardCall,
-        distributeRewardReturn, getPendingRewardsCall, getPendingRewardsReturn,
-        globalRewardPerTokenCall, globalRewardPerTokenReturn, new, optedInSupplyCall,
-        optedInSupplyReturn, rewardsInstance as IRewardsInstance, setRewardRecipientCall,
-        setRewardRecipientReturn, userRewardInfoCall, userRewardInfoReturn,
-    };
-}
 
 impl rewards::Interface for TIP20Token {
     /// Allows an authorized user to distribute reward tokens to opted-in recipients.
