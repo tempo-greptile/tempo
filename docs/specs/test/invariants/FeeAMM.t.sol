@@ -236,10 +236,9 @@ contract FeeAMMInvariantTest is InvariantBaseTest {
 
         amount = bound(amount, MIN_LIQUIDITY, 10_000_000);
 
-        // Even though the actor is blacklisted, ensure they have funds for the attempt
-        // This requires minting directly to them (bypassing transfer restrictions for test setup)
-        vm.prank(admin);
-        TIP20(validatorToken).mint(actor, amount);
+        // The actor is blacklisted for the validator token, so we can't mint to them.
+        // Only proceed if they already have sufficient funds from before being blacklisted.
+        vm.assume(TIP20(validatorToken).balanceOf(actor) >= amount);
 
         vm.prank(actor);
         TIP20(validatorToken).approve(address(amm), amount);

@@ -159,12 +159,21 @@ contract StablecoinDEXInvariantTest is InvariantBaseTest {
         uint256 expectedEscrow = product / 100_000;
         _ensureFunds(actor, pathUSD, expectedEscrow + 1000);
 
-        uint256 balBefore = pathUSD.balanceOf(actor);
+        // Capture both external and internal balance before placing order
+        uint256 externalBefore = pathUSD.balanceOf(actor);
+        uint256 internalBefore = exchange.balanceOf(actor, address(pathUSD));
+        uint256 totalBefore = externalBefore + internalBefore;
+
         vm.prank(actor);
         uint128 orderId = exchange.place(token, amount, true, tick);
         _nextOrderId++;
 
-        uint256 escrowed = balBefore - pathUSD.balanceOf(actor);
+        // Calculate total escrow from both external and internal balance changes
+        uint256 externalAfter = pathUSD.balanceOf(actor);
+        uint256 internalAfter = exchange.balanceOf(actor, address(pathUSD));
+        uint256 totalAfter = externalAfter + internalAfter;
+        uint256 escrowed = totalBefore - totalAfter;
+
         if (escrowed <= expectedEscrow + 1 && escrowed >= expectedEscrow) {
             _ghostDivisibleEscrowCorrect++;
         }
