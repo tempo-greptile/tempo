@@ -242,7 +242,7 @@ impl TipFeeManager {
 
     /// Set the current transaction's fee token (transient storage)
     ///
-    /// NOTE: Thishis function is only called by the execution handler before
+    /// NOTE: This function is only called by the execution handler before
     /// transaction execution begins and allows smart contracts to introspect which
     /// token is paying for gas fees by calling `getFeeToken()`.
     ///
@@ -254,6 +254,10 @@ impl TipFeeManager {
     /// Get the current transaction's fee token (transient storage).
     ///
     /// Returns the fee token that was resolved for the current transaction.
+    ///
+    /// Returns `address(0)` in simulation contexts (e.g., `eth_call`) where
+    /// no transaction context exists.
+    ///
     /// This is the public ABI entrypoint for `IFeeManager.getFeeToken()`.
     pub fn get_fee_token(&self) -> Result<Address> {
         self.tx_fee_token.t_read()
@@ -262,11 +266,12 @@ impl TipFeeManager {
 
 #[cfg(test)]
 mod tests {
-    use tempo_contracts::precompiles::TIP20Error;
+    use alloy::sol_types::{SolCall, SolValue};
+    use tempo_contracts::precompiles::{IFeeManager, TIP20Error};
 
     use super::*;
     use crate::{
-        TIP_FEE_MANAGER_ADDRESS,
+        Precompile, TIP_FEE_MANAGER_ADDRESS,
         error::TempoPrecompileError,
         storage::{ContractStorage, StorageCtx, hashmap::HashMapStorageProvider},
         test_util::TIP20Setup,
@@ -791,7 +796,6 @@ mod tests {
         })
     }
 
-    /// Test set_tx_fee_token and get_fee_token transient storage operations
     #[test]
     fn test_tx_fee_token_transient_storage() -> eyre::Result<()> {
         let mut storage = HashMapStorageProvider::new(1);
@@ -800,7 +804,7 @@ mod tests {
         StorageCtx::enter(&mut storage, || {
             let mut fee_manager = TipFeeManager::new();
 
-            // Initially, fee token should be zero (not set)
+            // Initially, fee token should be zero
             let initial_token = fee_manager.get_fee_token()?;
             assert_eq!(initial_token, Address::ZERO);
 
@@ -817,6 +821,59 @@ mod tests {
             let updated_token = fee_manager.get_fee_token()?;
             assert_eq!(updated_token, new_fee_token);
 
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_tx_fee_token_shared_across_instances() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let fee_token = Address::random();
+
+        // Test that transient storage is shared across different TipFeeManager instances
+        // within the same transaction context. This verifies we are using real tstorage
+        StorageCtx::enter(&mut storage, || {
+            // Instance A sets the fee token
+            let mut fee_manager_a = TipFeeManager::new();
+            fee_manager_a.set_tx_fee_token(fee_token)?;
+
+            // Instance B (separate instance) should see the same value
+            let fee_manager_b = TipFeeManager::new();
+            let retrieved_token = fee_manager_b.get_fee_token()?;
+            assert_eq!(
+                retrieved_token, fee_token,
+                "different TipFeeManager instances must share transient storage"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_tx_fee_token_clears_between_transactions() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let fee_token = Address::random();
+
+        // First tx sets the fee token
+        StorageCtx::enter(&mut storage, || {
+            let mut fee_manager = TipFeeManager::new();
+            fee_manager.set_tx_fee_token(fee_token)?;
+            assert_eq!(fee_manager.get_fee_token()?, fee_token);
+            Ok::<_, eyre::Report>(())
+        })?;
+
+        // Simulate new transaction by clearing tstore
+        storage.clear_transient();
+
+        // Second tx, the fee token should be cleared
+        StorageCtx::enter(&mut storage, || {
+            let fee_manager = TipFeeManager::new();
+            let token = fee_manager.get_fee_token()?;
+            assert_eq!(
+                token,
+                Address::ZERO,
+                "transient storage must be cleared between transactions"
+            );
             Ok(())
         })
     }

@@ -90,7 +90,8 @@ Reading the fee token costs the standard warm transient storage read cost (100 g
 | Normal transaction | The resolved fee token address |
 | Free transaction (zero gas price) | The resolved fee token (may still be set) |
 | `eth_call` simulation | `address(0)` (no transaction context) |
-| Before transaction execution | `address(0)` |
+
+The only case where `address(0)` is returned is in simulation contexts (e.g., `eth_call`) where the protocol handler does not execute.
 
 ## Example Usage
 
@@ -103,7 +104,7 @@ contract FeeTokenAware {
 
     function doSomething() external {
         address feeToken = FEE_MANAGER.getFeeToken();
-        
+
         if (feeToken == PATH_USD) {
             // User is paying fees in pathUSD
         } else if (feeToken != address(0)) {
@@ -163,7 +164,7 @@ interface IFeeManager {
 # Invariants
 
 - `getFeeToken()` must return a consistent value across all calls within the same transaction
-- `getFeeToken()` must return `address(0)` when called outside of a transaction context
+- `getFeeToken()` must return `address(0)` in simulation contexts (e.g., `eth_call`) where no transaction handler runs
 - `getFeeToken()` must be callable from `staticcall` contexts without reverting
 - The fee token returned must match the token used for actual fee deduction in `collectFeePreTx` and `collectFeePostTx`
 - Reading the fee token must not modify any state (view function)
