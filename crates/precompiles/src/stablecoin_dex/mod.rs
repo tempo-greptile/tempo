@@ -706,7 +706,10 @@ impl StablecoinDEX {
             // Delete order from storage
             self.orders[order.order_id()].delete()?;
 
-            // Handle flip orders: create proportional flip if filled amount >= minimum
+            // Handle flip orders: create flip in "partially filled" state
+            // The flip order has amount = original amount, but remaining = filled portion
+            // This preserves the original order size for future flips while only exposing
+            // the actually-filled portion as tradeable liquidity
             if order.is_flip() {
                 let total_filled = order
                     .amount()
@@ -714,16 +717,22 @@ impl StablecoinDEX {
                     .ok_or(TempoPrecompileError::under_overflow())?;
 
                 if total_filled >= MIN_ORDER_AMOUNT {
-                    // Create flip order with proportional amount (not original amount)
-                    let _ = self.place_flip(
+                    // Create flip order with total_filled as amount (correct escrow)
+                    // Then update amount to original value to preserve flip chain semantics
+                    let flip_order_id = self.place_flip(
                         order.maker(),
                         orderbook.base,
-                        total_filled, // Proportional flip amount
+                        total_filled, // Use filled amount for correct escrow
                         !order.is_bid(),
                         order.flip_tick(),
                         order.tick(),
                         true,
-                    );
+                    )?;
+
+                    // Update the order's amount to the original value
+                    // This preserves flip chain semantics: when this order is fully filled,
+                    // the next flip will use the original amount
+                    self.orders[flip_order_id].amount.write(order.amount())?;
                 }
                 // If total_filled < MIN_ORDER_AMOUNT, no flip (filled amount too small)
             }
@@ -4354,8 +4363,13 @@ mod tests {
             assert_eq!(flip_order.tick(), flip_tick, "Flip order should be at flip_tick");
             assert_eq!(
                 flip_order.amount(),
+                200_000_000,
+                "Flip order amount should be original amount (preserves flip chain)"
+            );
+            assert_eq!(
+                flip_order.remaining(),
                 110_000_000,
-                "Flip order amount should be proportional to filled amount"
+                "Flip order remaining should equal filled portion"
             );
             assert!(flip_order.is_flip(), "Flip order should also be a flip order");
 
@@ -4474,7 +4488,7 @@ mod tests {
                 "Original flip order should be deleted"
             );
 
-            // Flip order should be created with exactly $100
+            // Flip order should be created with original amount but remaining = $100
             let flip_order = exchange.orders[2].read()?;
             assert!(
                 !flip_order.maker().is_zero(),
@@ -4482,8 +4496,13 @@ mod tests {
             );
             assert_eq!(
                 flip_order.amount(),
+                190_000_000,
+                "Flip order amount should be original amount"
+            );
+            assert_eq!(
+                flip_order.remaining(),
                 MIN_ORDER_AMOUNT,
-                "Flip order should have exactly MIN_ORDER_AMOUNT"
+                "Flip order remaining should be exactly MIN_ORDER_AMOUNT"
             );
 
             Ok(())

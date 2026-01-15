@@ -55,7 +55,7 @@ No new constants. Uses existing:
 uint128 public constant MIN_ORDER_AMOUNT = 100_000_000; // $100 with 6 decimals
 ```
 
-## Key Insight: Proportional Flipping
+## Key Insight: Flip as Partially-Filled State
 
 For flip orders, we can compute the filled amount without additional storage:
 
@@ -63,10 +63,15 @@ For flip orders, we can compute the filled amount without additional storage:
 filled = order.amount - order.remaining
 ```
 
-When a flip order is force-completed, the flip order is created with `amount = filled`, not the original amount. This ensures:
-- The flip is proportional to actual execution
+When a flip order is force-completed, the flip order is created in a "partially filled" state:
+- `remaining` = filled (tradeable liquidity matches what was actually filled)
+- `amount` = original amount (preserves flip chain semantics)
+
+This ensures:
+- The flip has correct tradeable liquidity
+- When this flip is fully filled, the next flip uses the original amount
+- The flip chain eventually "heals" back to original size
 - No new storage fields needed
-- Fair treatment of flip order users
 
 ## Behavior Change
 
@@ -93,7 +98,9 @@ After computing `new_remaining = order.remaining - fill_amount`:
    - Calculate `total_filled = order.amount - new_remaining`
    - Remove order from orderbook, delete from storage
    - If `total_filled >= MIN_ORDER_AMOUNT`:
-     - Create flip order with `amount = total_filled` (proportional flip)
+     - Create flip order in "partially filled" state:
+       - `remaining = total_filled` (tradeable liquidity)
+       - `amount = original amount` (preserves flip chain)
      - Flip order placed at `flip_tick`, with `is_flip = true`
    - If `total_filled < MIN_ORDER_AMOUNT`:
      - No flip order created (filled amount too small)
@@ -155,20 +162,23 @@ fn partial_fill_order(&mut self, order: &mut Order, level: &mut TickLevel, fill_
         
         delete_order(order);
         
-        // Handle flip orders: create proportional flip if filled amount >= minimum
+        // Handle flip orders: create flip in "partially filled" state
         if order.is_flip() {
             let total_filled = order.amount() - new_remaining;
             if total_filled >= MIN_ORDER_AMOUNT {
-                // Create flip order with proportional amount
-                place_flip(
+                // Create flip order with total_filled as initial amount (correct escrow)
+                let flip_order_id = place_flip(
                     order.maker(),
                     orderbook.base,
-                    total_filled,        // Proportional flip amount
+                    total_filled,        // Use filled amount for correct escrow
                     !order.is_bid(),     // Flip side
                     order.flip_tick(),   // New tick
                     order.tick(),        // New flip_tick
                     true,                // is_flip
                 );
+                // Update amount to original value to preserve flip chain semantics
+                // Now: remaining = total_filled, amount = original
+                orders[flip_order_id].amount = order.amount();
             }
             // If total_filled < MIN_ORDER_AMOUNT, no flip (too small)
         }
@@ -195,9 +205,11 @@ fn partial_fill_order(&mut self, order: &mut Order, level: &mut TickLevel, fill_
 2. **Maker made whole**: When force-completed, maker receives:
    - Settlement for filled portion (normal)
    - Full refund of remaining escrowed tokens
-   - Proportional flip order (for flip orders with sufficient filled amount)
+   - Flip order in "partially filled" state (for flip orders with sufficient filled amount)
 
-3. **Proportional flip**: Flip orders create flips with `amount = total_filled`, not original amount
+3. **Flip state preservation**: Flip orders created on force-complete have:
+   - `remaining = total_filled` (tradeable liquidity)
+   - `amount = original` (flip chain semantics preserved)
 
 4. **Accounting consistency**: Total liquidity at tick level equals sum of remaining amounts of all orders at that tick
 
@@ -212,10 +224,10 @@ fn partial_fill_order(&mut self, order: &mut Order, level: &mut TickLevel, fill_
 4. **Full fill unaffected**: Place $100 order, swap $100 → normal full fill
 
 ### Flip Orders
-5. **Flip with sufficient filled**: Place $200 flip order, swap $110 → cancelled, $90 refunded, $110 flip created
+5. **Flip with sufficient filled**: Place $200 flip order, swap $110 → cancelled, $90 refunded, flip created (remaining=$110, amount=$200)
 6. **Flip with insufficient filled**: Place $150 flip order, swap $60 → cancelled, $90 refunded, NO flip (filled < $100)
-7. **Flip at exact minimum filled**: Place $190 flip order, swap $100 → cancelled, $90 refunded, $100 flip created
-8. **Flip chain termination**: Flip order → force-complete → proportional flip → force-complete → no flip (amounts shrink naturally)
+7. **Flip at exact minimum filled**: Place $190 flip order, swap $100 → cancelled, $90 refunded, flip created (remaining=$100, amount=$190)
+8. **Flip chain healing**: Flip order force-completed → flip with reduced remaining → fully filled → next flip restores original amount
 
 ### Edge Cases
 9. **Bid order refund**: Verify quote tokens refunded with correct rounding
@@ -239,28 +251,32 @@ fn partial_fill_order(&mut self, order: &mut Order, level: &mut TickLevel, fill_
    - OrderFilled + OrderCancelled emitted
 ```
 
-## Example 2: Flip Order with Proportional Flip
+## Example 2: Flip Order in Partially-Filled State
 
 ```
-1. Alice places $200 flip ask at tick 10, flip_tick 0
-2. Bob swaps $110 quote for base (fills $110)
+1. Alice places $200 flip bid at tick 0, flip_tick 100
+2. Bob swaps $110 base for quote (fills $110 of Alice's bid)
 3. Remaining = $90 < $100 minimum
 4. Order force-completed:
-   - Alice receives $110 quote settlement
-   - Alice receives $90 base refund
-   - Flip order created: $110 bid at tick 0 (flip_tick 10)
+   - Alice receives $110 base settlement
+   - Alice receives $90 quote refund
+   - Flip order created: ask at tick 100 with:
+     - remaining = $110 (tradeable liquidity)
+     - amount = $200 (original, for future flip chain)
    - OrderFilled + OrderCancelled + OrderPlaced emitted
+5. Later: Flip order fully filled ($110)
+   - Next flip created with amount = $200 (chain healed to original size)
 ```
 
 ## Example 3: Flip Order with Insufficient Filled Amount
 
 ```
-1. Alice places $150 flip ask at tick 10, flip_tick 0
-2. Bob swaps $60 quote for base (fills $60)
+1. Alice places $150 flip bid at tick 0, flip_tick 100
+2. Bob swaps $60 base for quote (fills $60)
 3. Remaining = $90 < $100 minimum
 4. Order force-completed:
-   - Alice receives $60 quote settlement
-   - Alice receives $90 base refund
+   - Alice receives $60 base settlement
+   - Alice receives $90 quote refund
    - NO flip order created ($60 < $100 minimum)
    - OrderFilled + OrderCancelled emitted
 ```
