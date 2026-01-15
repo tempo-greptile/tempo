@@ -16,7 +16,7 @@ use crate::{
 use alloy::{
     primitives::{Address, Bytes},
     sol,
-    sol_types::{SolCall, SolError, SolInterface},
+    sol_types::{SolCall, SolError},
 };
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use revm::{
@@ -25,7 +25,7 @@ use revm::{
 };
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_contracts::precompiles::{
-    ACCOUNT_KEYCHAIN_ADDRESS, NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS, STABLECOIN_DEX_ADDRESS,
+    ACCOUNT_KEYCHAIN_ADDRESS, NONCE_PRECOMPILE_ADDRESS, STABLECOIN_DEX_ADDRESS,
     TIP_FEE_MANAGER_ADDRESS, VALIDATOR_CONFIG_ADDRESS,
 };
 
@@ -259,7 +259,7 @@ pub fn dispatch_call<T>(
 #[cfg(test)]
 pub fn expect_precompile_revert<E>(result: &PrecompileResult, expected_error: E)
 where
-    E: SolInterface + PartialEq + std::fmt::Debug,
+    E: alloy::sol_types::SolInterface + PartialEq + std::fmt::Debug,
 {
     match result {
         Ok(result) => {
@@ -276,7 +276,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tip20::{TIP20Token, abi as ITIP20};
+    use crate::{PATH_USD_ADDRESS, tip20::{TIP20Token, abi as ITIP20}};
     use alloy::primitives::{Address, Bytes, U256, bytes};
     use alloy_evm::{
         EthEvmFactory, EvmEnv, EvmFactory, EvmInternals,

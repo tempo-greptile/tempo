@@ -61,7 +61,7 @@ pub(crate) fn generate_abi_aliases(
         quote! {
             impl abi::Dispatch for #struct_name {}
 
-            impl crate::Precompile for #struct_name {
+            impl crate::dispatch::Precompile for #struct_name {
                 fn call(
                     &mut self,
                     calldata: &[u8],
@@ -70,7 +70,7 @@ pub(crate) fn generate_abi_aliases(
                     use crate::storage::ContractStorage;
 
                     self.storage
-                        .deduct_gas(crate::input_cost(calldata.len()))
+                        .deduct_gas(crate::dispatch::input_cost(calldata.len()))
                         .map_err(|_| ::revm::precompile::PrecompileError::OutOfGas)?;
 
                     #init_check

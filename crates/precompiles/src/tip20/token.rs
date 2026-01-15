@@ -687,8 +687,8 @@ impl TIP20Token {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use alloy::primitives::{Address, FixedBytes, IntoLogData, U256};
-    use tempo_contracts::precompiles::{DEFAULT_FEE_TOKEN, STABLECOIN_DEX_ADDRESS};
+    use alloy::primitives::{Address, FixedBytes, U256};
+    use tempo_contracts::precompiles::STABLECOIN_DEX_ADDRESS;
 
     use super::*;
     use crate::{
@@ -696,11 +696,11 @@ pub(crate) mod tests {
         error::TempoPrecompileError,
         storage::{StorageCtx, hashmap::HashMapStorageProvider},
         test_util::{TIP20Setup, setup_storage},
-        tip20::{RolesAuthError, abi},
+        tip20::abi,
         tip20_factory::TIP20Factory,
-        tip403_registry::{PolicyType, TIP403Registry, abi::IRegistry as _},
+        tip403_registry::{PolicyType, TIP403Registry},
     };
-    use abi::{IRewards as _, IRolesAuth as _, IToken as _};
+    use abi::IRolesAuth as _;
     use rand::Rng;
 
     #[test]
@@ -986,7 +986,7 @@ pub(crate) mod tests {
     #[test]
     fn test_burn_decreases_supply() -> eyre::Result<()> {
         let (mut storage, admin) = setup_storage();
-        let user = Address::random();
+        let _user = Address::random();
         let mint_amount = U256::random() % U256::from(u128::MAX);
         let burn_amount = mint_amount / U256::from(2);
 
@@ -1245,7 +1245,7 @@ pub(crate) mod tests {
 
         StorageCtx::enter(&mut storage, || {
             // Create pathUSD first
-            let path_usd = TIP20Setup::path_usd(admin).apply()?;
+            let _path_usd = TIP20Setup::path_usd(admin).apply()?;
 
             // Create a USD token using pathUSD as quote
             let mut token_1 = TIP20Setup::create("Token1", "TK1", admin)
@@ -1283,7 +1283,7 @@ pub(crate) mod tests {
                 .quote_token(PATH_USD_ADDRESS)
                 .apply()?;
 
-            let mut token_2 = TIP20Setup::create("Token2", "TK2", admin)
+            let token_2 = TIP20Setup::create("Token2", "TK2", admin)
                 .quote_token(token_1.address)
                 .apply()?;
 
@@ -1310,7 +1310,7 @@ pub(crate) mod tests {
 
         StorageCtx::enter(&mut storage, || {
             // Create pathUSD first
-            let path_usd = TIP20Setup::path_usd(admin).apply()?;
+            let _path_usd = TIP20Setup::path_usd(admin).apply()?;
 
             // Create an arbitrary currency token (e.g., EUR)
             let token_1 = TIP20Setup::create("Euro Token", "EUR", admin)

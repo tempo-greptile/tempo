@@ -1,9 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
-        dispatch::{Precompile, dispatch_call, input_cost, metadata, mutate, mutate_void, view},
-        error::TempoPrecompileError,
+        dispatch::Precompile,
         storage::StorageCtx,
         test_util::{TIP20Setup, setup_storage},
         tip20::{
@@ -17,7 +15,7 @@ mod tests {
         primitives::{Address, Bytes, U256, address},
         sol_types::{SolCall, SolInterface, SolValue},
     };
-    use revm::precompile::{PrecompileError, PrecompileResult};
+    use revm::precompile::PrecompileError;
 
     #[test]
     fn test_function_selector_dispatch() -> eyre::Result<()> {
@@ -484,10 +482,7 @@ mod tests {
 
     #[test]
     fn tip20_test_selector_coverage() -> eyre::Result<()> {
-        use crate::{
-            test_util::{assert_full_coverage, check_selector_coverage},
-            tip20::abi,
-        };
+        use crate::test_util::{assert_full_coverage, check_selector_coverage};
 
         let (mut storage, admin) = setup_storage();
 

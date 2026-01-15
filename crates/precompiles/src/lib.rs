@@ -8,12 +8,6 @@ pub mod error;
 pub use error::{IntoPrecompileResult, Result};
 
 pub mod dispatch;
-// Re-export dispatch helpers for macro compatibility (#[abi(dispatch)] and #[contract] macros)
-pub use dispatch::{
-    Precompile, dispatch_call, extend_tempo_precompiles, input_cost, metadata, mutate, mutate_void,
-    view,
-};
-
 pub mod storage;
 
 pub mod account_keychain;

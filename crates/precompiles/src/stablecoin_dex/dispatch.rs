@@ -105,9 +105,8 @@ impl Precompile for StablecoinDEX {
 
 #[cfg(test)]
 mod tests {
-
     use crate::{
-        Precompile,
+        dispatch::Precompile,
         stablecoin_dex::{IStablecoinDEX, MIN_ORDER_AMOUNT, StablecoinDEX},
         storage::{ContractStorage, StorageCtx, hashmap::HashMapStorageProvider},
         test_util::{TIP20Setup, assert_full_coverage, check_selector_coverage},

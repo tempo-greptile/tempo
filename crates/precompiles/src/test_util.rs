@@ -3,7 +3,8 @@
 #[cfg(any(test, feature = "test-utils"))]
 use crate::error::TempoPrecompileError;
 use crate::{
-    PATH_USD_ADDRESS, Precompile, Result, TIP20_FACTORY_ADDRESS,
+    PATH_USD_ADDRESS, Result, TIP20_FACTORY_ADDRESS,
+    dispatch::Precompile,
     storage::{ContractStorage, StorageCtx, hashmap::HashMapStorageProvider},
     tip20::{self, TIP20Error, TIP20Token, abi},
     tip20_factory::{self, TIP20Factory},

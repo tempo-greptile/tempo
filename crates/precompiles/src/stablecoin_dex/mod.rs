@@ -1369,10 +1369,7 @@ mod tests {
         storage::{ContractStorage, StorageCtx, hashmap::HashMapStorageProvider},
         test_util::TIP20Setup,
         tip20::{InvalidCurrency, PolicyForbids, TIP20Error},
-        tip403_registry::{
-            TIP403Registry,
-            abi::{IRegistry as _, PolicyType},
-        },
+        tip403_registry::{TIP403Registry, abi::PolicyType},
     };
 
     use super::*;

@@ -12,7 +12,7 @@ use revm::{
     interpreter::interpreter::EthInterpreter,
 };
 use tempo_chainspec::hardfork::TempoHardfork;
-use tempo_precompiles::extend_tempo_precompiles;
+use tempo_precompiles::dispatch::extend_tempo_precompiles;
 
 /// The Tempo EVM context type.
 pub type TempoContext<DB> = Context<TempoBlockEnv, TempoTxEnv, CfgEnv<TempoHardfork>, DB>;

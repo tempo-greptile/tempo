@@ -73,7 +73,7 @@ pub(super) fn generate_dispatch_trait(
             where
                 Self: Sized,
             {
-                use crate::{metadata, mutate, mutate_void, view};
+                use crate::dispatch::{metadata, mutate, mutate_void, view};
                 #match_body
             }
         }
@@ -88,7 +88,7 @@ pub(super) fn generate_dispatch_trait(
             msg_sender: ::alloy::primitives::Address,
         ) -> ::revm::precompile::PrecompileResult {
             use ::alloy::sol_types::SolInterface as _;
-            crate::dispatch_call(calldata, Calls::abi_decode, |call| {
+            crate::dispatch::dispatch_call(calldata, Calls::abi_decode, |call| {
                 this.dispatch(call, msg_sender)
             })
         }
