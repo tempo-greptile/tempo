@@ -513,6 +513,8 @@ Cancellation requires threshold confirmations, similar to execution:
 
 > **Note**: Cancellation uses a separate vote count from confirmation. An owner can confirm a transaction AND vote to cancel it (allowing them to change their mind).
 
+> **Design Decision**: Cancellation votes are NOT lazily invalidated when an owner is removed. Once an owner votes to cancel, that vote persists. This is intentional: a cancellation vote represents a permanent "veto" that survives ownership changes. If the removed owner's vote pushes cancellation to threshold, the transaction is cancelled.
+
 #### `executeTransaction`
 
 1. Revert with `NotOwner` if `msg.sender` is not an owner
@@ -523,10 +525,11 @@ Cancellation requires threshold confirmations, similar to execution:
 6. Revert with `TransactionExpired` if `block.timestamp > expiresAt`
 7. **Count valid confirmations** (lazy invalidation/transfer check):
    - For each confirmer:
-     - If `replacedBy[confirmer] != 0` AND `replacedAt[confirmer] > txId`: attribute to `replacedBy[confirmer]`
+     - **Follow replacement chain**: while `replacedBy[confirmer] != 0` AND `replacedAt[confirmer] > txId`: `confirmer = replacedBy[confirmer]`
      - If `removedAt[confirmer] != 0` AND `removedAt[confirmer] <= txId`: invalid (removed before tx)
-     - Otherwise: valid confirmation from original confirmer
-   - Deduplicate: if both old and new owner confirmed, count only once
+     - If confirmer is not a current owner: invalid
+     - Otherwise: valid confirmation attributed to final `confirmer`
+   - Deduplicate: count unique valid confirmers only
 8. Revert with `InsufficientConfirmations` if `validConfirmations < threshold`
 9. Set reentrancy guard
 10. Mark as executed
@@ -577,7 +580,9 @@ When executed, the multisig calls itself, triggering the management function wit
 4. Revert with `TooManyOwners` if `ownerCount >= MAX_OWNERS`
 5. Add owner to owners array (binary search insert to maintain sorted order)
 6. Increment `ownerCount`
-7. Emit `OwnerAdded`
+7. Clear `removedAt[owner] = 0` (in case owner was previously removed and re-added)
+8. Clear `replacedBy[owner] = 0` and `replacedAt[owner] = 0` (in case owner was previously replaced)
+9. Emit `OwnerAdded`
 
 #### `removeOwner`
 
@@ -860,6 +865,20 @@ multisig.submitTransaction(
 - 3-of-3 multisig cannot directly removeOwner (threshold > ownerCount - 1)
 - 3-of-3 must changeThreshold to 2 first, then removeOwner
 - Can batch changeThreshold + removeOwner in single self-call with multicall
+
+### Replacement Chain
+- A replaced by B, B replaced by C: A's confirmations follow chain to C
+- Replacement chain terminates at current owner
+- If chain ends at removed owner, confirmation is invalid
+
+### Re-adding Removed Owner
+- Previously removed owner can be re-added
+- `removedAt`, `replacedBy`, `replacedAt` are cleared on re-add
+- New confirmations from re-added owner work correctly
+
+### Cancellation Persistence
+- Removed owner's cancellation votes still count
+- Cancellation can complete after voter removal
 
 ## Integration Tests
 
