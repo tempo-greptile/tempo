@@ -62,6 +62,8 @@ pub(crate) fn generate_abi_aliases(
                     calldata: &[u8],
                     msg_sender: ::alloy::primitives::Address,
                 ) -> ::revm::precompile::PrecompileResult {
+                    use crate::storage::ContractStorage;
+
                     self.storage
                         .deduct_gas(crate::input_cost(calldata.len()))
                         .map_err(|_| ::revm::precompile::PrecompileError::OutOfGas)?;
