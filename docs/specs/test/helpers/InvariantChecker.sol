@@ -55,49 +55,45 @@ abstract contract InvariantChecker is HandlerBase {
         uint256 expectedNonce = ghost_protocolNonce[account];
 
         // N2: Protocol nonce matches ghost state
-        // TODO: Re-enable once nonce tracking is fixed
-        // assertEq(
-        //     actualNonce,
-        //     expectedNonce,
-        //     string(abi.encodePacked("N2: Protocol nonce mismatch for actor ", vm.toString(actorIdx)))
-        // );
+        assertEq(
+            actualNonce,
+            expectedNonce,
+            string(abi.encodePacked("N2: Protocol nonce mismatch for actor ", vm.toString(actorIdx)))
+        );
     }
 
     /// @notice Verify 2D nonce invariants for a single account
     /// @param account The account to verify
     function _verify2dNonceForAccount(address account) internal view {
-        // TODO: N6 disabled - ghost state tracking needs investigation
         // N6 & N7: Check each used 2D nonce key
-        // for (uint256 key = 1; key <= 100; key++) {
-        //     if (ghost_2dNonceUsed[account][key]) {
-        //         uint64 actual = nonce.getNonce(account, key);
-        //         uint256 expected = ghost_2dNonce[account][key];
-        //
-        //         // N6: 2D nonce keys are independent
-        //         assertEq(actual, expected, "N6: 2D nonce value mismatch");
-        //
-        //         // N7: 2D nonces never decrease (implicit - ghost only increments)
-        //     }
-        // }
-        account; // silence unused warning
+        for (uint256 key = 1; key <= 100; key++) {
+            if (ghost_2dNonceUsed[account][key]) {
+                uint64 actual = nonce.getNonce(account, key);
+                uint256 expected = ghost_2dNonce[account][key];
+
+                // N6: 2D nonce keys are independent - actual should match expected
+                assertEq(actual, expected, "N6: 2D nonce value mismatch");
+
+                // N7: 2D nonces never decrease (implicit - ghost only increments)
+            }
+        }
     }
 
     /// @notice Verify N3: sum of protocol nonces equals protocol tx count
     function _verifyProtocolNonceSum() internal view {
-        // TODO: N3 disabled - ghost state tracking needs investigation
-        // uint256 sumOfNonces = 0;
-        //
-        // // Sum secp256k1 actor nonces
-        // for (uint256 i = 0; i < actors.length; i++) {
-        //     sumOfNonces += ghost_protocolNonce[actors[i]];
-        // }
-        //
-        // // Sum P256 address nonces
-        // for (uint256 i = 0; i < actors.length; i++) {
-        //     sumOfNonces += ghost_protocolNonce[actorP256Addresses[i]];
-        // }
-        //
-        // assertEq(sumOfNonces, ghost_totalProtocolNonceTxs, "N3: Protocol nonce sum mismatch");
+        uint256 sumOfNonces = 0;
+
+        // Sum secp256k1 actor nonces
+        for (uint256 i = 0; i < actors.length; i++) {
+            sumOfNonces += ghost_protocolNonce[actors[i]];
+        }
+
+        // Sum P256 address nonces
+        for (uint256 i = 0; i < actors.length; i++) {
+            sumOfNonces += ghost_protocolNonce[actorP256Addresses[i]];
+        }
+
+        assertEq(sumOfNonces, ghost_totalProtocolNonceTxs, "N3: Protocol nonce sum mismatch");
     }
 
     // ============ Balance Invariants (F9) ============
@@ -105,20 +101,27 @@ abstract contract InvariantChecker is HandlerBase {
     /// @notice Verify all balance-related invariants
     /// @dev F9: Actor balances never exceed total supply
     function _checkBalanceInvariants() internal view {
-        uint256 sum = 0;
+        uint256 actorSum = 0;
 
         // Sum secp256k1 actor balances
         for (uint256 i = 0; i < actors.length; i++) {
-            sum += feeToken.balanceOf(actors[i]);
+            actorSum += feeToken.balanceOf(actors[i]);
         }
 
         // Sum P256 address balances
         for (uint256 i = 0; i < actors.length; i++) {
-            sum += feeToken.balanceOf(actorP256Addresses[i]);
+            actorSum += feeToken.balanceOf(actorP256Addresses[i]);
         }
 
         // F9: Actor balances cannot exceed total supply
-        assertLe(sum, feeToken.totalSupply(), "F9: Actor balances exceed total supply");
+        assertLe(actorSum, feeToken.totalSupply(), "F9: Actor balances exceed total supply");
+        
+        // F10: Validator balance (fees collected) + actor balances + other known addresses <= total supply
+        uint256 validatorBalance = feeToken.balanceOf(validator);
+        uint256 adminBalance = feeToken.balanceOf(admin);
+        uint256 ammBalance = feeToken.balanceOf(address(amm));
+        uint256 totalTracked = actorSum + validatorBalance + adminBalance + ammBalance;
+        assertLe(totalTracked, feeToken.totalSupply(), "F10: Tracked balances exceed total supply");
     }
 
     // ============ Access Key Invariants (K5, K9) ============
@@ -257,8 +260,8 @@ abstract contract InvariantChecker is HandlerBase {
         assertEq(ghost_createWithValueAllowed, 0, "C4: CREATE with value unexpectedly allowed");
 
         // C8: Initcode must not exceed max size (EIP-3860: 49152 bytes)
-        // KNOWN BUG: See bugs/BUG-001-oversized-initcode.md
-        // assertEq(ghost_createOversizedAllowed, 0, "C8: Oversized initcode unexpectedly allowed");
+        // BUG-001 was fixed in tempo-foundry
+        assertEq(ghost_createOversizedAllowed, 0, "C8: Oversized initcode unexpectedly allowed");
     }
 
     // ============ Key Authorization Invariants (K1, K3) ============
@@ -271,5 +274,8 @@ abstract contract InvariantChecker is HandlerBase {
 
         // K3: KeyAuthorization chain_id must be 0 (any) or match current
         assertEq(ghost_keyWrongChainAllowed, 0, "K3: Wrong chain key auth unexpectedly allowed");
+        
+        // K12: Keys with zero spending limit cannot spend anything
+        assertEq(ghost_keyZeroLimitAllowed, 0, "K12: Zero-limit key unexpectedly allowed to spend");
     }
 }

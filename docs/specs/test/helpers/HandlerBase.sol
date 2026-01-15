@@ -356,6 +356,7 @@ abstract contract HandlerBase is InvariantBase {
     /// @param nonceKey The 2D nonce key
     /// @param protocolNonce The protocol nonce used for CREATE address derivation
     /// @param expectedAddress The expected CREATE address
+    /// @dev CREATE operations also increment protocol nonce (for address derivation)
     function _record2dNonceCreateSuccess(
         address sender,
         uint64 nonceKey,
@@ -370,6 +371,14 @@ abstract contract HandlerBase is InvariantBase {
             ghost_totalTxExecuted++;
             ghost_totalCreatesExecuted++;
             ghost_total2dNonceTxs++;
+
+            // CREATE also consumes protocol nonce for address derivation
+            // Verify on-chain protocol nonce actually changed
+            uint256 actualProtocolNonce = vm.getNonce(sender);
+            if (actualProtocolNonce > ghost_protocolNonce[sender]) {
+                ghost_protocolNonce[sender] = actualProtocolNonce;
+                ghost_totalProtocolNonceTxs++;
+            }
 
             // Only record CREATE address tracking if code was actually deployed
             if (expectedAddress.code.length > 0) {

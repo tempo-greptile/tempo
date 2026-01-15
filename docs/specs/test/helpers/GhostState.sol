@@ -47,6 +47,9 @@ abstract contract GhostState {
     uint256 public ghost_nonceTooLowAllowed;       // N15 - nonce too low unexpectedly allowed
     uint256 public ghost_keyWrongSignerAllowed;    // K1 - wrong signer unexpectedly allowed
     uint256 public ghost_keyWrongChainAllowed;     // K3 - wrong chain unexpectedly allowed
+    uint256 public ghost_eip7702CreateWithAuthAllowed; // TX7 - CREATE with auth list unexpectedly allowed
+    uint256 public ghost_timeBoundValidAfterAllowed;  // T1 - validAfter not enforced
+    uint256 public ghost_timeBoundValidBeforeAllowed; // T2 - validBefore not enforced
 
     // ============ Fee Collection Tracking (F1-F12) ============
 
@@ -86,6 +89,19 @@ abstract contract GhostState {
     uint256 public ghost_keyUnlimitedUsed;
     uint256 public ghost_keyZeroLimitRejected;
     uint256 public ghost_keySigMismatchRejected;
+    uint256 public ghost_keyZeroLimitAllowed; // K12 violation counter
+
+    // ============ Negative Test Execution Tracking ============
+    // These track that negative test handlers were actually executed (not just skipped)
+    uint256 public ghost_replayProtocolAttempted;
+    uint256 public ghost_replay2dAttempted;
+    uint256 public ghost_nonceTooHighAttempted;
+    uint256 public ghost_nonceTooLowAttempted;
+    uint256 public ghost_createNotFirstAttempted;
+    uint256 public ghost_createMultipleAttempted;
+    uint256 public ghost_createWithAuthAttempted;
+    uint256 public ghost_createWithValueAttempted;
+    uint256 public ghost_createOversizedAttempted;
 
     // ============ Gas Tracking (G1-G10) ============
 
