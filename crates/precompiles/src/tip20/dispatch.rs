@@ -8,21 +8,19 @@ mod tests {
         storage::StorageCtx,
         test_util::{TIP20Setup, setup_storage},
         tip20::{
-            IRolesAuth, ISSUER_ROLE, ITIP20, PAUSE_ROLE, RolesAuthError, TIP20Error, TIP20Token,
-            TIP20TokenCalls, UNPAUSE_ROLE, abi,
+            TIP20Token,
+            abi::{self as tip20, Error as TIP20Error},
+            prelude::*,
         },
-        tip403_registry::{PolicyType, TIP403Registry, abi::IRegistry as _},
+        tip403_registry::{PolicyType, TIP403Registry, traits::*},
         view,
     };
-    use alloy::primitives::Address;
-    use revm::precompile::{PrecompileError, PrecompileResult};
-
-    use abi::{IConstants as _, IRewards as _, IRolesAuth as _, IToken as _};
-
     use alloy::{
-        primitives::{Bytes, U256, address},
+        primitives::{Address, Bytes, U256, address},
         sol_types::{SolCall, SolInterface, SolValue},
     };
+    use revm::precompile::{PrecompileError, PrecompileResult};
+
     #[test]
     fn test_function_selector_dispatch() -> eyre::Result<()> {
         let (mut storage, sender) = setup_storage();
@@ -55,7 +53,7 @@ mod tests {
                 .with_mint(account, test_balance)
                 .apply()?;
 
-            let balance_of_call = ITIP20::balanceOfCall { account };
+            let balance_of_call = tip20::balanceOfCall { account };
             let calldata = balance_of_call.abi_encode();
 
             let result = token.call(&calldata, sender)?;
@@ -83,7 +81,7 @@ mod tests {
             assert_eq!(initial_balance, U256::ZERO);
 
             let mint_amount = U256::random().min(U256::from(u128::MAX)) % token.supply_cap()?;
-            let mint_call = ITIP20::mintCall {
+            let mint_call = tip20::mintCall {
                 to: recipient,
                 amount: mint_amount,
             };
@@ -116,7 +114,7 @@ mod tests {
             assert_eq!(token.balance_of(sender)?, initial_sender_balance);
             assert_eq!(token.balance_of(recipient)?, U256::ZERO);
 
-            let transfer_call = ITIP20::transferCall {
+            let transfer_call = tip20::transferCall {
                 to: recipient,
                 amount: transfer_amount,
             };
@@ -156,7 +154,7 @@ mod tests {
                 .with_mint(owner, initial_owner_balance)
                 .apply()?;
 
-            let approve_call = ITIP20::approveCall {
+            let approve_call = tip20::approveCall {
                 spender,
                 amount: approve_amount,
             };
@@ -169,7 +167,7 @@ mod tests {
             let allowance = token.allowance(owner, spender)?;
             assert_eq!(allowance, approve_amount);
 
-            let transfer_from_call = ITIP20::transferFromCall {
+            let transfer_from_call = tip20::transferFromCall {
                 from: owner,
                 to: recipient,
                 amount: transfer_amount,
@@ -209,14 +207,14 @@ mod tests {
             assert!(!token.paused()?);
 
             // Pause the token
-            let pause_call = ITIP20::pauseCall {};
+            let pause_call = tip20::pauseCall {};
             let calldata = pause_call.abi_encode();
             let result = token.call(&calldata, pauser)?;
             assert_eq!(result.gas_used, 0);
             assert!(token.paused()?);
 
             // Unpause the token
-            let unpause_call = ITIP20::unpauseCall {};
+            let unpause_call = tip20::unpauseCall {};
             let calldata = unpause_call.abi_encode();
             let result = token.call(&calldata, unpauser)?;
             assert_eq!(result.gas_used, 0);
@@ -245,7 +243,7 @@ mod tests {
             assert_eq!(token.total_supply()?, initial_balance);
 
             // Burn tokens
-            let burn_call = ITIP20::burnCall {
+            let burn_call = tip20::burnCall {
                 amount: burn_amount,
             };
             let calldata = burn_call.abi_encode();
@@ -267,7 +265,7 @@ mod tests {
             let mut token = TIP20Setup::create("Test Token", "TEST", admin).apply()?;
 
             // Test name()
-            let name_call = ITIP20::nameCall {};
+            let name_call = tip20::nameCall {};
             let calldata = name_call.abi_encode();
             let result = token.call(&calldata, caller)?;
             // HashMapStorageProvider does not do gas accounting, so we expect 0 here.
@@ -276,7 +274,7 @@ mod tests {
             assert_eq!(name, "Test Token");
 
             // Test symbol()
-            let symbol_call = ITIP20::symbolCall {};
+            let symbol_call = tip20::symbolCall {};
             let calldata = symbol_call.abi_encode();
             let result = token.call(&calldata, caller)?;
             assert_eq!(result.gas_used, 0);
@@ -284,15 +282,15 @@ mod tests {
             assert_eq!(symbol, "TEST");
 
             // Test decimals()
-            let decimals_call = ITIP20::decimalsCall {};
+            let decimals_call = tip20::decimalsCall {};
             let calldata = decimals_call.abi_encode();
             let result = token.call(&calldata, caller)?;
             assert_eq!(result.gas_used, 0);
-            let decimals = ITIP20::decimalsCall::abi_decode_returns(&result.bytes)?;
+            let decimals = tip20::decimalsCall::abi_decode_returns(&result.bytes)?;
             assert_eq!(decimals, 6);
 
             // Test currency()
-            let currency_call = ITIP20::currencyCall {};
+            let currency_call = tip20::currencyCall {};
             let calldata = currency_call.abi_encode();
             let result = token.call(&calldata, caller)?;
             assert_eq!(result.gas_used, 0);
@@ -300,7 +298,7 @@ mod tests {
             assert_eq!(currency, "USD");
 
             // Test totalSupply()
-            let total_supply_call = ITIP20::totalSupplyCall {};
+            let total_supply_call = tip20::totalSupplyCall {};
             let calldata = total_supply_call.abi_encode();
             let result = token.call(&calldata, caller)?;
             // HashMapStorageProvider does not do gas accounting, so we expect 0 here.
@@ -324,14 +322,14 @@ mod tests {
                 .with_issuer(admin)
                 .apply()?;
 
-            let set_cap_call = ITIP20::setSupplyCapCall {
+            let set_cap_call = tip20::setSupplyCapCall {
                 new_supply_cap: supply_cap,
             };
             let calldata = set_cap_call.abi_encode();
             let result = token.call(&calldata, admin)?;
             assert_eq!(result.gas_used, 0);
 
-            let mint_call = ITIP20::mintCall {
+            let mint_call = tip20::mintCall {
                 to: recipient,
                 amount: mint_amount,
             };
@@ -359,7 +357,7 @@ mod tests {
                 .with_role(user1, *ISSUER_ROLE)
                 .apply()?;
 
-            let has_role_call = IRolesAuth::hasRoleCall {
+            let has_role_call = tip20::hasRoleCall {
                 role: *ISSUER_ROLE,
                 account: user1,
             };
@@ -369,7 +367,7 @@ mod tests {
             let has_role = bool::abi_decode(&result.bytes)?;
             assert!(has_role);
 
-            let has_role_call = IRolesAuth::hasRoleCall {
+            let has_role_call = tip20::hasRoleCall {
                 role: *ISSUER_ROLE,
                 account: user2,
             };
@@ -378,14 +376,14 @@ mod tests {
             let has_role = bool::abi_decode(&result.bytes)?;
             assert!(!has_role);
 
-            let mint_call = ITIP20::mintCall {
+            let mint_call = tip20::mintCall {
                 to: user2,
                 amount: U256::from(100),
             };
             let calldata = mint_call.abi_encode();
             let output = token.call(&Bytes::from(calldata.clone()), unauthorized)?;
             assert!(output.reverted);
-            let expected: Bytes = RolesAuthError::unauthorized().selector().into();
+            let expected: Bytes = TIP20Error::unauthorized().selector().into();
             assert_eq!(output.bytes, expected);
 
             let result = token.call(&calldata, user1)?;
@@ -410,7 +408,7 @@ mod tests {
                 .apply()?;
 
             let memo = alloy::primitives::B256::from([1u8; 32]);
-            let transfer_call = ITIP20::transferWithMemoCall {
+            let transfer_call = tip20::transferWithMemoCall {
                 to: recipient,
                 amount: transfer_amount,
                 memo,
@@ -440,7 +438,7 @@ mod tests {
             // Create a valid policy
             let new_policy_id = registry.create_policy(admin, admin, PolicyType::Whitelist)?;
 
-            let change_policy_call = ITIP20::changeTransferPolicyIdCall { new_policy_id };
+            let change_policy_call = tip20::changeTransferPolicyIdCall { new_policy_id };
             let calldata = change_policy_call.abi_encode();
             let result = token.call(&calldata, admin)?;
             assert_eq!(result.gas_used, 0);
@@ -449,13 +447,13 @@ mod tests {
             // Create another valid policy for the unauthorized test
             let another_policy_id = registry.create_policy(admin, admin, PolicyType::Blacklist)?;
 
-            let change_policy_call = ITIP20::changeTransferPolicyIdCall {
+            let change_policy_call = tip20::changeTransferPolicyIdCall {
                 new_policy_id: another_policy_id,
             };
             let calldata = change_policy_call.abi_encode();
             let output = token.call(&calldata, non_admin)?;
             assert!(output.reverted);
-            let expected: Bytes = RolesAuthError::unauthorized().selector().into();
+            let expected: Bytes = TIP20Error::unauthorized().selector().into();
             assert_eq!(output.bytes, expected);
 
             Ok(())
@@ -471,7 +469,7 @@ mod tests {
             let uninitialized_addr = address!("20C0000000000000000000000000000000000999");
             let mut token = TIP20Token::from_address(uninitialized_addr)?;
 
-            let calldata = ITIP20::approveCall {
+            let calldata = tip20::approveCall {
                 spender: Address::random(),
                 amount: U256::random(),
             }
@@ -500,23 +498,23 @@ mod tests {
 
             let token_unsupported = check_selector_coverage(
                 &mut token,
-                abi::ITokenCalls::SELECTORS,
+                ITokenCalls::SELECTORS,
                 "Token",
-                abi::ITokenCalls::name_by_selector,
+                ITokenCalls::name_by_selector,
             );
 
             let roles_unsupported = check_selector_coverage(
                 &mut token,
-                abi::IRolesAuthCalls::SELECTORS,
+                IRolesAuthCalls::SELECTORS,
                 "RolesAuth",
-                abi::IRolesAuthCalls::name_by_selector,
+                IRolesAuthCalls::name_by_selector,
             );
 
             let rewards_unsupported = check_selector_coverage(
                 &mut token,
-                abi::IRewardsCalls::SELECTORS,
+                IRewardsCalls::SELECTORS,
                 "Rewards",
-                abi::IRewardsCalls::name_by_selector,
+                IRewardsCalls::name_by_selector,
             );
 
             assert_full_coverage([token_unsupported, roles_unsupported, rewards_unsupported]);

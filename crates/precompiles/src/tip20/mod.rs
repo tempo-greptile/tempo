@@ -166,20 +166,8 @@ pub mod abi {
     }
 }
 
-pub use abi::UserRewardInfo;
-
 // Backward-compatibility type aliases
 pub type TIP20Error = abi::Error;
 pub type TIP20Event = abi::Event;
 pub type RolesAuthError = abi::Error;
 pub type RolesAuthEvent = abi::Event;
-
-// Re-export individual error/event variants for convenience
-pub use abi::{
-    InvalidCurrency, PolicyForbids, RoleAdminUpdated, RoleMembershipUpdated, Unauthorized,
-};
-
-// Backward-compatibility trait/interface aliases
-pub use IAbi as ITIP20;
-pub use IAbi as IRewards;
-pub use IAbi as IRolesAuth;

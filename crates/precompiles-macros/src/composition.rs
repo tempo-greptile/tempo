@@ -2,6 +2,7 @@
 //!
 //! When a contract specifies `#[contract(abi)]`, this generates:
 //! - Type aliases from the `abi` module's types to contract-prefixed names
+//! - Re-exports of `abi::prelude` and `abi::traits` submodules
 //! - Implementation of `IConstants` trait
 //!
 //! When `#[contract(abi, dispatch)]` is specified, additionally generates:
@@ -12,12 +13,14 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
-/// Generate type aliases and trait implementations for the `abi` module.
+/// Generate type aliases, re-exports, and trait implementations for the `abi` module.
 ///
 /// For `#[contract(abi)]` on `struct MyContract`, generates:
 /// - `pub type MyContractCalls = abi::Calls;`
 /// - `pub type MyContractError = abi::Error;`
 /// - `pub type MyContractEvent = abi::Event;`
+/// - `pub use abi::prelude;` - Re-export prelude submodule
+/// - `pub use abi::traits;` - Re-export traits submodule
 /// - `impl abi::IConstants for MyContract {}`
 ///
 /// For `#[contract(abi, dispatch)]`, additionally generates:
@@ -87,6 +90,16 @@ pub(crate) fn generate_abi_aliases(
 
         /// Unified event enum for this contract.
         pub type #event_alias = abi::Event;
+
+        /// Re-export prelude for convenient glob imports.
+        ///
+        /// Usage: `use crate::module::prelude::*;`
+        pub use abi::prelude;
+
+        /// Re-export traits for selective trait imports.
+        ///
+        /// Usage: `use crate::module::traits::*;`
+        pub use abi::traits;
 
         impl abi::IConstants for #struct_name {}
 

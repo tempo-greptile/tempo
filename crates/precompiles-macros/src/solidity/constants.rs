@@ -83,7 +83,7 @@ pub(super) fn generate_trait(constants: &[ConstantDef]) -> TokenStream {
 /// Generate call/return structs for a single constant.
 fn generate_call_code(c: &ConstantDef) -> syn::Result<TokenStream> {
     let sol_name = c.sol_name();
-    let signature = format!("{}()", sol_name);
+    let signature = format!("{sol_name}()");
     let call_name = format_ident!("{}Call", sol_name);
     let return_name = format_ident!("{}Return", sol_name);
     let ret_ty = &c.ty;
@@ -94,8 +94,7 @@ fn generate_call_code(c: &ConstantDef) -> syn::Result<TokenStream> {
         &signature,
         false,
         Some(format!(
-            "function {}() view returns ({});",
-            sol_name,
+            "function {sol_name}() view returns ({});",
             SynSolType::parse(ret_ty)?.sol_name()
         )),
     );
@@ -103,8 +102,8 @@ fn generate_call_code(c: &ConstantDef) -> syn::Result<TokenStream> {
     let field_name = format_ident!("_0");
     let return_from_tuple = gen_from_into_tuple(
         &return_name,
-        &[field_name.clone()],
-        &[ret_sol.clone()],
+        std::slice::from_ref(&field_name),
+        std::slice::from_ref(&ret_sol),
         &[quote! { #ret_ty }],
         StructLayout::Named,
     );
@@ -146,7 +145,7 @@ fn generate_calls_enum(constants: &[ConstantDef]) -> TokenStream {
         .iter()
         .map(|c| {
             let name = c.sol_name();
-            (format_ident!("{}", name), format_ident!("{}Call", name), format!("{}()", name), 0usize)
+            (format_ident!("{}", name), format_ident!("{}Call", name), format!("{name}()"), 0usize)
         })
         .unzip4();
 

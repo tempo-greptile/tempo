@@ -17,7 +17,7 @@ use tempo_precompiles::{
     error::{Result as TempoResult, TempoPrecompileError},
     storage::{Handler, PrecompileStorageProvider, StorageCtx},
     tip_fee_manager::TipFeeManager,
-    tip20::{IRewards, ITIP20, TIP20Token, is_tip20_prefix},
+    tip20::{TIP20Token, abi as tip20, is_tip20_prefix},
     tip403_registry::{TIP403Registry, abi::IRegistry as _},
 };
 use tempo_primitives::TempoTxEnvelope;
@@ -28,9 +28,9 @@ fn is_tip20_fee_inference_call(input: &[u8]) -> bool {
     input.first_chunk::<4>().is_some_and(|&s| {
         matches!(
             s,
-            ITIP20::transferCall::SELECTOR
-                | ITIP20::transferWithMemoCall::SELECTOR
-                | IRewards::distributeRewardCall::SELECTOR
+            tip20::transferCall::SELECTOR
+                | tip20::transferWithMemoCall::SELECTOR
+                | tip20::distributeRewardCall::SELECTOR
         )
     })
 }

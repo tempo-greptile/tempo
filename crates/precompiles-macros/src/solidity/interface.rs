@@ -292,6 +292,7 @@ fn generate_transformed_trait(def: &InterfaceDef) -> TokenStream {
 
     quote! {
         #(#attrs)*
+        #[allow(clippy::too_many_arguments)]
         #vis trait #trait_name {
             #(#methods)*
         }

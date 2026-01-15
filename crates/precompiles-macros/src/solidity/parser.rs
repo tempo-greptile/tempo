@@ -319,16 +319,13 @@ impl ConstantDef {
 /// Extract the inner type from `LazyLock<T>` or similar wrapper types.
 /// Returns (Some(inner_type), true) if it's a LazyLock, otherwise (None, false).
 fn extract_lazy_lock_inner(ty: &Type) -> (Option<Type>, bool) {
-    if let Type::Path(type_path) = ty {
-        if let Some(seg) = type_path.path.segments.last() {
-            if seg.ident == "LazyLock" || seg.ident == "Lazy" || seg.ident == "OnceCell" {
-                if let PathArguments::AngleBracketed(args) = &seg.arguments {
-                    if let Some(GenericArgument::Type(inner)) = args.args.first() {
-                        return (Some(inner.clone()), true);
-                    }
-                }
-            }
-        }
+    if let Type::Path(type_path) = ty
+        && let Some(seg) = type_path.path.segments.last()
+        && (seg.ident == "LazyLock" || seg.ident == "Lazy" || seg.ident == "OnceCell")
+        && let PathArguments::AngleBracketed(args) = &seg.arguments
+        && let Some(GenericArgument::Type(inner)) = args.args.first()
+    {
+        return (Some(inner.clone()), true);
     }
     (None, false)
 }

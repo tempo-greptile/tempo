@@ -11,6 +11,27 @@
 //! - **Convention over configuration**: Names determine type semantics
 //! - **Co-location**: All related types live in one module
 //!
+//! # Generated Submodules
+//!
+//! Two submodules are always generated for convenient imports:
+//!
+//! ## `prelude` - All public types
+//!
+//! ```ignore
+//! use crate::tip20::abi::prelude::*;
+//! ```
+//!
+//! Includes: all traits, `{Trait}Calls` enums, `Calls`, `Error`, `Event`,
+//! structs, unit enums, and constants.
+//!
+//! ## `traits` - Only interface traits
+//!
+//! ```ignore
+//! use crate::tip20::abi::traits::*;
+//! ```
+//!
+//! Includes: `IConstants` and all interface traits (`IToken`, `IRolesAuth`, etc.).
+//!
 //! # Example
 //!
 //! ```ignore
@@ -65,13 +86,138 @@ mod structs;
 #[cfg(test)]
 mod test_utils;
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 use syn::ItemMod;
 
 use crate::{SolidityConfig, utils::to_pascal_case};
-use parser::SolidityModule;
+use parser::{ConstantDef, InterfaceDef, SolidityModule, SolStructDef, UnitEnumDef};
 use registry::TypeRegistry;
+
+/// Generate the prelude and traits submodules containing re-exports.
+///
+/// - `prelude` - all public types for glob imports
+/// - `traits` - only interface traits for selective imports
+fn generate_prelude(
+    structs: &[SolStructDef],
+    unit_enums: &[UnitEnumDef],
+    interfaces: &[InterfaceDef],
+    constants: &[ConstantDef],
+    has_error: bool,
+    has_event: bool,
+) -> TokenStream {
+    // Collect trait names
+    let trait_names: Vec<&Ident> = interfaces.iter().map(|i| &i.name).collect();
+
+    // Collect {TraitName}Calls enum names
+    let trait_calls_names: Vec<Ident> = interfaces
+        .iter()
+        .map(|i| format_ident!("{}Calls", i.name))
+        .collect();
+
+    // Collect struct names
+    let struct_names: Vec<&Ident> = structs.iter().map(|s| &s.name).collect();
+
+    // Collect unit enum names
+    let unit_enum_names: Vec<&Ident> = unit_enums.iter().map(|e| &e.name).collect();
+
+    // Collect constant names
+    let constant_names: Vec<&Ident> = constants.iter().map(|c| &c.name).collect();
+
+    // Build re-export statements
+    let trait_reexports = if trait_names.is_empty() {
+        quote! {}
+    } else {
+        quote! { pub use super::{#(#trait_names),*}; }
+    };
+
+    let trait_calls_reexports = if trait_calls_names.is_empty() {
+        quote! {}
+    } else {
+        quote! { pub use super::{#(#trait_calls_names),*}; }
+    };
+
+    let struct_reexports = if struct_names.is_empty() {
+        quote! {}
+    } else {
+        quote! { pub use super::{#(#struct_names),*}; }
+    };
+
+    let unit_enum_reexports = if unit_enum_names.is_empty() {
+        quote! {}
+    } else {
+        quote! { pub use super::{#(#unit_enum_names),*}; }
+    };
+
+    let constant_reexports = if constant_names.is_empty() {
+        quote! {}
+    } else {
+        quote! { pub use super::{#(#constant_names),*}; }
+    };
+
+    let error_reexport = if has_error {
+        quote! { pub use super::Error; }
+    } else {
+        quote! {}
+    };
+
+    let event_reexport = if has_event {
+        quote! { pub use super::Event; }
+    } else {
+        quote! {}
+    };
+
+    quote! {
+        /// Traits module for selective trait imports.
+        ///
+        /// Import only the interface traits:
+        /// ```ignore
+        /// use crate::module::abi::traits::*;
+        /// ```
+        pub mod traits {
+            // IConstants trait (always present)
+            pub use super::IConstants;
+
+            // Interface traits
+            #trait_reexports
+        }
+
+        /// Prelude module for convenient glob imports.
+        ///
+        /// Import all public types with:
+        /// ```ignore
+        /// use crate::module::abi::prelude::*;
+        /// ```
+        pub mod prelude {
+            // Unified Calls enum (always present)
+            pub use super::Calls;
+
+            // IConstants trait (always present)
+            pub use super::IConstants;
+
+            // Interface traits
+            #trait_reexports
+
+            // {TraitName}Calls enums
+            #trait_calls_reexports
+
+            // Structs
+            #struct_reexports
+
+            // Unit enums
+            #unit_enum_reexports
+
+            // Constants
+            #constant_reexports
+
+            // Error type (if defined)
+            #error_reexport
+
+            // Event type (if defined)
+            #event_reexport
+        }
+    }
+}
 
 /// Main expansion entry point for `#[abi]` attribute macro.
 pub(crate) fn expand(item: ItemMod, config: SolidityConfig) -> syn::Result<TokenStream> {
@@ -150,6 +296,16 @@ pub(crate) fn expand(item: ItemMod, config: SolidityConfig) -> syn::Result<Token
 
     let other_items: Vec<TokenStream> = module.other_items.iter().map(|i| quote! { #i }).collect();
 
+    // Generate prelude module with re-exports of all public types
+    let prelude = generate_prelude(
+        &module.structs,
+        &module.unit_enums,
+        &module.interfaces,
+        &module.constants,
+        module.error.is_some(),
+        module.event.is_some(),
+    );
+
     let reexports = if config.no_reexport {
         quote! {}
     } else {
@@ -197,6 +353,8 @@ pub(crate) fn expand(item: ItemMod, config: SolidityConfig) -> syn::Result<Token
             #instance_impl
 
             #(#other_items)*
+
+            #prelude
         }
 
         #reexports
