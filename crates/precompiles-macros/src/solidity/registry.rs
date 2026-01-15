@@ -1,6 +1,6 @@
 //! Type registry for ABI signature resolution.
 //!
-//! The registry collects all type definitions from a `#[solidity]` module and
+//! The registry collects all type definitions from a `#[abi]` module and
 //! provides methods to resolve Rust types to their Solidity ABI representations.
 //!
 //! This enables correct selector computation for functions/errors with struct

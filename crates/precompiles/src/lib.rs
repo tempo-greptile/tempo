@@ -426,7 +426,7 @@ mod tests {
     }
 }
 
-/// Tests for the custom precompiles macros (#[solidity], #[derive(SolStruct)]).
+/// Tests for the custom precompiles macros (#[abi], #[derive(SolStruct)]).
 ///
 /// These tests validate that the macros generate correct selectors and EIP-712 signatures,
 /// especially for complex types like structs.
@@ -436,11 +436,11 @@ mod macro_tests {
         primitives::{Address, U256},
         sol_types::{SolCall, SolStruct},
     };
-    use tempo_precompiles_macros::solidity;
+    use tempo_precompiles_macros::abi;
 
     use crate::error::Result;
 
-    #[solidity]
+    #[abi]
     pub mod test_types {
         use super::*;
 

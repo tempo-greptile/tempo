@@ -2,7 +2,7 @@
 //!
 //! # Known Gaps
 //!
-//! These features are supported by `sol!` but NOT by `#[solidity]`:
+//! These features are supported by `sol!` but NOT by `#[abi]`:
 //!
 //! - **Anonymous events**: `sol!` supports `event Foo() anonymous;`
 //! - **Overloaded functions**: Rust traits don't support method overloading

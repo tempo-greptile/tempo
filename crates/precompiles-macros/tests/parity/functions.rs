@@ -1,11 +1,11 @@
-//! Function call encoding parity tests between `#[solidity]` and `sol!`.
+//! Function call encoding parity tests between `#[abi]` and `sol!`.
 
 use alloy::{
     primitives::{Address, U256},
     sol_types::SolCall,
 };
 use alloy_sol_macro::sol;
-use tempo_precompiles_macros::solidity;
+use tempo_precompiles_macros::abi;
 
 use super::assert_call_parity;
 
@@ -33,7 +33,7 @@ sol! {
     function isValidAddress(address addr) external view returns (bool);
 }
 
-#[solidity]
+#[abi]
 mod rust {
     use super::*;
 

@@ -2,6 +2,7 @@ use super::{
     BURN_BLOCKED_ROLE, DEFAULT_ADMIN_ROLE, ISSUER_ROLE, PAUSE_ROLE, TIP20Error, TIP20Event,
     TIP20Token, UNPAUSE_ROLE, abi,
 };
+use abi::IToken as _;
 use crate::{
     PATH_USD_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
     account_keychain::AccountKeychain,
@@ -46,46 +47,6 @@ pub fn validate_usd_currency(token: Address) -> Result<()> {
 }
 
 impl TIP20Token {
-    pub fn name(&self) -> Result<String> {
-        self.name.read()
-    }
-
-    pub fn symbol(&self) -> Result<String> {
-        self.symbol.read()
-    }
-
-    pub fn decimals(&self) -> Result<u8> {
-        Ok(TIP20_DECIMALS)
-    }
-
-    pub fn currency(&self) -> Result<String> {
-        self.currency.read()
-    }
-
-    pub fn total_supply(&self) -> Result<U256> {
-        self.total_supply.read()
-    }
-
-    pub fn quote_token(&self) -> Result<Address> {
-        self.quote_token.read()
-    }
-
-    pub fn next_quote_token(&self) -> Result<Address> {
-        self.next_quote_token.read()
-    }
-
-    pub fn supply_cap(&self) -> Result<U256> {
-        self.supply_cap.read()
-    }
-
-    pub fn paused(&self) -> Result<bool> {
-        self.paused.read()
-    }
-
-    pub fn transfer_policy_id(&self) -> Result<u64> {
-        self.transfer_policy_id.read()
-    }
-
     /// Returns the PAUSE_ROLE constant
     ///
     /// This role identifier grants permission to pause the token contract.

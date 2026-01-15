@@ -1,7 +1,7 @@
-//! Struct code generation for the `#[solidity]` module macro.
+//! Struct code generation for the `#[abi]` module macro.
 //!
 //! Generates `SolStruct`, `SolType`, `SolValue`, and `EventTopic`
-//! implementations for structs defined within a `#[solidity]` module.
+//! implementations for structs defined within a `#[abi]` module.
 
 use alloy_sol_macro_expander::{Eip712Options, StructCodegen};
 use proc_macro2::{Ident, TokenStream};

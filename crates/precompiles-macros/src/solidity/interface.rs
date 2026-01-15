@@ -1,4 +1,4 @@
-//! Interface trait code generation for the `#[solidity]` module macro.
+//! Interface trait code generation for the `#[abi]` module macro.
 //!
 //! Generates `SolCall` structs for each method and a container `Calls`
 //! enum with `SolInterface` implementation.

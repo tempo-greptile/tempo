@@ -2,10 +2,10 @@
 
 ## Overview
 
-This document specifies enhancements to the `#[solidity]` and `#[contract]` proc-macros to:
+This document specifies enhancements to the `#[abi]` and `#[contract]` proc-macros to:
 1. Eliminate manual re-export boilerplate
 2. Auto-generate unified dispatch enums for contracts composed of multiple solidity modules
-3. Maintain clean separation between ABI definition (`#[solidity]`) and contract composition (`#[contract]`)
+3. Maintain clean separation between ABI definition (`#[abi]`) and contract composition (`#[contract]`)
 
 ## Current Pain Points
 
@@ -15,13 +15,13 @@ This document specifies enhancements to the `#[solidity]` and `#[contract]` proc
 
 ## Design Principles
 
-- `#[solidity]` = ABI definition (single module, single responsibility)
+- `#[abi]` = ABI definition (single module, single responsibility)
 - `#[contract]` = Composition point (aggregates multiple solidity modules)
 - No new macros - extend existing infrastructure
 
 ---
 
-## 1. `#[solidity]` Macro Changes
+## 1. `#[abi]` Macro Changes
 
 ### 1.1 Always Generate Core Types
 
@@ -30,7 +30,7 @@ The macro must always generate `Error`, `Event`, and `Calls` types, even when th
 **Example - Module with only Interface:**
 
 ```rust
-#[solidity]
+#[abi]
 pub mod rewards {
     pub trait Interface {
         fn claim_rewards(&mut self) -> Result<U256>;
@@ -73,7 +73,7 @@ pub mod rewards {
 After generating the module, emit sibling re-export items:
 
 ```rust
-#[solidity]
+#[abi]
 pub mod tip20 { ... }
 
 // Auto-generated after module:
@@ -246,13 +246,13 @@ Module path `roles_auth` → Variant name `RolesAuth` (PascalCase, underscores r
 ### 3.1 types.rs (Before)
 
 ```rust
-#[solidity]
+#[abi]
 pub mod tip20 { ... }
 
-#[solidity]
+#[abi]
 pub mod roles_auth { ... }
 
-#[solidity]
+#[abi]
 pub mod rewards { ... }
 
 // Manual re-exports (60+ lines)
@@ -270,15 +270,15 @@ pub mod ITIP20 {
 ### 3.2 types.rs (After)
 
 ```rust
-#[solidity]
+#[abi]
 pub mod tip20 { ... }
 // Auto-generates: pub use self::tip20::*; and pub mod ITIP20 { ... }
 
-#[solidity]
+#[abi]
 pub mod roles_auth { ... }
 // Auto-generates: pub use self::roles_auth::*; and pub mod IRolesAuth { ... }
 
-#[solidity]
+#[abi]
 pub mod rewards { ... }
 // Auto-generates: pub use self::rewards::*; and pub mod IRewards { ... }
 
@@ -309,7 +309,7 @@ pub use types::{
 pub struct TIP20Token { ... }
 
 // Auto-generates: TIP20TokenCalls, TIP20TokenError, TIP20TokenEvent
-// Re-exports from types are handled by #[solidity] auto-exports
+// Re-exports from types are handled by #[abi] auto-exports
 ```
 
 ### 3.5 dispatch.rs (Before)
@@ -364,18 +364,18 @@ impl Precompile for TIP20Token {
 | Empty module (no Interface/Error/Event) | Uses dummy enums; variant still appears in unified enum |
 | Single module | Still generates unified enum with one variant |
 | Module not found | Standard Rust path resolution error |
-| Module missing required types | Compile-time error: "Module X does not appear to be a #[solidity] module" |
+| Module missing required types | Compile-time error: "Module X does not appear to be a #[abi] module" |
 
 ---
 
 ## 5. Implementation Plan
 
-### Phase 1: `#[solidity]` Dummy Types
-- Modify `#[solidity]` to always emit `Error`, `Event`, `Calls` (dummy if not defined)
+### Phase 1: `#[abi]` Dummy Types
+- Modify `#[abi]` to always emit `Error`, `Event`, `Calls` (dummy if not defined)
 - Ensure dummy types implement required API
 - Add tests for modules with missing definitions
 
-### Phase 2: `#[solidity]` Auto Re-exports
+### Phase 2: `#[abi]` Auto Re-exports
 - Generate `pub use self::module::*` after module
 - Generate `pub mod I{ModuleName} { ... }` interface alias module
 - Add attribute option to customize/disable

@@ -3,7 +3,7 @@
 //! This crate provides:
 //! - `#[contract]` macro that transforms a storage schema into a fully-functional contract
 //! - `#[derive(Storable)]` macro for multi-slot storage structs
-//! - `#[solidity]` macro for unified module-level Solidity type generation
+//! - `#[abi]` macro for unified module-level Solidity ABI type generation
 //! - `storable_alloy_ints!` macro for generating alloy integer storage implementations
 //! - `storable_alloy_bytes!` macro for generating alloy FixedBytes storage implementations
 //! - `storable_rust_ints!` macro for generating standard Rust integer storage implementations
@@ -34,8 +34,8 @@ use crate::utils::extract_attributes;
 struct ContractConfig {
     /// Optional address expression for generating `Self::new()` and `Default`.
     address: Option<Expr>,
-    /// Single solidity module containing all ABI types.
-    abi_module: Option<Path>,
+    /// Whether to link to an `abi` module for ABI types.
+    use_abi: bool,
 }
 
 impl Parse for ContractConfig {
@@ -50,22 +50,14 @@ impl Parse for ContractConfig {
                     config.address = Some(input.parse()?);
                 }
                 "abi" => {
-                    let content;
-                    syn::parenthesized!(content in input);
-                    let modules: Vec<Path> =
-                        Punctuated::<Path, Token![,]>::parse_terminated(&content)?
-                            .into_iter()
-                            .collect();
-
-                    if modules.len() != 1 {
+                    if input.peek(syn::token::Paren) {
                         return Err(syn::Error::new(
                             ident.span(),
-                            "abi() expects exactly one module; use multiple interface traits \
-                             within a single #[solidity] module instead of multiple modules",
+                            "`abi` attribute does not accept arguments; \
+                             define a sibling `#[abi] pub mod abi { ... }` module instead",
                         ));
                     }
-
-                    config.abi_module = modules.into_iter().next();
+                    config.use_abi = true;
                 }
                 other => {
                     return Err(syn::Error::new(
@@ -94,7 +86,7 @@ const RESERVED: &[&str] = &["address", "storage", "msg_sender"];
 ///
 /// - `#[contract]` - Basic contract with storage accessors
 /// - `#[contract(addr = EXPR)]` - Contract with fixed address (generates `new()` and `Default`)
-/// - `#[contract(abi(module))]` - Link to a `#[solidity]` module for ABI types (Calls, Error, Event)
+/// - `#[contract(abi(module))]` - Link to a `#[abi]` module for ABI types (Calls, Error, Event)
 ///
 /// # Storage Layout Example
 ///
@@ -121,7 +113,7 @@ const RESERVED: &[&str] = &["address", "storage", "msg_sender"];
 /// # ABI Composition
 ///
 /// When using `#[contract(abi(mod1, mod2, ...))]`, the macro generates unified types from
-/// multiple `#[solidity]` modules:
+/// multiple `#[abi]` modules:
 ///
 /// ```ignore
 /// #[contract(abi(types::tip20, types::roles_auth, types::rewards))]
@@ -155,7 +147,7 @@ const RESERVED: &[&str] = &["address", "storage", "msg_sender"];
 /// - No duplicate slot assignments
 /// - Unique field names, excluding the reserved ones: `address`, `storage`, `msg_sender`.
 /// - All field types must implement `Storable`, and mapping keys must implement `StorageKey`.
-/// - For `abi(...)`: All referenced modules must be `#[solidity]` modules with `Calls`, `Error`, and `Event` types.
+/// - For `abi(...)`: All referenced modules must be `#[abi]` modules with `Calls`, `Error`, and `Event` types.
 #[proc_macro_attribute]
 pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
     let config = parse_macro_input!(attr as ContractConfig);
@@ -213,22 +205,22 @@ impl Parse for SolidityConfig {
 
 /// Unified module macro for generating Solidity-compatible types.
 ///
-/// This macro processes an entire module containing Solidity type definitions,
+/// This macro processes an entire module containing Solidity ABI type definitions,
 /// enabling correct selector computation for functions with struct parameters
 /// and proper EIP-712 component tracking for nested structs.
 ///
 /// # Attributes
 ///
-/// - `#[solidity]` - Default behavior with auto re-exports
-/// - `#[solidity(interface_alias = "CustomName")]` - Custom interface alias module name
-/// - `#[solidity(no_reexport)]` - Disable auto re-export behavior
+/// - `#[abi]` - Default behavior with auto re-exports
+/// - `#[abi(interface_alias = "CustomName")]` - Custom interface alias module name
+/// - `#[abi(no_reexport)]` - Disable auto re-export behavior
 ///
 /// # Auto Re-exports
 ///
 /// By default, the macro generates sibling re-export items after the module:
 ///
 /// ```ignore
-/// #[solidity]
+/// #[abi]
 /// pub mod tip20 { ... }
 ///
 /// // Auto-generated:
@@ -239,8 +231,8 @@ impl Parse for SolidityConfig {
 ///
 /// The interface alias uses PascalCase naming: `tip20` → `ITip20`, `roles_auth` → `IRolesAuth`.
 ///
-/// Use `#[solidity(no_reexport)]` to disable this behavior, or
-/// `#[solidity(interface_alias = "CustomName")]` to customize the alias name.
+/// Use `#[abi(no_reexport)]` to disable this behavior, or
+/// `#[abi(interface_alias = "CustomName")]` to customize the alias name.
 ///
 /// # Naming Conventions
 ///
@@ -251,10 +243,11 @@ impl Parse for SolidityConfig {
 /// | Event enum | `Event` | 0 or 1 |
 /// | Structs | Any valid identifier | 0 or more |
 /// | Other enums | Any valid identifier | 0 or more (unit variants only) |
+/// | Constants | Any (const/static) | 0 or more |
 ///
 /// # Generated Types
 ///
-/// **Always generated** (for `#[contract(abi(...))]` composition):
+/// **Always generated** (for `#[contract(abi)]` composition):
 /// - `Error` enum with `SELECTORS`, `valid_selector()`, `selector()` (dummy if not defined)
 /// - `Event` enum with `SELECTORS`, `IntoLogData` impl (dummy if not defined)
 /// - `Calls` enum with `SELECTORS`, `valid_selector()`, `abi_decode()` (dummy if not defined)
@@ -282,13 +275,18 @@ impl Parse for SolidityConfig {
 /// - `Calls` enum with `SolInterface` implementation
 /// - Trait with `msg_sender: Address` auto-injected for `&mut self` methods
 ///
+/// For constants (const/static items):
+/// - `{CONSTANT_NAME}Call` structs for each constant
+/// - `IConstants` trait with getter methods
+/// - `ConstantsCalls` enum merged into unified `Calls`
+///
 /// # Dummy Types
 ///
 /// When a module doesn't define `Error`, `Event`, or `Interface`, the macro generates
-/// empty "dummy" types to ensure compatibility with `#[contract(abi(...))]` composition:
+/// empty "dummy" types to ensure compatibility with `#[contract(abi)]` composition:
 ///
 /// ```ignore
-/// #[solidity]
+/// #[abi]
 /// pub mod rewards {
 ///     pub trait Interface {
 ///         fn claim_rewards(&mut self) -> Result<U256>;
@@ -305,9 +303,11 @@ impl Parse for SolidityConfig {
 /// # Example
 ///
 /// ```ignore
-/// #[solidity]
-/// pub mod roles_auth {
+/// #[abi]
+/// pub mod abi {
 ///     use super::*;
+///
+///     pub static PAUSE_ROLE: LazyLock<B256> = LazyLock::new(|| keccak256(b"PAUSE_ROLE"));
 ///
 ///     #[derive(Clone, Debug)]
 ///     pub struct Transfer {
@@ -342,7 +342,7 @@ impl Parse for SolidityConfig {
 /// }
 /// ```
 #[proc_macro_attribute]
-pub fn solidity(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn abi(attr: TokenStream, item: TokenStream) -> TokenStream {
     let config = parse_macro_input!(attr as SolidityConfig);
     let input = parse_macro_input!(item as syn::ItemMod);
 
@@ -351,6 +351,8 @@ pub fn solidity(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(err) => err.to_compile_error().into(),
     }
 }
+
+
 
 fn gen_contract_output(
     input: DeriveInput,
@@ -361,8 +363,8 @@ fn gen_contract_output(
 
     let storage_output = gen_contract_storage(&ident, &vis, &fields, config.address.as_ref())?;
 
-    let abi_aliases = if let Some(ref module) = config.abi_module {
-        composition::generate_abi_aliases(&ident, module)?
+    let abi_aliases = if config.use_abi {
+        composition::generate_abi_aliases(&ident)?
     } else {
         proc_macro2::TokenStream::new()
     };

@@ -13,12 +13,12 @@ pub mod token;
 use crate::{error::Result, storage::Mapping};
 use alloy::primitives::{Address, B256, U256, keccak256};
 use std::sync::LazyLock;
-use tempo_precompiles_macros::{Storable, contract, solidity};
+use tempo_precompiles_macros::{Storable, abi, contract};
 
 pub use roles::*;
 pub use token::*;
 
-#[contract(abi(abi))]
+#[contract(abi)]
 pub struct TIP20Token {
     // RolesAuth
     roles: Mapping<Address, Mapping<B256, bool>>,
@@ -48,7 +48,7 @@ pub struct TIP20Token {
     user_reward_info: Mapping<Address, UserRewardInfo>,
 }
 
-#[solidity]
+#[abi]
 #[rustfmt::skip]
 pub mod abi {
     use super::*;

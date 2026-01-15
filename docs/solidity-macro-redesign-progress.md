@@ -6,8 +6,8 @@
 
 | Phase | Status | PR |
 |-------|--------|-----|
-| 1. `#[solidity]` Dummy Types | ✅ Complete | — |
-| 2. `#[solidity]` Auto Re-exports | ✅ Complete | — |
+| 1. `#[abi]` Dummy Types | ✅ Complete | — |
+| 2. `#[abi]` Auto Re-exports | ✅ Complete | — |
 | 3. `#[contract(types(...))]` Composition | ✅ Complete | — |
 | 4. TIP20 Migration | ✅ Complete | — |
 | 5. Docs & Cleanup | ✅ Complete | — |
@@ -85,7 +85,7 @@
 
 **Changes**:
 - `lib.rs`: Extended `#[contract]` documentation with `abi(...)` composition feature, dispatch pattern example
-- `lib.rs`: Extended `#[solidity]` documentation with auto re-exports, dummy types, and interface alias sections
+- `lib.rs`: Extended `#[abi]` documentation with auto re-exports, dummy types, and interface alias sections
 - `tests/macro_tests.rs`: Added 9 integration tests for dummy types and auto re-exports
 - `composition.rs`: Fixed bug where `inner_type` was incorrectly set to `TIP20TokenError` instead of `Error`
 
@@ -108,7 +108,7 @@
 
 **Changes**:
 - `mod.rs`: Added `#[contract(types(types::tip20, types::roles_auth, types::rewards))]` to TIP20Token
-- `types.rs`: Removed `no_reexport` from all `#[solidity]` modules, removed ~55 lines of manual re-exports
+- `types.rs`: Removed `no_reexport` from all `#[abi]` modules, removed ~55 lines of manual re-exports
 - `types.rs`: Added backward-compatibility aliases (`ITIP20 -> ITip20`, type aliases for `TIP20Error`, etc.)
 - `dispatch.rs`: Removed manual `TIP20Call` enum (~25 lines), now uses auto-generated `TIP20TokenCalls`
 - `dispatch.rs`: Updated all match arms from `TIP20Call::TIP20(ITIP20Calls::xxx)` to `TIP20TokenCalls::Tip20(tip20::Calls::xxx)`

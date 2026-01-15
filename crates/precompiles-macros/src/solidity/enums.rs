@@ -1,4 +1,4 @@
-//! Enum code generation for the `#[solidity]` module macro.
+//! Enum code generation for the `#[abi]` module macro.
 //!
 //! Handles two types of enums:
 //! - **Unit enums**: Encoded as `uint8`, like Solidity's `enum Status { Pending, Filled }`

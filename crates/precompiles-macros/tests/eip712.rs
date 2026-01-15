@@ -1,4 +1,4 @@
-//! EIP-712 tests for the `#[solidity]` macro.
+//! EIP-712 tests for the `#[abi]` macro.
 //!
 //! These tests mirror alloy's `sol-types/tests/macros/sol/eip712.rs` to ensure
 //! our implementation produces identical results.
@@ -17,9 +17,9 @@ use alloy::{
     primitives::{Address, B256, U256, b256},
     sol_types::{SolStruct, SolValue, eip712_domain},
 };
-use tempo_precompiles_macros::solidity;
+use tempo_precompiles_macros::abi;
 
-#[solidity]
+#[abi]
 mod nesting {
     use super::*;
 
@@ -100,7 +100,7 @@ fn encode_type_components() {
     assert!(d_components.iter().any(|c| c.as_ref() == "C(A a,B b)"));
 }
 
-#[solidity]
+#[abi]
 mod mail {
     use super::*;
 
@@ -186,7 +186,7 @@ fn mail_type_hash() {
     assert_eq!(mail.eip712_type_hash(), expected_type_hash);
 }
 
-#[solidity]
+#[abi]
 mod deep {
     use super::*;
 
@@ -257,7 +257,7 @@ fn deep_nesting_components() {
     );
 }
 
-#[solidity]
+#[abi]
 mod diamond {
     use super::*;
 
@@ -334,7 +334,7 @@ fn diamond_components_dedup() {
     }
 }
 
-#[solidity]
+#[abi]
 mod duplicate {
     use super::*;
 
@@ -373,7 +373,7 @@ fn duplicate_dependency_dedup() {
     assert_eq!(point_count, 1, "Point should appear exactly once");
 }
 
-#[solidity]
+#[abi]
 mod arrays {
     use super::*;
 

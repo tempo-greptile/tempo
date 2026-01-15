@@ -1,4 +1,4 @@
-//! Integration tests for the `#[solidity]` macro.
+//! Integration tests for the `#[abi]` macro.
 //!
 //! This file contains general macro integration tests. EIP-712 specific tests
 //! are in the `solidity/` test module.
@@ -8,9 +8,9 @@ use alloy::{
     sol_types::{SolCall, SolError, SolEvent, SolInterface, SolValue},
 };
 use std::collections::HashMap;
-use tempo_precompiles_macros::solidity;
+use tempo_precompiles_macros::abi;
 
-#[solidity]
+#[abi]
 mod structs {
     use super::*;
 
@@ -42,7 +42,7 @@ fn test_struct_encoding_decoding() {
     assert_eq!(transfer, decoded);
 }
 
-#[solidity]
+#[abi]
 mod unit_enums {
     pub enum Status {
         Pending,
@@ -77,7 +77,7 @@ fn test_unit_enum() {
 
 type Result<T> = core::result::Result<T, ()>;
 
-#[solidity]
+#[abi]
 mod e2e {
     use super::*;
 
@@ -335,7 +335,7 @@ fn test_full_module_integration() {
 // Dummy Types Tests
 // =============================================================================
 
-#[solidity]
+#[abi]
 mod interface_only {
     use super::*;
 
@@ -375,7 +375,7 @@ fn test_real_calls_for_interface_only_module() {
     assert!(matches!(decoded, interface_only::Calls::getValue(_)));
 }
 
-#[solidity]
+#[abi]
 mod struct_only {
     use super::*;
 
@@ -398,7 +398,7 @@ fn test_dummy_types_for_struct_only_module() {
     assert!(result.is_err());
 }
 
-#[solidity]
+#[abi]
 mod error_and_event_only {
     use super::*;
 
@@ -429,7 +429,7 @@ fn test_real_error_with_dummy_calls() {
 // Auto Re-export Tests
 // =============================================================================
 
-#[solidity]
+#[abi]
 pub mod reexport_test {
     use super::*;
 
@@ -458,7 +458,7 @@ fn test_interface_alias_module() {
     let _ = IReexportTest::TestStatus::Active;
 }
 
-#[solidity(no_reexport)]
+#[abi(no_reexport)]
 pub mod no_reexport_test {
     use super::*;
 
@@ -475,7 +475,7 @@ fn test_no_reexport_requires_qualified_access() {
     // Note: NoReexportStruct and INoReexportTest would NOT be in scope
 }
 
-#[solidity(interface_alias = "CustomAlias")]
+#[abi(interface_alias = "CustomAlias")]
 pub mod custom_alias_test {
     use super::*;
 
@@ -494,7 +494,7 @@ fn test_custom_interface_alias() {
 // Test constants support
 use std::sync::LazyLock;
 
-#[solidity]
+#[abi]
 mod constants_only {
     use super::*;
 
@@ -527,7 +527,7 @@ fn test_constants_only_module() {
     fn _assert_iconstants<T: constants_only::IConstants>() {}
 }
 
-#[solidity]
+#[abi]
 mod constants_with_interface {
     use super::*;
 

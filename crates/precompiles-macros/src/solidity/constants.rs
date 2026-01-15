@@ -1,4 +1,4 @@
-//! Constants code generation for the `#[solidity]` module macro.
+//! Constants code generation for the `#[abi]` module macro.
 //!
 //! Generates view function call structs for each constant and a `ConstantsCalls` enum.
 

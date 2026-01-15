@@ -1,11 +1,11 @@
-//! Event encoding parity tests between `#[solidity]` and `sol!`.
+//! Event encoding parity tests between `#[abi]` and `sol!`.
 
 use alloy::{
     primitives::{Address, FixedBytes, U256},
     sol_types::SolEvent,
 };
 use alloy_sol_macro::sol;
-use tempo_precompiles_macros::solidity;
+use tempo_precompiles_macros::abi;
 
 use super::assert_event_parity;
 
@@ -26,7 +26,7 @@ sol! {
     event IndexedDynamic(string indexed name, bytes indexed data, address sender);
 }
 
-#[solidity]
+#[abi]
 mod rust {
     use super::*;
 

@@ -1,4 +1,4 @@
-//! `#[solidity]` module attribute macro.
+//! `#[abi]` module attribute macro.
 //!
 //! This module provides a unified macro for defining Solidity-compatible types
 //! in a single Rust module, eliminating the need for separate `#[interface]`,
@@ -14,7 +14,7 @@
 //! # Example
 //!
 //! ```ignore
-//! #[solidity]
+//! #[abi]
 //! pub mod roles_auth {
 //!     use super::*;
 //!
@@ -72,7 +72,7 @@ use crate::{SolidityConfig, utils::to_pascal_case};
 use parser::SolidityModule;
 use registry::TypeRegistry;
 
-/// Main expansion entry point for `#[solidity]` attribute macro.
+/// Main expansion entry point for `#[abi]` attribute macro.
 pub(crate) fn expand(item: ItemMod, config: SolidityConfig) -> syn::Result<TokenStream> {
     let module = SolidityModule::parse(item)?;
     let registry = TypeRegistry::from_module(&module)?;

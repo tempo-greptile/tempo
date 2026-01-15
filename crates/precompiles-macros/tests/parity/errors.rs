@@ -1,11 +1,11 @@
-//! Error encoding parity tests between `#[solidity]` and `sol!`.
+//! Error encoding parity tests between `#[abi]` and `sol!`.
 
 use alloy::{
     primitives::{Address, U256},
     sol_types::SolError,
 };
 use alloy_sol_macro::sol;
-use tempo_precompiles_macros::solidity;
+use tempo_precompiles_macros::abi;
 
 use super::assert_error_parity;
 
@@ -23,7 +23,7 @@ sol! {
     error InvalidAmount(uint256 amount);
 }
 
-#[solidity]
+#[abi]
 mod rust {
     use super::*;
 

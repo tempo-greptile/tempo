@@ -1,6 +1,6 @@
-//! Parser for `#[solidity]` module macro.
+//! Parser for `#[abi]` module macro.
 //!
-//! Parses a Rust module decorated with `#[solidity]` into a structured intermediate
+//! Parses a Rust module decorated with `#[abi]` into a structured intermediate
 //! representation (IR) suitable for code generation.
 //!
 //! # Naming Conventions
@@ -61,7 +61,7 @@ pub(super) trait FieldAccessors {
     }
 }
 
-/// Parsed content of a `#[solidity]` module.
+/// Parsed content of a `#[abi]` module.
 #[derive(Debug)]
 pub(super) struct SolidityModule {
     /// Module name
@@ -87,13 +87,13 @@ pub(super) struct SolidityModule {
 }
 
 impl SolidityModule {
-    /// Parse a module decorated with `#[solidity]` into IR.
+    /// Parse a module decorated with `#[abi]` into IR.
     pub(super) fn parse(item: ItemMod) -> syn::Result<Self> {
         let name = item.ident.clone();
         let vis = item.vis.clone();
 
         let content = item.content.as_ref().ok_or_else(|| {
-            syn::Error::new_spanned(&item, "#[solidity] requires a module with body")
+            syn::Error::new_spanned(&item, "#[abi] requires a module with body")
         })?;
 
         let mut imports = Vec::new();
@@ -198,7 +198,7 @@ impl SolStructDef {
         let Fields::Named(named) = &item.fields else {
             return Err(syn::Error::new_spanned(
                 item,
-                "only structs with named fields are supported in #[solidity] modules",
+                "only structs with named fields are supported in #[abi] modules",
             ));
         };
 
@@ -364,7 +364,7 @@ impl UnitEnumDef {
             if !matches!(variant.fields, Fields::Unit) {
                 return Err(syn::Error::new_spanned(
                     variant,
-                    "enums in `#[solidity]` modules must be one of:\n\
+                    "enums in `#[abi]` modules must be one of:\n\
                      - `enum Error { ... }` with named-field variants for custom errors\n\
                      - `enum Event { ... }` with named-field variants for events\n\
                      - unit-only enums (no fields) encoded as uint8",
@@ -699,7 +699,7 @@ fn check_generics(generics: &syn::Generics) -> syn::Result<()> {
     if !generics.params.is_empty() || generics.where_clause.is_some() {
         return Err(syn::Error::new_spanned(
             generics,
-            "generics are not supported in `#[solidity]` modules",
+            "generics are not supported in `#[abi]` modules",
         ));
     }
     Ok(())

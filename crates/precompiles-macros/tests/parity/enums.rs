@@ -1,8 +1,8 @@
-//! Enum encoding parity tests between `#[solidity]` and `sol!`.
+//! Enum encoding parity tests between `#[abi]` and `sol!`.
 
 use alloy::sol_types::SolValue;
 use alloy_sol_macro::sol;
-use tempo_precompiles_macros::solidity;
+use tempo_precompiles_macros::abi;
 
 use super::assert_encoding_parity;
 
@@ -15,7 +15,7 @@ sol! {
     }
 }
 
-#[solidity]
+#[abi]
 mod rust {
     pub enum Status {
         Pending,
