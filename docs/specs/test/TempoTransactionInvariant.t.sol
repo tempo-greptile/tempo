@@ -1127,7 +1127,8 @@ contract TempoTransactionInvariantTest is InvariantChecker {
             return;
         }
 
-        uint64 currentNonce = uint64(ghost_protocolNonce[sender]);
+        // Use actual on-chain nonce, not ghost state
+        uint64 currentNonce = uint64(vm.getNonce(sender));
         uint64 wrongNonce = currentNonce + 1;
 
         bytes memory signedTx = _buildAndSignLegacyTransfer(senderIdx, recipient, amount, wrongNonce);
@@ -1162,7 +1163,8 @@ contract TempoTransactionInvariantTest is InvariantChecker {
             return;
         }
 
-        uint64 currentNonce = uint64(ghost_protocolNonce[sender]);
+        // Use actual on-chain nonce, not ghost state
+        uint64 currentNonce = uint64(vm.getNonce(sender));
         if (currentNonce == 0) {
             return;
         }
