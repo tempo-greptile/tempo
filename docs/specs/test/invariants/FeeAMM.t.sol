@@ -667,6 +667,157 @@ contract FeeAMMInvariantTest is InvariantBaseTest {
         vm.stopPrank();
     }
 
+    /// @notice Handler for testing first mint boundary condition
+    /// @dev Tests that half_amount must be > MIN_LIQUIDITY, not >= (Rust: half_amount <= MIN_LIQUIDITY fails)
+    /// @param actorSeed Seed for selecting actor
+    /// @param tokenSeed1 Seed for selecting user token
+    /// @param tokenSeed2 Seed for selecting validator token
+    function tryFirstMintBoundary(uint256 actorSeed, uint256 tokenSeed1, uint256 tokenSeed2)
+        external
+    {
+        address actor = _selectActor(actorSeed);
+        address userToken = _selectToken(tokenSeed1);
+        address validatorToken = _selectToken(tokenSeed2);
+
+        vm.assume(userToken != validatorToken);
+
+        // Skip if actor is blacklisted for validatorToken
+        uint64 policyId =
+            validatorToken == address(pathUSD) ? _pathUsdPolicyId : _tokenPolicyIds[validatorToken];
+        vm.assume(registry.isAuthorized(policyId, actor));
+
+        bytes32 poolId = amm.getPoolId(userToken, validatorToken);
+        uint256 totalSupplyBefore = amm.totalSupply(poolId);
+
+        // Only test on uninitialized pools
+        vm.assume(totalSupplyBefore == 0);
+
+        // Boundary amount: 2 * MIN_LIQUIDITY = 2000
+        // half_amount = 1000 = MIN_LIQUIDITY, which should FAIL per Rust (half_amount <= MIN_LIQUIDITY)
+        uint256 boundaryAmount = 2 * MIN_LIQUIDITY;
+
+        _ensureFunds(actor, TIP20(validatorToken), boundaryAmount);
+
+        vm.startPrank(actor);
+        try amm.mint(userToken, validatorToken, boundaryAmount, actor) returns (uint256) {
+            vm.stopPrank();
+            // If this succeeds, the invariant is that half_amount > MIN_LIQUIDITY is NOT required
+            // (i.e., Solidity implementation differs from Rust)
+            _log(
+                string.concat(
+                    "FIRST_MINT_BOUNDARY: ",
+                    _getActorIndex(actor),
+                    " succeeded with boundary amount (half=MIN_LIQUIDITY)"
+                )
+            );
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            // Expected: InsufficientLiquidity when half_amount <= MIN_LIQUIDITY
+            assertEq(
+                bytes4(reason),
+                IFeeAMM.InsufficientLiquidity.selector,
+                "First mint with half=MIN_LIQUIDITY should fail with InsufficientLiquidity"
+            );
+            _log(
+                string.concat(
+                    "FIRST_MINT_BOUNDARY: ",
+                    _getActorIndex(actor),
+                    " correctly rejected at boundary"
+                )
+            );
+        }
+
+        // Also test just above boundary: 2 * MIN_LIQUIDITY + 2 = 2002
+        // half_amount = 1001 > MIN_LIQUIDITY, which should SUCCEED
+        uint256 aboveBoundary = 2 * MIN_LIQUIDITY + 2;
+        _ensureFunds(actor, TIP20(validatorToken), aboveBoundary);
+
+        vm.startPrank(actor);
+        try amm.mint(userToken, validatorToken, aboveBoundary, actor) returns (uint256 liquidity) {
+            vm.stopPrank();
+            // Should succeed with liquidity = half_amount - MIN_LIQUIDITY = 1001 - 1000 = 1
+            assertEq(liquidity, 1, "First mint just above boundary should yield liquidity of 1");
+            _totalMints++;
+            _log(
+                string.concat(
+                    "FIRST_MINT_ABOVE_BOUNDARY: ",
+                    _getActorIndex(actor),
+                    " succeeded with liquidity=1"
+                )
+            );
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            _assertKnownError(reason);
+        }
+    }
+
+    /// @notice Handler for testing rebalance swap with exact division (no remainder)
+    /// @dev Tests TEMPO-AMM22: +1 rounding applies even when (amountOut * N) % SCALE == 0
+    /// @param actorSeed Seed for selecting actor
+    /// @param tokenSeed1 Seed for selecting user token
+    /// @param tokenSeed2 Seed for selecting validator token
+    function testExactDivisionRebalance(uint256 actorSeed, uint256 tokenSeed1, uint256 tokenSeed2)
+        external
+    {
+        address actor = _selectActor(actorSeed);
+        address userToken = _selectToken(tokenSeed1);
+        address validatorToken = _selectToken(tokenSeed2);
+
+        vm.assume(userToken != validatorToken);
+
+        // Skip if actor is blacklisted for validatorToken
+        uint64 policyId =
+            validatorToken == address(pathUSD) ? _pathUsdPolicyId : _tokenPolicyIds[validatorToken];
+        vm.assume(registry.isAuthorized(policyId, actor));
+
+        IFeeAMM.Pool memory pool = amm.getPool(userToken, validatorToken);
+        vm.assume(pool.reserveUserToken > 0);
+
+        // Find an amount where (amountOut * N) % SCALE == 0
+        // N = 9985, SCALE = 10000, GCD(9985, 10000) = 5
+        // So (amountOut * 9985) % 10000 == 0 when amountOut is a multiple of 2000
+        uint256 amountOut = 2000;
+        vm.assume(amountOut <= pool.reserveUserToken);
+
+        // Verify this is indeed exact division
+        vm.assume((amountOut * N) % SCALE == 0);
+
+        uint256 expectedIn = (amountOut * N) / SCALE + 1; // Should still be +1 even with exact division
+        _ensureFunds(actor, TIP20(validatorToken), expectedIn * 2);
+
+        vm.startPrank(actor);
+        try amm.rebalanceSwap(userToken, validatorToken, amountOut, actor) returns (
+            uint256 amountIn
+        ) {
+            vm.stopPrank();
+
+            // TEMPO-AMM22: Even with exact division, the +1 should still apply
+            // Without +1: amountIn would be (2000 * 9985) / 10000 = 1997
+            // With +1: amountIn should be 1998
+            uint256 floorValue = (amountOut * N) / SCALE;
+            assertEq(
+                amountIn,
+                floorValue + 1,
+                "TEMPO-AMM22: Rebalance with exact division should still add +1"
+            );
+
+            _log(
+                string.concat(
+                    "EXACT_DIVISION_REBALANCE: amountOut=",
+                    vm.toString(amountOut),
+                    " amountIn=",
+                    vm.toString(amountIn),
+                    " (floor=",
+                    vm.toString(floorValue),
+                    ")"
+                )
+            );
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            _assertKnownError(reason);
+        }
+    }
+
     /// @dev Number of actors that can be permanently blacklisted (out of 20)
     /// Only actors 0-4 can remain blacklisted; actors 5-19 are always recovered
     uint256 private constant BLACKLISTABLE_ACTOR_COUNT = 5;

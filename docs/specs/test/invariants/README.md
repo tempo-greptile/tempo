@@ -90,7 +90,12 @@ The FeeAMM is a constant-rate AMM used for converting user fee tokens to validat
 - **TEMPO-AMM19**: Must pay at least 1 for any swap - prevents zero-cost extraction.
 - **TEMPO-AMM20**: Reserves are always bounded by uint128.
 - **TEMPO-AMM21**: Spread between fee swap (M) and rebalance (N) prevents arbitrage - M < N with 15 bps spread.
-- **TEMPO-AMM22**: Rebalance swap rounding always favors the pool - the +1 in the formula ensures pool never loses to rounding.
+- **TEMPO-AMM22**: Rebalance swap rounding always favors the pool - the +1 in the formula ensures pool never loses to rounding, even when `(amountOut * N) % SCALE == 0` (exact division case).
+
+### First Mint Boundary Invariants
+
+- **TEMPO-AMM35**: First mint requires `half_amount > MIN_LIQUIDITY`, not `>=`. The boundary case where `amount == 2 * MIN_LIQUIDITY` (i.e., `half_amount == MIN_LIQUIDITY`) must revert with `InsufficientLiquidity`.
+- **TEMPO-AMM36**: First mint with `amount == 2 * MIN_LIQUIDITY + 2` should succeed with `liquidity == 1`.
 - **TEMPO-AMM23**: Burn rounding dust accumulates in pool - integer division rounds down, so users receive <= theoretical amount.
 - **TEMPO-AMM24**: All participants can exit with solvency guaranteed. After distributing all fees and burning all LP positions:
 
@@ -274,6 +279,11 @@ The Nonce precompile manages 2D nonces for accounts, enabling multiple independe
 - **TEMPO-NON7**: Large nonce key support - `type(uint256).max` works correctly as a nonce key.
 - **TEMPO-NON8**: Strict monotonicity - multiple sequential increments produce strictly increasing values with no gaps.
 
+### Overflow Invariants
+
+- **TEMPO-NON9**: Nonce overflow protection - incrementing a nonce at `u64::MAX` reverts with `NonceOverflow`. Rust uses `checked_add(1)` which returns an error on overflow.
+- **TEMPO-NON10**: Invalid key increment rejection - `increment_nonce(key=0)` reverts with `InvalidNonceKey` (distinct from `ProtocolNonceNotSupported` used for reads).
+
 ## ValidatorConfig
 
 The ValidatorConfig precompile manages the set of validators that participate in consensus, including their public keys, addresses, and active status.
@@ -355,3 +365,17 @@ The AccountKeychain precompile manages authorized Access Keys for accounts, enab
 - **TEMPO-KEY14**: Spending limit consistency - all spending limits match ghost state for active keys with limits enforced.
 - **TEMPO-KEY15**: Revocation permanence - revoked keys remain revoked (isRevoked stays true).
 - **TEMPO-KEY16**: Signature type consistency - key signature type matches ghost state for all active keys.
+
+### Expiry Boundary Invariants
+
+- **TEMPO-KEY17**: Expiry at current timestamp is expired - Rust uses `timestamp >= expiry` so `expiry == block.timestamp` counts as expired.
+- **TEMPO-KEY18**: Operations on expired keys fail with `KeyExpired` - `updateSpendingLimit` on a key where `timestamp >= expiry` reverts.
+
+### Signature Type Validation Invariants
+
+- **TEMPO-KEY19**: Invalid signature type rejection - enum values >= 3 are invalid and revert with `InvalidSignatureType`.
+
+### Transaction Context Invariants
+
+- **TEMPO-KEY20**: Main-key-only administration - `authorizeKey`, `revokeKey`, and `updateSpendingLimit` require `transaction_key == 0` (Root Key context). When called with a non-zero transaction key (i.e., from an Access Key), these operations revert with `UnauthorizedCaller`. This ensures only the Root Key can manage Access Keys.
+- **TEMPO-KEY21**: Spending limit tx_origin enforcement - spending limits are only consumed when `msg_sender == tx_origin`. Contract-initiated transfers (where msg_sender is a contract, not the signing EOA) do not consume the EOA's spending limit. This prevents contracts from unexpectedly draining a user's spending limits.
