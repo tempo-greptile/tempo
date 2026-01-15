@@ -20,7 +20,7 @@ TIP-1007 adds a `getFeeToken()` view function to the FeeManager precompile that 
 
 Tempo transactions support paying gas fees in any USD-denominated TIP-20 token via the fee token preference system. However, prior to this TIP, there was no way for a smart contract to determine which fee token is being used for the current transaction during execution.
 
-This capability is needed by protocols that want to:
+This capability was requested by a partner that wants to:
 
 - Adjust their internal logic based on which fee token is being used
 - Provide fee token-aware pricing or routing decisions
