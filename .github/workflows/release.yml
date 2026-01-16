@@ -25,6 +25,8 @@ on:
         default: false
         type: boolean
 
+permissions: {}
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
@@ -48,6 +50,8 @@ jobs:
   check-version:
     name: check version
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: get-version
     if: ${{ github.event.inputs.dry_run != 'true' }}
     steps:
@@ -66,6 +70,8 @@ jobs:
     name: Build Release Binaries
     needs: get-version
     runs-on: ${{ matrix.platform.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -193,6 +199,8 @@ jobs:
     needs: [get-version, build-release]
     if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false) }}
     runs-on: depot-ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

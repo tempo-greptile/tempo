@@ -6,6 +6,8 @@ on:
   pull_request:
   merge_group:
 
+permissions: {}
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -19,6 +21,8 @@ jobs:
   clippy:
     name: clippy
     runs-on: depot-ubuntu-latest-4
+    permissions:
+      contents: read
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -35,6 +39,8 @@ jobs:
   fmt:
     name: fmt
     runs-on: depot-ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -45,6 +51,8 @@ jobs:
 
   crate-checks:
     runs-on: depot-ubuntu-latest-4
+    permissions:
+      contents: read
     timeout-minutes: 60
     if: github.event_name == 'push'
     strategy:
@@ -64,6 +72,10 @@ jobs:
   docs:
     name: docs
     runs-on: depot-ubuntu-latest-4
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -103,6 +115,8 @@ jobs:
 
   typos:
     runs-on: depot-ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -114,6 +128,8 @@ jobs:
   zepter:
     name: zepter
     runs-on: depot-ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

@@ -18,6 +18,8 @@ on:
     - cron: "5 9 * * *"
     - cron: "30 20 * * *"
 
+permissions: {}
+
 env:
   REGISTRY: ghcr.io/tempoxyz
 
