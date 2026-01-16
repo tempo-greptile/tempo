@@ -14,7 +14,6 @@ use reth_transaction_pool::{
     EthTransactionValidator, PoolTransaction, TransactionOrigin, TransactionValidationOutcome,
     TransactionValidator, error::InvalidPoolTransactionError,
 };
-use revm::context_interface::cfg::GasParams;
 use tempo_chainspec::{TempoChainSpec, hardfork::TempoHardforks};
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, NONCE_PRECOMPILE_ADDRESS,
@@ -260,13 +259,9 @@ where
         };
 
         // Calculate the intrinsic gas for the AA transaction
-        // TODO(rakita) We should use tempo_gas_params function when we introduce new protocol version (fork).
-        let init_and_floor_gas = calculate_aa_batch_intrinsic_gas(
-            &aa_env,
-            &GasParams::default(),
-            Some(tx.access_list.iter()),
-        )
-        .map_err(|_| TempoPoolTransactionError::NonZeroValue)?;
+        let init_and_floor_gas =
+            calculate_aa_batch_intrinsic_gas(&aa_env, Some(tx.access_list.iter()))
+                .map_err(|_| TempoPoolTransactionError::NonZeroValue)?;
 
         let gas_limit = tx.gas_limit;
 

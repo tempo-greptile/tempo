@@ -50,7 +50,7 @@ hardfork!(
 impl TempoHardfork {
     /// Returns true if this hardfork is T0 or later.
     pub fn is_t0(&self) -> bool {
-        *self >= Self::T0
+        matches!(self, Self::T0)
     }
 }
 
