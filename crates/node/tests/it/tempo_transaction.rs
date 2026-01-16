@@ -6117,10 +6117,7 @@ async fn test_aa_expiring_nonce_validity_window() -> eyre::Result<()> {
         .unwrap();
     let current_timestamp = block.header.timestamp();
     println!("Current block timestamp: {current_timestamp}");
-    println!(
-        "Max expiry window: {} seconds",
-        TEMPO_EXPIRING_NONCE_MAX_EXPIRY_SECS
-    );
+    println!("Max expiry window: {TEMPO_EXPIRING_NONCE_MAX_EXPIRY_SECS} seconds");
 
     // TEST 1: valid_before exactly at max window (should succeed)
     println!("\n--- TEST 1: valid_before at exactly max window (now + 30s) ---");
