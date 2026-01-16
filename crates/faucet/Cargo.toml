@@ -21,7 +21,7 @@ alloy = { workspace = true, features = [
   "signer-local",
   "signer-mnemonic-all-languages",
   "providers",
-  "reqwest-rustls-tls", # TODO(mattsse): set this to just reqwest after https://github.com/alloy-rs/alloy/pull/2865
+  "reqwest"
 ] }
 async-trait.workspace = true
 jsonrpsee.workspace = true
