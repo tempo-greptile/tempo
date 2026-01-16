@@ -35,8 +35,10 @@ pub struct TempoEvm<DB: Database, I> {
     pub logs: Vec<Log>,
     /// The fee collected in `collectFeePreTx` call.
     pub(crate) collected_fee: U256,
-    /// 2D nonce gas cost calculated during validation.
-    pub(crate) nonce_2d_gas: u64,
+    /// Additional initial gas cost is needed for authorization_key setting in pre execution.
+    pub(crate) additional_initial_gas: u64,
+    /// If true skip execution and treat the transaction as oog.
+    pub(crate) pre_execution_oog: bool,
 }
 
 impl<DB: Database, I> TempoEvm<DB, I> {
@@ -70,7 +72,8 @@ impl<DB: Database, I> TempoEvm<DB, I> {
             inner,
             logs: Vec::new(),
             collected_fee: U256::ZERO,
-            nonce_2d_gas: 0,
+            additional_initial_gas: 0,
+            pre_execution_oog: false,
         }
     }
 }

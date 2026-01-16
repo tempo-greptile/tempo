@@ -8,10 +8,7 @@ use alloy_evm::{
     },
 };
 use alloy_primitives::{Address, Bytes, Log, TxKind};
-use reth_revm::{
-    InspectSystemCallEvm, MainContext,
-    context::result::ExecutionResult,
-};
+use reth_revm::{InspectSystemCallEvm, MainContext, context::result::ExecutionResult};
 use std::ops::{Deref, DerefMut};
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_revm::{

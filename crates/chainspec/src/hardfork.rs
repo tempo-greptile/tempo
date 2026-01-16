@@ -49,7 +49,7 @@ hardfork!(
 
 impl TempoHardfork {
     pub fn t1_active(&self) -> bool {
-       *self >= Self::T1
+        *self >= Self::T1
     }
 }
 
