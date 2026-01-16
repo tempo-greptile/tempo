@@ -35,12 +35,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0
-      - uses: taiki-e/install-action@03ef6f57d573ca4522fb02950f326083373b85bf # v2
+      - uses: taiki-e/install-action@30eab0fabba9ea3f522099957e668b21876aa39e # v2
         with:
           tool: just
       - name: Build
         run: just build ${{ matrix.binary }} "--profile ${{ inputs.profile || 'dev' }}"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         id: binary_upload
         with:
           if-no-files-found: "error"
