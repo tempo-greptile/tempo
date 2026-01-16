@@ -25,8 +25,9 @@ jobs:
     name: Forge Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Foundry
@@ -43,8 +44,9 @@ jobs:
     name: Forge Fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Foundry
@@ -58,8 +60,9 @@ jobs:
     name: Forge Test (Solidity)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Foundry
@@ -75,14 +78,16 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout tempo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
+          persist-credentials: false
           submodules: recursive
           path: tempo
 
       - name: Checkout tempo-foundry
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
+          persist-credentials: false
           repository: tempoxyz/tempo-foundry
           path: tempo-foundry
 
