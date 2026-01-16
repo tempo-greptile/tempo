@@ -756,6 +756,17 @@ export default defineConfig({
   vite: {
     plugins: [
       {
+        // Vocs generates "/*" for *.mdx but checks for "*" in routes.tsx.
+        // This patches the route matching to recognize both paths for 404 handling.
+        name: 'fix-404-route',
+        transform(code, id) {
+          if (!id.includes('vocs/_lib/app/routes')) return
+          return code
+            .replace("path === '*'", "path === '*' || path === '/*'")
+            .replace("path !== '*'", "path !== '*' && path !== '/*'")
+        },
+      },
+      {
         name: 'virtual-tips',
         resolveId(id) {
           if (id === 'virtual:tips-data') return '\0virtual:tips-data'
