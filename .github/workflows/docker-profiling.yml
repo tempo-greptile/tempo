@@ -21,14 +21,14 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
         with:
           persist-credentials: false
-      - uses: depot/setup-action@b0b1ea4f69e92ebf5dea3f8713a1b0c37b2126a5 # v1.6.0
+      - uses: depot/setup-action@b0b1ea4f69e92ebf5dea3f8713a1b0c37b2126a5 # v1
 
       - name: Docker metadata for tempo-profiling
         id: meta-tempo
-        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/tempo
           bake-target: tempo
@@ -37,7 +37,7 @@ jobs:
             type=sha,prefix=${{ github.event.inputs.tag }}-sha-
 
       - name: Log in to Container Registry
-        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -47,7 +47,7 @@ jobs:
         run: echo "shortsha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker images
-        uses: depot/bake-action@2ae2529115bba41de62b77b345de48d57eca7564 # v1.12.1
+        uses: depot/bake-action@2ae2529115bba41de62b77b345de48d57eca7564 # v1
         with:
           files: |
             docker-bake.hcl
