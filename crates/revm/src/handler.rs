@@ -7,12 +7,11 @@ use reth_evm::EvmError;
 use revm::{
     Database,
     context::{
-        Block, Cfg, ContextTr, JournalTr, LocalContextTr, Transaction, TransactionType,
+        Block, Cfg, ContextTr, JournalTr, LocalContextTr, Transaction,
         journaled_state::account::JournaledAccountTr,
         result::{EVMError, ExecutionResult, InvalidTransaction},
         transaction::{AccessListItem, AccessListItemTr},
     },
-    context_interface::cfg::{GasId, GasParams},
     handler::{
         EvmTr, FrameResult, FrameTr, Handler, MainnetHandler,
         pre_execution::{self, calculate_caller_fee},
@@ -21,8 +20,11 @@ use revm::{
     inspector::{Inspector, InspectorHandler},
     interpreter::{
         Gas, InitialAndFloorGas,
-        gas::get_tokens_in_calldata_istanbul,
-        instructions::{COLD_SLOAD_COST, SSTORE_SET, STANDARD_TOKEN_COST, WARM_SSTORE_RESET},
+        gas::{
+            ACCESS_LIST_ADDRESS, ACCESS_LIST_STORAGE_KEY, CALLVALUE, COLD_ACCOUNT_ACCESS_COST,
+            COLD_SLOAD_COST, CREATE, INITCODE_WORD_COST, SSTORE_SET, STANDARD_TOKEN_COST,
+            TOTAL_COST_FLOOR_PER_TOKEN, WARM_SSTORE_RESET, get_tokens_in_calldata_istanbul,
+        },
         interpreter::EthInterpreter,
     },
     primitives::eip7702,
@@ -127,6 +129,38 @@ fn calculate_key_authorization_gas(
 
     // Total: base (27k) + sig verification + limits
     KEY_AUTH_BASE_GAS + sig_gas + limits_gas
+}
+
+/// Calculates the gas cost for 2D nonce usage.
+///
+/// Gas schedule:
+/// - Protocol nonce (key 0): 0 gas (no additional cost)
+/// - Existing user key (nonce > 0): 5,000 gas (cold SLOAD + warm SSTORE reset)
+/// - New user key (nonce == 0): 22,100 gas (cold SLOAD + SSTORE set)
+#[inline]
+fn calculate_2d_nonce_gas(
+    nonce_manager: &NonceManager,
+    caller: Address,
+    nonce_key: U256,
+) -> Result<u64, TempoPrecompileError> {
+    // Protocol nonce (key 0) - no additional cost
+    if nonce_key.is_zero() {
+        return Ok(0);
+    }
+
+    // Get current nonce for this key
+    let current_nonce = nonce_manager.get_nonce(getNonceCall {
+        account: caller,
+        nonceKey: nonce_key,
+    })?;
+
+    if current_nonce > 0 {
+        // Existing key - cold SLOAD + warm SSTORE reset
+        Ok(EXISTING_NONCE_KEY_GAS)
+    } else {
+        // New key - cold SLOAD + SSTORE set (0 -> non-zero)
+        Ok(NEW_NONCE_KEY_GAS)
+    }
 }
 
 /// Tempo EVM [`Handler`] implementation with Tempo specific modifications:
@@ -460,15 +494,34 @@ where
         evm: &mut Self::Evm,
         init_and_floor_gas: &InitialAndFloorGas,
     ) -> Result<FrameResult, Self::Error> {
+        // Add 2D nonce gas to the initial gas
+        let adjusted_gas = InitialAndFloorGas::new(
+            init_and_floor_gas.initial_gas + evm.nonce_2d_gas,
+            init_and_floor_gas.floor_gas,
+        );
+
         // Check if this is an AA transaction by checking for tempo_tx_env
         let evm_ctx = evm.ctx();
         if let Some(tempo_tx_env) = evm_ctx.tx().tempo_tx_env.as_ref() {
+            // [T0] Ensure gas limit covers 2D nonce cost
+            let spec = evm_ctx.cfg().spec();
+            if spec.is_t0() {
+                let gas_limit = evm_ctx.tx().gas_limit();
+                if gas_limit < adjusted_gas.initial_gas {
+                    return Err(TempoInvalidTransaction::InsufficientGasForIntrinsicCost {
+                        gas_limit,
+                        intrinsic_gas: adjusted_gas.initial_gas,
+                    }
+                    .into());
+                }
+            }
+
             // AA transaction - use batch execution with calls field
             let calls = tempo_tx_env.aa_calls.clone();
-            self.execute_multi_call(evm, init_and_floor_gas, calls)
+            self.execute_multi_call(evm, &adjusted_gas, calls)
         } else {
             // Standard transaction - use single-call execution
-            self.execute_single_call(evm, init_and_floor_gas)
+            self.execute_single_call(evm, &adjusted_gas)
         }
     }
 
@@ -620,9 +673,19 @@ where
         // modify account nonce and touch the account.
         caller_account.touch();
 
+        let nonce_2d_gas;
+
         if !nonce_key.is_zero() {
-            StorageCtx::enter_evm(journal, block, cfg, tx, || {
+            nonce_2d_gas = StorageCtx::enter_evm(journal, block, cfg, tx, || {
                 let mut nonce_manager = NonceManager::new();
+
+                // Calculate 2D nonce gas
+                let gas = calculate_2d_nonce_gas(&nonce_manager, tx.caller(), nonce_key).map_err(
+                    |err| match err {
+                        TempoPrecompileError::Fatal(err) => EVMError::Custom(err),
+                        err => TempoInvalidTransaction::NonceManagerError(err.to_string()).into(),
+                    },
+                )?;
 
                 if !cfg.is_nonce_check_disabled() {
                     let tx_nonce = tx.nonce();
@@ -665,9 +728,10 @@ where
                         err => TempoInvalidTransaction::NonceManagerError(err.to_string()).into(),
                     })?;
 
-                Ok::<_, EVMError<DB::Error, TempoInvalidTransaction>>(())
+                Ok::<_, EVMError<DB::Error, TempoInvalidTransaction>>(gas)
             })?;
         } else {
+            nonce_2d_gas = 0;
             // Bump the nonce for calls. Nonce for CREATE will be bumped in `make_create_frame`.
             // This applies uniformly to both standard and AA transactions - we only bump here
             // for CALLs, letting make_create_frame handle the nonce for CREATE operations.
@@ -878,6 +942,7 @@ where
         // Short-circuit if there is no spending for this transaction and `collectFeePreTx`
         // call will not collect any fees.
         if gas_balance_spending.is_zero() {
+            evm.nonce_2d_gas = nonce_2d_gas;
             return Ok(());
         }
 
@@ -922,6 +987,7 @@ where
         } else {
             journal.checkpoint_commit();
             evm.collected_fee = gas_balance_spending;
+            evm.nonce_2d_gas = nonce_2d_gas;
 
             Ok(())
         }
@@ -1058,72 +1124,22 @@ where
     /// - P256 (129 bytes): 21k base + 5k for P256 verification
     /// - WebAuthn (>129 bytes): 21k base + 5k + calldata gas for variable data
     #[inline]
-    fn validate_initial_tx_gas(
-        &self,
-        evm: &mut Self::Evm,
-    ) -> Result<InitialAndFloorGas, Self::Error> {
+    fn validate_initial_tx_gas(&self, evm: &mut Self::Evm) -> Result<InitialAndFloorGas, Self::Error> {
         let tx = evm.ctx_ref().tx();
-        let gas_params = evm.ctx_ref().cfg().gas_params();
-        let gas_limit = tx.gas_limit();
 
         // Route to appropriate gas calculation based on transaction type
-        let mut init_gas = if tx.tempo_tx_env.is_some() {
+        if tx.tempo_tx_env.is_some() {
             // AA transaction - use batch gas calculation
-            validate_aa_initial_tx_gas(evm)?
+            validate_aa_initial_tx_gas(evm)
         } else {
-            let mut acc = 0;
-            let mut storage = 0;
-            // legacy is only tx type that does not have access list.
-            if tx.tx_type() != TransactionType::Legacy {
-                (acc, storage) = tx
-                    .access_list()
-                    .map(|al| {
-                        al.fold((0, 0), |(acc, storage), item| {
-                            (acc + 1, storage + item.storage_slots().count())
-                        })
-                    })
-                    .unwrap_or_default();
-            };
-            gas_params.initial_tx_gas(
-                tx.input(),
-                tx.kind().is_create(),
-                acc as u64,
-                storage as u64,
-                tx.authorization_list_len() as u64,
-            )
-        };
-
-        // TIP-1000: Storage pricing updates for launch
-        // Tempo transactions with any `nonce_key` and `nonce == 0` require an additional 250,000 gas
-        // TODO(rakita): check if this is needed for `validate_aa_initial_tx_gas` function.
-        if tx.nonce == 0 {
-            // TODO(rakita): make simpler function that give only the value without additional checks.
-            init_gas.initial_gas += gas_params.new_account_cost(true, true);
+            // Standard transaction - use default revm validation
+            let spec = evm.ctx_ref().cfg().spec().into();
+            Ok(validation::validate_initial_tx_gas(
+                tx,
+                spec,
+                evm.ctx.cfg.is_eip7623_disabled(),
+            )?)
         }
-
-        if evm.ctx.cfg.is_eip7623_disabled() {
-            init_gas.floor_gas = 0u64;
-        }
-
-        // Validate gas limit is sufficient for initial gas
-        if gas_limit < init_gas.initial_gas {
-            return Err(TempoInvalidTransaction::InsufficientGasForIntrinsicCost {
-                gas_limit,
-                intrinsic_gas: init_gas.initial_gas,
-            }
-            .into());
-        }
-
-        // Validate floor gas (Prague+)
-        if !evm.ctx.cfg.is_eip7623_disabled() && gas_limit < init_gas.floor_gas {
-            return Err(TempoInvalidTransaction::InsufficientGasForIntrinsicCost {
-                gas_limit,
-                intrinsic_gas: init_gas.floor_gas,
-            }
-            .into());
-        }
-
-        Ok(init_gas)
     }
 
     fn catch_error(
@@ -1176,7 +1192,6 @@ where
 /// - Floor gas calculation (EIP-7623, Prague+)
 pub fn calculate_aa_batch_intrinsic_gas<'a>(
     aa_env: &TempoBatchCallEnv,
-    gas_params: &GasParams,
     access_list: Option<impl Iterator<Item = &'a AccessListItem>>,
 ) -> Result<InitialAndFloorGas, TempoInvalidTransaction> {
     let calls = &aa_env.aa_calls;
@@ -1186,21 +1201,16 @@ pub fn calculate_aa_batch_intrinsic_gas<'a>(
     let mut gas = InitialAndFloorGas::default();
 
     // 1. Base stipend (21k, once per transaction)
-    gas.initial_gas += gas_params.tx_base_stipend();
+    gas.initial_gas += 21_000;
 
     // 2. Signature verification gas
     gas.initial_gas += tempo_signature_verification_gas(signature);
 
-    let cold_account_cost =
-        gas_params.warm_storage_read_cost() + gas_params.cold_account_additional_cost();
-
-    // 3. Per-call overhead: cold account access
-    // if the `to` address has not appeared in the call batch before.
-    gas.initial_gas += cold_account_cost * calls.len().saturating_sub(1) as u64;
+    // 3. Per-call overhead: cold account access for additional calls beyond the first.
+    gas.initial_gas += COLD_ACCOUNT_ACCESS_COST * calls.len().saturating_sub(1) as u64;
 
     // 4. Authorization list costs (EIP-7702)
-    gas.initial_gas +=
-        authorization_list.len() as u64 * gas_params.tx_eip7702_per_empty_account_cost();
+    gas.initial_gas += authorization_list.len() as u64 * eip7702::PER_EMPTY_ACCOUNT_COST;
     // Add signature verification costs for each authorization
     for auth in authorization_list {
         gas.initial_gas += tempo_signature_verification_gas(auth.signature());
@@ -1222,10 +1232,11 @@ pub fn calculate_aa_batch_intrinsic_gas<'a>(
         // 4b. CREATE-specific costs
         if call.to.is_create() {
             // CREATE costs 32000 additional gas
-            gas.initial_gas += gas_params.create_cost(); // 32_000 gas after TIP-1000 250_000 gas
+            gas.initial_gas += CREATE; // 32000 gas
 
-            // EIP-3860: Initcode analysis gas using revm helper
-            gas.initial_gas += gas_params.tx_initcode_cost(call.input.len());
+            // EIP-3860: Initcode analysis gas (2 gas per 32-byte word)
+            let num_words = (call.input.len() + 31) / 32;
+            gas.initial_gas += num_words as u64 * INITCODE_WORD_COST;
         }
 
         // Note: Transaction value is not allowed in AA transactions as there is no balances in accounts yet.
@@ -1237,23 +1248,27 @@ pub fn calculate_aa_batch_intrinsic_gas<'a>(
         // 4c. Value transfer cost using revm constant
         // left here for future reference.
         if !call.value.is_zero() && call.to.is_call() {
-            gas.initial_gas += gas_params.get(GasId::transfer_value_cost()); // 9000 gas
+            gas.initial_gas += CALLVALUE; // 9000 gas
         }
     }
 
-    gas.initial_gas += total_tokens * gas_params.tx_token_cost();
+    gas.initial_gas += total_tokens * STANDARD_TOKEN_COST;
 
     // 5. Access list costs using revm constants
     if let Some(access_list) = access_list {
-        let (accounts, storages) = access_list.fold((0, 0), |(acc_count, storage_count), item| {
-            (acc_count + 1, storage_count + item.storage_slots().count())
-        });
-        gas.initial_gas += accounts * gas_params.tx_access_list_address_cost(); // 2400 per account
-        gas.initial_gas += storages as u64 * gas_params.tx_access_list_storage_key_cost(); // 1900 per storage
+        let (accounts, storages) =
+            access_list.fold((0u64, 0u64), |(acc_count, storage_count), item| {
+                (
+                    acc_count + 1,
+                    storage_count + item.storage_slots().count() as u64,
+                )
+            });
+        gas.initial_gas += accounts * ACCESS_LIST_ADDRESS; // 2400 per account
+        gas.initial_gas += storages * ACCESS_LIST_STORAGE_KEY; // 1900 per storage
     }
 
-    // 6. Floor gas  using revm helper
-    gas.floor_gas = gas_params.tx_floor_cost(total_tokens); // tokens * 10 + 21000
+    // 6. Floor gas calculation (tokens * 10 + 21000)
+    gas.floor_gas = total_tokens * TOTAL_COST_FLOOR_PER_TOKEN + 21_000;
 
     Ok(gas)
 }
@@ -1263,7 +1278,6 @@ pub fn calculate_aa_batch_intrinsic_gas<'a>(
 /// Calculates intrinsic gas based on:
 /// - Signature type (secp256k1: 21k, P256: 26k, WebAuthn: 26k + calldata)
 /// - Batch call costs (per-call overhead, calldata, CREATE, value transfers)
-/// - 2D nonce gas (if nonce_key != 0)
 fn validate_aa_initial_tx_gas<DB, I>(
     evm: &TempoEvm<DB, I>,
 ) -> Result<InitialAndFloorGas, EVMError<DB::Error, TempoInvalidTransaction>>
@@ -1290,29 +1304,11 @@ where
     }
 
     // Calculate batch intrinsic gas using helper
-    let gas_params = evm.ctx_ref().cfg().gas_params();
-    let mut batch_gas = calculate_aa_batch_intrinsic_gas(aa_env, gas_params, tx.access_list())?;
-
-    // Calculate 2D nonce gas if nonce_key is non-zero
-    // If tx nonce is 0, it's a new key (0 -> 1 transition), otherwise existing key
-    let nonce_2d_gas = if !aa_env.nonce_key.is_zero() {
-        if tx.nonce() == 0 {
-            // New key - cold SLOAD + SSTORE set (0 -> non-zero)
-            NEW_NONCE_KEY_GAS
-        } else {
-            // Existing key - cold SLOAD + warm SSTORE reset
-            EXISTING_NONCE_KEY_GAS
-        }
-    } else {
-        0
-    };
+    let mut batch_gas = calculate_aa_batch_intrinsic_gas(aa_env, tx.access_list())?;
 
     if evm.ctx.cfg.is_eip7623_disabled() {
         batch_gas.floor_gas = 0u64;
     }
-
-    // Add 2D nonce gas to initial gas
-    batch_gas.initial_gas += nonce_2d_gas;
 
     // Validate gas limit is sufficient for initial gas
     if gas_limit < batch_gas.initial_gas {
@@ -1449,6 +1445,7 @@ mod tests {
         interpreter::{gas::COLD_ACCOUNT_ACCESS_COST, instructions::utility::IntoU256},
         primitives::hardfork::SpecId,
     };
+    use std::convert::Infallible;
     use tempo_chainspec::hardfork::TempoHardfork;
     use tempo_contracts::precompiles::DEFAULT_FEE_TOKEN;
     use tempo_precompiles::{PATH_USD_ADDRESS, TIP_FEE_MANAGER_ADDRESS};
@@ -1548,7 +1545,6 @@ mod tests {
         use alloy_primitives::{Bytes, TxKind};
         use revm::interpreter::gas::calculate_initial_tx_gas;
         use tempo_primitives::transaction::{Call, TempoSignature};
-        let gas_params = GasParams::default();
 
         // Test that AA tx with secp256k1 and single call matches normal tx + per-call overhead
         let calldata = Bytes::from(vec![1, 2, 3, 4, 5]); // 5 non-zero bytes
@@ -1575,7 +1571,6 @@ mod tests {
         let spec = tempo_chainspec::hardfork::TempoHardfork::default();
         let aa_gas = calculate_aa_batch_intrinsic_gas(
             &aa_env,
-            &gas_params,
             None::<std::iter::Empty<&AccessListItem>>, // no access list
         )
         .unwrap();
@@ -1634,7 +1629,6 @@ mod tests {
         let spec = tempo_chainspec::hardfork::TempoHardfork::default();
         let gas = calculate_aa_batch_intrinsic_gas(
             &aa_env,
-            &GasParams::default(),
             None::<std::iter::Empty<&AccessListItem>>,
         )
         .unwrap();
@@ -1687,7 +1681,6 @@ mod tests {
 
         let gas = calculate_aa_batch_intrinsic_gas(
             &aa_env,
-            &GasParams::default(),
             None::<std::iter::Empty<&AccessListItem>>,
         )
         .unwrap();
@@ -1728,7 +1721,6 @@ mod tests {
 
         let gas = calculate_aa_batch_intrinsic_gas(
             &aa_env,
-            &GasParams::default(),
             None::<std::iter::Empty<&AccessListItem>>,
         )
         .unwrap();
@@ -1769,7 +1761,6 @@ mod tests {
 
         let res = calculate_aa_batch_intrinsic_gas(
             &aa_env,
-            &GasParams::default(),
             None::<std::iter::Empty<&AccessListItem>>,
         );
 
@@ -1808,7 +1799,6 @@ mod tests {
         // Test without access list
         let gas = calculate_aa_batch_intrinsic_gas(
             &aa_env,
-            &GasParams::default(),
             None::<std::iter::Empty<&AccessListItem>>,
         )
         .unwrap();
@@ -1908,7 +1898,6 @@ mod tests {
 
         let gas = calculate_aa_batch_intrinsic_gas(
             &aa_env,
-            &GasParams::default(),
             None::<std::iter::Empty<&AccessListItem>>,
         )
         .unwrap();
@@ -2085,7 +2074,6 @@ mod tests {
         // Calculate gas WITH key authorization
         let gas_with_key_auth = calculate_aa_batch_intrinsic_gas(
             &aa_env_with_key_auth,
-            &GasParams::default(),
             None::<std::iter::Empty<&AccessListItem>>,
         )
         .unwrap();
@@ -2093,7 +2081,6 @@ mod tests {
         // Calculate gas WITHOUT key authorization
         let gas_without_key_auth = calculate_aa_batch_intrinsic_gas(
             &aa_env_without_key_auth,
-            &GasParams::default(),
             None::<std::iter::Empty<&AccessListItem>>,
         )
         .unwrap();
@@ -2124,132 +2111,68 @@ mod tests {
     }
 
     #[test]
-    fn test_2d_nonce_gas_in_intrinsic_gas() {
-        use revm::handler::Handler;
+    fn test_2d_nonce_gas_schedule() {
+        let mut journal = create_test_journal();
+        let block = TempoBlockEnv::default();
+        let cfg = CfgEnv::<TempoHardfork>::default();
+        let tx = TempoTxEnv::default();
+        let caller = Address::random();
 
-        // Base intrinsic gas for AA tx with one call (no 2D nonce)
-        const BASE_INTRINSIC_GAS: u64 = 21_000;
+        // Protocol nonce (key 0): always 0 gas
+        let gas = StorageCtx::enter_evm(&mut journal, &block, &cfg, &tx, || {
+            let nm = NonceManager::new();
+            Ok::<_, EVMError<Infallible, TempoInvalidTransaction>>(
+                calculate_2d_nonce_gas(&nm, caller, U256::from(0)).unwrap(),
+            )
+        })
+        .unwrap();
+        assert_eq!(gas, 0);
 
-        // Test case 1: Protocol nonce (nonce_key == 0) - no additional gas
-        {
-            let db = CacheDB::new(EmptyDB::default());
-            let journal = Journal::new(db);
-            let cfg = CfgEnv::<TempoHardfork>::default();
-            let ctx = Context::mainnet()
-                .with_db(CacheDB::new(EmptyDB::default()))
-                .with_block(TempoBlockEnv::default())
-                .with_cfg(cfg)
-                .with_tx(TempoTxEnv {
-                    inner: revm::context::TxEnv {
-                        gas_limit: 100_000,
-                        ..Default::default()
-                    },
-                    tempo_tx_env: Some(Box::new(TempoBatchCallEnv {
-                        aa_calls: vec![Call {
-                            to: TxKind::Call(Address::random()),
-                            value: U256::ZERO,
-                            input: Bytes::new(),
-                        }],
-                        nonce_key: U256::ZERO, // Protocol nonce
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                })
-                .with_new_journal(journal);
+        // New key (nonce == 0): 22,100 gas (cold SLOAD + SSTORE set)
+        let gas = StorageCtx::enter_evm(&mut journal, &block, &cfg, &tx, || {
+            let nm = NonceManager::new();
+            Ok::<_, EVMError<Infallible, TempoInvalidTransaction>>(
+                calculate_2d_nonce_gas(&nm, caller, U256::from(1)).unwrap(),
+            )
+        })
+        .unwrap();
+        assert_eq!(gas, NEW_NONCE_KEY_GAS);
 
-            let mut evm: TempoEvm<_, ()> = TempoEvm::new(ctx, ());
-            let handler: TempoEvmHandler<CacheDB<EmptyDB>, ()> = TempoEvmHandler::new();
-            let gas = handler.validate_initial_tx_gas(&mut evm).unwrap();
-            assert_eq!(gas.initial_gas, BASE_INTRINSIC_GAS);
-        }
+        // Increment the nonce to make it an existing key
+        StorageCtx::enter_evm(&mut journal, &block, &cfg, &tx, || {
+            NonceManager::new()
+                .increment_nonce(caller, U256::from(1))
+                .unwrap();
+            Ok::<_, EVMError<Infallible, TempoInvalidTransaction>>(())
+        })
+        .unwrap();
 
-        // Test case 2: New 2D nonce key (nonce_key != 0, tx_nonce == 0)
-        {
-            let db = CacheDB::new(EmptyDB::default());
-            let journal = Journal::new(db);
-            let cfg = CfgEnv::<TempoHardfork>::default();
-            let ctx = Context::mainnet()
-                .with_db(CacheDB::new(EmptyDB::default()))
-                .with_block(TempoBlockEnv::default())
-                .with_cfg(cfg)
-                .with_tx(TempoTxEnv {
-                    inner: revm::context::TxEnv {
-                        gas_limit: 100_000,
-                        nonce: 0, // First use of this key
-                        ..Default::default()
-                    },
-                    tempo_tx_env: Some(Box::new(TempoBatchCallEnv {
-                        aa_calls: vec![Call {
-                            to: TxKind::Call(Address::random()),
-                            value: U256::ZERO,
-                            input: Bytes::new(),
-                        }],
-                        nonce_key: U256::from(42), // Non-zero nonce key
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                })
-                .with_new_journal(journal);
-
-            let mut evm: TempoEvm<_, ()> = TempoEvm::new(ctx, ());
-            let handler: TempoEvmHandler<CacheDB<EmptyDB>, ()> = TempoEvmHandler::new();
-            let gas = handler.validate_initial_tx_gas(&mut evm).unwrap();
-            assert_eq!(gas.initial_gas, BASE_INTRINSIC_GAS + NEW_NONCE_KEY_GAS);
-        }
-
-        // Test case 3: Existing 2D nonce key (nonce_key != 0, tx_nonce > 0)
-        {
-            let db = CacheDB::new(EmptyDB::default());
-            let journal = Journal::new(db);
-            let cfg = CfgEnv::<TempoHardfork>::default();
-            let ctx = Context::mainnet()
-                .with_db(CacheDB::new(EmptyDB::default()))
-                .with_block(TempoBlockEnv::default())
-                .with_cfg(cfg)
-                .with_tx(TempoTxEnv {
-                    inner: revm::context::TxEnv {
-                        gas_limit: 100_000,
-                        nonce: 5, // Not first use
-                        ..Default::default()
-                    },
-                    tempo_tx_env: Some(Box::new(TempoBatchCallEnv {
-                        aa_calls: vec![Call {
-                            to: TxKind::Call(Address::random()),
-                            value: U256::ZERO,
-                            input: Bytes::new(),
-                        }],
-                        nonce_key: U256::from(42), // Non-zero nonce key
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                })
-                .with_new_journal(journal);
-
-            let mut evm: TempoEvm<_, ()> = TempoEvm::new(ctx, ());
-            let handler: TempoEvmHandler<CacheDB<EmptyDB>, ()> = TempoEvmHandler::new();
-            let gas = handler.validate_initial_tx_gas(&mut evm).unwrap();
-            assert_eq!(gas.initial_gas, BASE_INTRINSIC_GAS + EXISTING_NONCE_KEY_GAS);
-        }
+        // Existing key (nonce > 0): 5,000 gas (cold SLOAD + warm SSTORE reset)
+        let gas = StorageCtx::enter_evm(&mut journal, &block, &cfg, &tx, || {
+            let nm = NonceManager::new();
+            Ok::<_, EVMError<Infallible, TempoInvalidTransaction>>(
+                calculate_2d_nonce_gas(&nm, caller, U256::from(1)).unwrap(),
+            )
+        })
+        .unwrap();
+        assert_eq!(gas, EXISTING_NONCE_KEY_GAS);
     }
 
     #[test]
     fn test_2d_nonce_gas_limit_validation() {
-        use revm::handler::Handler;
+        const INTRINSIC_GAS: u64 = 21_000;
 
-        const BASE_INTRINSIC_GAS: u64 = 21_000;
-
-        // Test cases: (gas_limit, nonce, expected_result)
-        // With new 2D nonce key (tx_nonce == 0), need BASE + NEW_NONCE_KEY_GAS
+        // Test cases: (gas_limit, should_succeed)
         let cases = [
-            (BASE_INTRINSIC_GAS + 10_000, 0, false), // Insufficient for new 2D nonce
-            (BASE_INTRINSIC_GAS + NEW_NONCE_KEY_GAS, 0, true), // Exactly sufficient for new key
-            (BASE_INTRINSIC_GAS + EXISTING_NONCE_KEY_GAS, 1, true), // Exactly sufficient for existing key
+            (INTRINSIC_GAS + 10_000, false), // Insufficient for 2D nonce
+            (INTRINSIC_GAS + NEW_NONCE_KEY_GAS + 1000, true), // Sufficient
         ];
 
-        for (gas_limit, nonce, should_succeed) in cases {
+        for (gas_limit, should_succeed) in cases {
             let db = CacheDB::new(EmptyDB::default());
             let journal = Journal::new(db);
-            let cfg = CfgEnv::<TempoHardfork>::default();
+            // Use T0 hardfork to enable gas limit validation
+            let cfg = CfgEnv::<TempoHardfork>::default().with_spec(TempoHardfork::T0);
             let ctx = Context::mainnet()
                 .with_db(CacheDB::new(EmptyDB::default()))
                 .with_block(TempoBlockEnv::default())
@@ -2257,16 +2180,15 @@ mod tests {
                 .with_tx(TempoTxEnv {
                     inner: revm::context::TxEnv {
                         gas_limit,
-                        nonce,
                         ..Default::default()
                     },
+                    // Set tempo_tx_env with a call to trigger AA path
                     tempo_tx_env: Some(Box::new(TempoBatchCallEnv {
                         aa_calls: vec![Call {
                             to: TxKind::Call(Address::random()),
                             value: U256::ZERO,
                             input: Bytes::new(),
                         }],
-                        nonce_key: U256::from(1), // Non-zero to trigger 2D nonce gas
                         ..Default::default()
                     })),
                     ..Default::default()
@@ -2274,25 +2196,27 @@ mod tests {
                 .with_new_journal(journal);
 
             let mut evm: TempoEvm<_, ()> = TempoEvm::new(ctx, ());
-            let handler: TempoEvmHandler<CacheDB<EmptyDB>, ()> = TempoEvmHandler::new();
-            let result = handler.validate_initial_tx_gas(&mut evm);
+            evm.nonce_2d_gas = NEW_NONCE_KEY_GAS;
+
+            let mut handler: TempoEvmHandler<CacheDB<EmptyDB>, ()> = TempoEvmHandler::new();
+            let init_and_floor_gas = InitialAndFloorGas::new(INTRINSIC_GAS, 0);
+
+            let result = handler.execution(&mut evm, &init_and_floor_gas);
 
             if should_succeed {
-                assert!(
-                    result.is_ok(),
-                    "gas_limit={gas_limit}, nonce={nonce}: expected success but got error"
-                );
+                assert!(result.is_ok());
             } else {
-                let err = result.expect_err(&format!(
-                    "gas_limit={gas_limit}, nonce={nonce}: should fail"
-                ));
-                assert!(
-                    matches!(
-                        err.as_invalid_tx_err(),
-                        Some(TempoInvalidTransaction::InsufficientGasForIntrinsicCost { .. })
-                    ),
-                    "Expected InsufficientGasForIntrinsicCost, got: {err:?}"
-                );
+                let err = result.expect_err("gas_limit={gas_limit}: should fail");
+                match err.as_invalid_tx_err() {
+                    Some(TempoInvalidTransaction::InsufficientGasForIntrinsicCost {
+                        gas_limit: gl,
+                        intrinsic_gas,
+                    }) => {
+                        assert_eq!(*gl, gas_limit);
+                        assert_eq!(*intrinsic_gas, INTRINSIC_GAS + NEW_NONCE_KEY_GAS);
+                    }
+                    _ => panic!("Expected InsufficientGasForIntrinsicCost, got: {err:?}"),
+                }
             }
         }
     }
