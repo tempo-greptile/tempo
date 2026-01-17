@@ -1496,3 +1496,872 @@ fn test_threshold_increases_with_validator_count() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_register_and_finalize_with_signatures() -> eyre::Result<()> {
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+    use tempo_contracts::precompiles::ITIP20;
+
+    let mut storage = HashMapStorageProvider::new(1);
+    let admin = Address::random();
+    let origin_chain_id = 1u64;
+    let origin_token = Address::random();
+    let origin_escrow = Address::repeat_byte(0xEE);
+    let origin_tx_hash = B256::random();
+    let origin_log_index = 0u32;
+    let tempo_recipient = Address::random();
+    let amount = 1_000_000u64;
+    let origin_block_number = 12345u64;
+
+    // Create validator signer
+    let validator1_signer = PrivateKeySigner::random();
+    let validator1_addr = validator1_signer.address();
+
+    StorageCtx::enter(&mut storage, || {
+        // Create TIP-20 token with minting capability (bridge as issuer)
+        let token = TIP20Setup::create("Bridged Token", "BT", admin)
+            .with_role(tempo_contracts::precompiles::BRIDGE_ADDRESS, *ISSUER_ROLE)
+            .apply()?;
+        let tempo_tip20 = token.address();
+
+        // Setup validator config
+        let mut validator_config = ValidatorConfig::new();
+        validator_config.initialize(admin)?;
+        add_validator(&mut validator_config, admin, validator1_addr, true)?;
+
+        // Setup bridge
+        let mut bridge = setup_bridge(admin)?;
+        register_mapping(&mut bridge, admin, origin_chain_id, origin_token, tempo_tip20)?;
+
+        // Compute request ID (must match what precompile computes)
+        let request_id = Bridge::compute_request_id(
+            origin_chain_id,
+            origin_escrow,
+            origin_tx_hash,
+            origin_log_index,
+        );
+
+        // Compute validator set hash (must match what precompile uses)
+        let validator_set_hash = validator_config.compute_validator_set_hash()?;
+
+        // Compute attestation digest (must match precompile computation)
+        let chain_id = bridge.storage.chain_id();
+        let digest = Bridge::compute_deposit_attestation_digest(
+            chain_id,
+            request_id,
+            origin_chain_id,
+            origin_escrow,
+            origin_token,
+            origin_tx_hash,
+            origin_log_index,
+            tempo_recipient,
+            amount,
+            origin_block_number,
+            validator_set_hash,
+        );
+
+        // Sign the digest with validator key (synchronous)
+        let signature = validator1_signer.sign_hash_sync(&digest)?;
+        let sig_bytes = alloy::primitives::Bytes::from(signature.as_bytes().to_vec());
+
+        // Submit registerAndFinalizeWithSignatures (from any account - not the validator)
+        let relayer = Address::random();
+        let result = bridge.register_and_finalize_with_signatures(
+            relayer,
+            IBridge::registerAndFinalizeWithSignaturesCall {
+                originChainId: origin_chain_id,
+                originEscrow: origin_escrow,
+                originToken: origin_token,
+                originTxHash: origin_tx_hash,
+                originLogIndex: origin_log_index,
+                tempoRecipient: tempo_recipient,
+                amount,
+                originBlockNumber: origin_block_number,
+                signatures: vec![sig_bytes],
+            },
+        )?;
+
+        assert_eq!(result, request_id);
+
+        // Verify deposit is finalized
+        let deposit = bridge.get_deposit(IBridge::getDepositCall {
+            requestId: request_id,
+        })?;
+        assert_eq!(deposit.status, IBridge::DepositStatus::Finalized);
+        assert_eq!(deposit.votingPowerSigned, 1);
+
+        // Verify validator signature was recorded
+        let has_signed = bridge.has_validator_signed_deposit(
+            IBridge::hasValidatorSignedDepositCall {
+                requestId: request_id,
+                validator: validator1_addr,
+            },
+        )?;
+        assert!(has_signed);
+
+        // Verify tokens were minted
+        let balance = token.balance_of(ITIP20::balanceOfCall {
+            account: tempo_recipient,
+        })?;
+        assert_eq!(balance, U256::from(amount));
+
+        Ok(())
+    })
+}
+
+#[test]
+fn test_register_and_finalize_with_signatures_idempotent() -> eyre::Result<()> {
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+
+    let mut storage = HashMapStorageProvider::new(1);
+    let admin = Address::random();
+    let origin_chain_id = 1u64;
+    let origin_token = Address::random();
+    let origin_escrow = Address::repeat_byte(0xEE);
+    let origin_tx_hash = B256::random();
+    let origin_log_index = 0u32;
+    let tempo_recipient = Address::random();
+    let amount = 1_000_000u64;
+    let origin_block_number = 12345u64;
+
+    let validator1_signer = PrivateKeySigner::random();
+    let validator1_addr = validator1_signer.address();
+
+    StorageCtx::enter(&mut storage, || {
+        let token = TIP20Setup::create("Bridged Token", "BT", admin)
+            .with_role(tempo_contracts::precompiles::BRIDGE_ADDRESS, *ISSUER_ROLE)
+            .apply()?;
+        let tempo_tip20 = token.address();
+
+        let mut validator_config = ValidatorConfig::new();
+        validator_config.initialize(admin)?;
+        add_validator(&mut validator_config, admin, validator1_addr, true)?;
+
+        let mut bridge = setup_bridge(admin)?;
+        register_mapping(&mut bridge, admin, origin_chain_id, origin_token, tempo_tip20)?;
+
+        let request_id = Bridge::compute_request_id(
+            origin_chain_id,
+            origin_escrow,
+            origin_tx_hash,
+            origin_log_index,
+        );
+
+        // Compute validator set hash (must match what precompile uses)
+        let validator_set_hash = validator_config.compute_validator_set_hash()?;
+
+        let chain_id = bridge.storage.chain_id();
+        let digest = Bridge::compute_deposit_attestation_digest(
+            chain_id,
+            request_id,
+            origin_chain_id,
+            origin_escrow,
+            origin_token,
+            origin_tx_hash,
+            origin_log_index,
+            tempo_recipient,
+            amount,
+            origin_block_number,
+            validator_set_hash,
+        );
+
+        let signature = validator1_signer.sign_hash_sync(&digest)?;
+        let sig_bytes = alloy::primitives::Bytes::from(signature.as_bytes().to_vec());
+
+        let call = IBridge::registerAndFinalizeWithSignaturesCall {
+            originChainId: origin_chain_id,
+            originEscrow: origin_escrow,
+            originToken: origin_token,
+            originTxHash: origin_tx_hash,
+            originLogIndex: origin_log_index,
+            tempoRecipient: tempo_recipient,
+            amount,
+            originBlockNumber: origin_block_number,
+            signatures: vec![sig_bytes.clone()],
+        };
+
+        // First call - should succeed and finalize
+        let relayer = Address::random();
+        let result1 = bridge.register_and_finalize_with_signatures(relayer, call.clone())?;
+        assert_eq!(result1, request_id);
+
+        let deposit = bridge.get_deposit(IBridge::getDepositCall { requestId: request_id })?;
+        assert_eq!(deposit.status, IBridge::DepositStatus::Finalized);
+
+        // Second call with same data - should return success (idempotent), not revert
+        let result2 = bridge.register_and_finalize_with_signatures(relayer, call)?;
+        assert_eq!(result2, request_id);
+
+        // Deposit should still be finalized
+        let deposit = bridge.get_deposit(IBridge::getDepositCall { requestId: request_id })?;
+        assert_eq!(deposit.status, IBridge::DepositStatus::Finalized);
+
+        Ok(())
+    })
+}
+
+#[test]
+fn test_register_and_finalize_with_signatures_threshold_not_reached() -> eyre::Result<()> {
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+
+    let mut storage = HashMapStorageProvider::new(1);
+    let admin = Address::random();
+    let origin_chain_id = 1u64;
+    let origin_token = Address::random();
+    let origin_escrow = Address::repeat_byte(0xEE);
+    let origin_tx_hash = B256::random();
+    let origin_log_index = 0u32;
+    let tempo_recipient = Address::random();
+    let amount = 1_000_000u64;
+    let origin_block_number = 12345u64;
+
+    // Create validator signers (3 validators, need 2/3 = 2 signatures)
+    let validator1_signer = PrivateKeySigner::random();
+    let validator1_addr = validator1_signer.address();
+    let validator2_addr = Address::random();
+    let validator3_addr = Address::random();
+
+    StorageCtx::enter(&mut storage, || {
+        // Create TIP-20 token with minting capability (bridge as issuer)
+        let token = TIP20Setup::create("Bridged Token", "BT", admin)
+            .with_role(tempo_contracts::precompiles::BRIDGE_ADDRESS, *ISSUER_ROLE)
+            .apply()?;
+        let tempo_tip20 = token.address();
+
+        // Add 3 validators
+        let mut validator_config = ValidatorConfig::new();
+        validator_config.initialize(admin)?;
+        add_validator(&mut validator_config, admin, validator1_addr, true)?;
+        add_validator(&mut validator_config, admin, validator2_addr, true)?;
+        add_validator(&mut validator_config, admin, validator3_addr, true)?;
+
+        // Setup bridge
+        let mut bridge = setup_bridge(admin)?;
+        register_mapping(&mut bridge, admin, origin_chain_id, origin_token, tempo_tip20)?;
+
+        // Compute request ID
+        let request_id = Bridge::compute_request_id(
+            origin_chain_id,
+            origin_escrow,
+            origin_tx_hash,
+            origin_log_index,
+        );
+
+        // Compute validator set hash
+        let validator_set_hash = validator_config.compute_validator_set_hash()?;
+
+        // Compute attestation digest
+        let chain_id = bridge.storage.chain_id();
+        let digest = Bridge::compute_deposit_attestation_digest(
+            chain_id,
+            request_id,
+            origin_chain_id,
+            origin_escrow,
+            origin_token,
+            origin_tx_hash,
+            origin_log_index,
+            tempo_recipient,
+            amount,
+            origin_block_number,
+            validator_set_hash,
+        );
+
+        // Sign with only 1 validator (need 2 for threshold)
+        let signature = validator1_signer.sign_hash_sync(&digest)?;
+        let sig_bytes = alloy::primitives::Bytes::from(signature.as_bytes().to_vec());
+
+        // Submit with only 1 signature - should fail threshold check
+        let relayer = Address::random();
+        let result = bridge.register_and_finalize_with_signatures(
+            relayer,
+            IBridge::registerAndFinalizeWithSignaturesCall {
+                originChainId: origin_chain_id,
+                originEscrow: origin_escrow,
+                originToken: origin_token,
+                originTxHash: origin_tx_hash,
+                originLogIndex: origin_log_index,
+                tempoRecipient: tempo_recipient,
+                amount,
+                originBlockNumber: origin_block_number,
+                signatures: vec![sig_bytes],
+            },
+        );
+
+        assert_eq!(
+            result,
+            Err(TempoPrecompileError::BridgeError(
+                BridgeError::threshold_not_reached()
+            ))
+        );
+
+        Ok(())
+    })
+}
+
+/// Golden test vectors for cross-crate digest parity.
+///
+/// These MUST match the values in `tempo-bridge-exex::digest_parity_test::test_vectors`.
+/// If you change these values, update both files.
+mod digest_parity_vectors {
+    use alloy::primitives::{address, b256, keccak256, Address, B256};
+    use tempo_contracts::precompiles::BRIDGE_ADDRESS;
+
+    pub const TEMPO_CHAIN_ID: u64 = 42069;
+    pub const ORIGIN_CHAIN_ID: u64 = 1;
+    pub const ORIGIN_LOG_INDEX: u32 = 7;
+    pub const AMOUNT: u64 = 1_000_000_000_000_000_000; // 1e18
+    pub const ORIGIN_BLOCK_NUMBER: u64 = 19_500_000;
+
+    pub fn bridge_address() -> Address {
+        BRIDGE_ADDRESS
+    }
+
+    pub fn request_id() -> B256 {
+        b256!("deadbeef00000000000000000000000000000000000000000000000000000001")
+    }
+
+    pub fn origin_escrow() -> Address {
+        address!("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+    }
+
+    pub fn origin_token() -> Address {
+        address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48") // USDC on mainnet
+    }
+
+    pub fn origin_tx_hash() -> B256 {
+        b256!("1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef")
+    }
+
+    pub fn tempo_recipient() -> Address {
+        address!("1111111111111111111111111111111111111111")
+    }
+
+    /// A fixed validator set hash for testing.
+    /// In production, this is computed from active validator addresses.
+    pub fn validator_set_hash() -> B256 {
+        b256!("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
+    }
+
+    /// Expected digest computed manually - must match bridge-exex computation.
+    pub fn expected_digest() -> B256 {
+        let domain = b"TEMPO_BRIDGE_DEPOSIT_V2";
+        let mut buf = Vec::with_capacity(
+            domain.len() + 8 + 20 + 32 + 8 + 20 + 20 + 32 + 4 + 20 + 8 + 8 + 32,
+        );
+        buf.extend_from_slice(domain);
+        buf.extend_from_slice(&TEMPO_CHAIN_ID.to_be_bytes());
+        buf.extend_from_slice(bridge_address().as_slice());
+        buf.extend_from_slice(request_id().as_slice());
+        buf.extend_from_slice(&ORIGIN_CHAIN_ID.to_be_bytes());
+        buf.extend_from_slice(origin_escrow().as_slice());
+        buf.extend_from_slice(origin_token().as_slice());
+        buf.extend_from_slice(origin_tx_hash().as_slice());
+        buf.extend_from_slice(&ORIGIN_LOG_INDEX.to_be_bytes());
+        buf.extend_from_slice(tempo_recipient().as_slice());
+        buf.extend_from_slice(&AMOUNT.to_be_bytes());
+        buf.extend_from_slice(&ORIGIN_BLOCK_NUMBER.to_be_bytes());
+        buf.extend_from_slice(validator_set_hash().as_slice());
+        keccak256(&buf)
+    }
+}
+
+#[test]
+fn test_deposit_attestation_digest_parity_with_bridge_exex() {
+    use digest_parity_vectors::*;
+
+    // Compute digest using the precompile's function
+    let precompile_digest = Bridge::compute_deposit_attestation_digest(
+        TEMPO_CHAIN_ID,
+        request_id(),
+        ORIGIN_CHAIN_ID,
+        origin_escrow(),
+        origin_token(),
+        origin_tx_hash(),
+        ORIGIN_LOG_INDEX,
+        tempo_recipient(),
+        AMOUNT,
+        ORIGIN_BLOCK_NUMBER,
+        validator_set_hash(),
+    );
+
+    let expected = expected_digest();
+    assert_eq!(
+        precompile_digest, expected,
+        "Precompile digest mismatch with golden test vector!\n\
+         This test ensures parity with tempo-bridge-exex::digest_parity_test.\n\
+         If this fails, the two implementations have diverged.\n\
+         \n\
+         Computed: {precompile_digest}\n\
+         Expected: {expected}"
+    );
+}
+
+#[test]
+fn test_deposit_attestation_digest_includes_origin_escrow() {
+    use digest_parity_vectors::*;
+
+    // Compute digest with the standard origin_escrow
+    let digest1 = Bridge::compute_deposit_attestation_digest(
+        TEMPO_CHAIN_ID,
+        request_id(),
+        ORIGIN_CHAIN_ID,
+        origin_escrow(),
+        origin_token(),
+        origin_tx_hash(),
+        ORIGIN_LOG_INDEX,
+        tempo_recipient(),
+        AMOUNT,
+        ORIGIN_BLOCK_NUMBER,
+        validator_set_hash(),
+    );
+
+    // Compute digest with a different origin_escrow
+    let different_escrow = Address::repeat_byte(0xDD);
+    let digest2 = Bridge::compute_deposit_attestation_digest(
+        TEMPO_CHAIN_ID,
+        request_id(),
+        ORIGIN_CHAIN_ID,
+        different_escrow,
+        origin_token(),
+        origin_tx_hash(),
+        ORIGIN_LOG_INDEX,
+        tempo_recipient(),
+        AMOUNT,
+        ORIGIN_BLOCK_NUMBER,
+        validator_set_hash(),
+    );
+
+    assert_ne!(
+        digest1, digest2,
+        "origin_escrow MUST affect the digest - different escrows should produce different digests.\n\
+         This is critical for security: deposits from different escrow contracts must not be confused."
+    );
+}
+
+#[test]
+fn test_deposit_attestation_digest_all_fields_affect_output() {
+    use digest_parity_vectors::*;
+
+    let base_digest = Bridge::compute_deposit_attestation_digest(
+        TEMPO_CHAIN_ID,
+        request_id(),
+        ORIGIN_CHAIN_ID,
+        origin_escrow(),
+        origin_token(),
+        origin_tx_hash(),
+        ORIGIN_LOG_INDEX,
+        tempo_recipient(),
+        AMOUNT,
+        ORIGIN_BLOCK_NUMBER,
+        validator_set_hash(),
+    );
+
+    // Test each field individually
+    let fields_and_digests = [
+        (
+            "tempo_chain_id",
+            Bridge::compute_deposit_attestation_digest(
+                TEMPO_CHAIN_ID + 1,
+                request_id(),
+                ORIGIN_CHAIN_ID,
+                origin_escrow(),
+                origin_token(),
+                origin_tx_hash(),
+                ORIGIN_LOG_INDEX,
+                tempo_recipient(),
+                AMOUNT,
+                ORIGIN_BLOCK_NUMBER,
+                validator_set_hash(),
+            ),
+        ),
+        (
+            "request_id",
+            Bridge::compute_deposit_attestation_digest(
+                TEMPO_CHAIN_ID,
+                B256::repeat_byte(0xFF),
+                ORIGIN_CHAIN_ID,
+                origin_escrow(),
+                origin_token(),
+                origin_tx_hash(),
+                ORIGIN_LOG_INDEX,
+                tempo_recipient(),
+                AMOUNT,
+                ORIGIN_BLOCK_NUMBER,
+                validator_set_hash(),
+            ),
+        ),
+        (
+            "origin_chain_id",
+            Bridge::compute_deposit_attestation_digest(
+                TEMPO_CHAIN_ID,
+                request_id(),
+                ORIGIN_CHAIN_ID + 1,
+                origin_escrow(),
+                origin_token(),
+                origin_tx_hash(),
+                ORIGIN_LOG_INDEX,
+                tempo_recipient(),
+                AMOUNT,
+                ORIGIN_BLOCK_NUMBER,
+                validator_set_hash(),
+            ),
+        ),
+        (
+            "origin_escrow",
+            Bridge::compute_deposit_attestation_digest(
+                TEMPO_CHAIN_ID,
+                request_id(),
+                ORIGIN_CHAIN_ID,
+                Address::repeat_byte(0x01),
+                origin_token(),
+                origin_tx_hash(),
+                ORIGIN_LOG_INDEX,
+                tempo_recipient(),
+                AMOUNT,
+                ORIGIN_BLOCK_NUMBER,
+                validator_set_hash(),
+            ),
+        ),
+        (
+            "origin_token",
+            Bridge::compute_deposit_attestation_digest(
+                TEMPO_CHAIN_ID,
+                request_id(),
+                ORIGIN_CHAIN_ID,
+                origin_escrow(),
+                Address::repeat_byte(0x01),
+                origin_tx_hash(),
+                ORIGIN_LOG_INDEX,
+                tempo_recipient(),
+                AMOUNT,
+                ORIGIN_BLOCK_NUMBER,
+                validator_set_hash(),
+            ),
+        ),
+        (
+            "origin_tx_hash",
+            Bridge::compute_deposit_attestation_digest(
+                TEMPO_CHAIN_ID,
+                request_id(),
+                ORIGIN_CHAIN_ID,
+                origin_escrow(),
+                origin_token(),
+                B256::repeat_byte(0xFF),
+                ORIGIN_LOG_INDEX,
+                tempo_recipient(),
+                AMOUNT,
+                ORIGIN_BLOCK_NUMBER,
+                validator_set_hash(),
+            ),
+        ),
+        (
+            "origin_log_index",
+            Bridge::compute_deposit_attestation_digest(
+                TEMPO_CHAIN_ID,
+                request_id(),
+                ORIGIN_CHAIN_ID,
+                origin_escrow(),
+                origin_token(),
+                origin_tx_hash(),
+                ORIGIN_LOG_INDEX + 1,
+                tempo_recipient(),
+                AMOUNT,
+                ORIGIN_BLOCK_NUMBER,
+                validator_set_hash(),
+            ),
+        ),
+        (
+            "tempo_recipient",
+            Bridge::compute_deposit_attestation_digest(
+                TEMPO_CHAIN_ID,
+                request_id(),
+                ORIGIN_CHAIN_ID,
+                origin_escrow(),
+                origin_token(),
+                origin_tx_hash(),
+                ORIGIN_LOG_INDEX,
+                Address::repeat_byte(0x01),
+                AMOUNT,
+                ORIGIN_BLOCK_NUMBER,
+                validator_set_hash(),
+            ),
+        ),
+        (
+            "amount",
+            Bridge::compute_deposit_attestation_digest(
+                TEMPO_CHAIN_ID,
+                request_id(),
+                ORIGIN_CHAIN_ID,
+                origin_escrow(),
+                origin_token(),
+                origin_tx_hash(),
+                ORIGIN_LOG_INDEX,
+                tempo_recipient(),
+                AMOUNT + 1,
+                ORIGIN_BLOCK_NUMBER,
+                validator_set_hash(),
+            ),
+        ),
+        (
+            "origin_block_number",
+            Bridge::compute_deposit_attestation_digest(
+                TEMPO_CHAIN_ID,
+                request_id(),
+                ORIGIN_CHAIN_ID,
+                origin_escrow(),
+                origin_token(),
+                origin_tx_hash(),
+                ORIGIN_LOG_INDEX,
+                tempo_recipient(),
+                AMOUNT,
+                ORIGIN_BLOCK_NUMBER + 1,
+                validator_set_hash(),
+            ),
+        ),
+        (
+            "validator_set_hash",
+            Bridge::compute_deposit_attestation_digest(
+                TEMPO_CHAIN_ID,
+                request_id(),
+                ORIGIN_CHAIN_ID,
+                origin_escrow(),
+                origin_token(),
+                origin_tx_hash(),
+                ORIGIN_LOG_INDEX,
+                tempo_recipient(),
+                AMOUNT,
+                ORIGIN_BLOCK_NUMBER,
+                B256::repeat_byte(0xFF),
+            ),
+        ),
+    ];
+
+    for (field_name, digest) in fields_and_digests {
+        assert_ne!(
+            base_digest, digest,
+            "{field_name} must affect the digest"
+        );
+    }
+}
+
+#[test]
+fn test_low_s_signature_accepted() -> eyre::Result<()> {
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+    use tempo_contracts::precompiles::ITIP20;
+
+    let mut storage = HashMapStorageProvider::new(1);
+    let admin = Address::random();
+    let origin_chain_id = 1u64;
+    let origin_token = Address::random();
+    let origin_escrow = Address::repeat_byte(0xEE);
+    let origin_tx_hash = B256::random();
+    let origin_log_index = 0u32;
+    let tempo_recipient = Address::random();
+    let amount = 1_000_000u64;
+    let origin_block_number = 12345u64;
+
+    let validator_signer = PrivateKeySigner::random();
+    let validator_addr = validator_signer.address();
+
+    StorageCtx::enter(&mut storage, || {
+        let token = TIP20Setup::create("Bridged Token", "BT", admin)
+            .with_role(tempo_contracts::precompiles::BRIDGE_ADDRESS, *ISSUER_ROLE)
+            .apply()?;
+        let tempo_tip20 = token.address();
+
+        let mut validator_config = ValidatorConfig::new();
+        validator_config.initialize(admin)?;
+        add_validator(&mut validator_config, admin, validator_addr, true)?;
+
+        let mut bridge = setup_bridge(admin)?;
+        register_mapping(&mut bridge, admin, origin_chain_id, origin_token, tempo_tip20)?;
+
+        let request_id = Bridge::compute_request_id(
+            origin_chain_id,
+            origin_escrow,
+            origin_tx_hash,
+            origin_log_index,
+        );
+
+        // Compute validator set hash
+        let validator_set_hash = validator_config.compute_validator_set_hash()?;
+
+        let chain_id = bridge.storage.chain_id();
+        let digest = Bridge::compute_deposit_attestation_digest(
+            chain_id,
+            request_id,
+            origin_chain_id,
+            origin_escrow,
+            origin_token,
+            origin_tx_hash,
+            origin_log_index,
+            tempo_recipient,
+            amount,
+            origin_block_number,
+            validator_set_hash,
+        );
+
+        // alloy-signer-local produces low-s signatures by default
+        let signature = validator_signer.sign_hash_sync(&digest)?;
+        let sig_bytes = alloy::primitives::Bytes::from(signature.as_bytes().to_vec());
+
+        // Verify the s value is low (< n/2)
+        let s = U256::from_be_slice(&sig_bytes[32..64]);
+        let secp256k1_n_div_2 = U256::from_be_slice(&[
+            0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D, 0xDF, 0xE9, 0x2F, 0x46,
+            0x68, 0x1B, 0x20, 0xA0,
+        ]);
+        assert!(s <= secp256k1_n_div_2, "alloy signer should produce low-s signatures");
+
+        let relayer = Address::random();
+        let result = bridge.register_and_finalize_with_signatures(
+            relayer,
+            IBridge::registerAndFinalizeWithSignaturesCall {
+                originChainId: origin_chain_id,
+                originEscrow: origin_escrow,
+                originToken: origin_token,
+                originTxHash: origin_tx_hash,
+                originLogIndex: origin_log_index,
+                tempoRecipient: tempo_recipient,
+                amount,
+                originBlockNumber: origin_block_number,
+                signatures: vec![sig_bytes],
+            },
+        )?;
+
+        assert_eq!(result, request_id);
+
+        let deposit = bridge.get_deposit(IBridge::getDepositCall { requestId: request_id })?;
+        assert_eq!(deposit.status, IBridge::DepositStatus::Finalized);
+
+        let balance = token.balance_of(ITIP20::balanceOfCall { account: tempo_recipient })?;
+        assert_eq!(balance, U256::from(amount));
+
+        Ok(())
+    })
+}
+
+#[test]
+fn test_high_s_signature_rejected() -> eyre::Result<()> {
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+
+    let mut storage = HashMapStorageProvider::new(1);
+    let admin = Address::random();
+    let origin_chain_id = 1u64;
+    let origin_token = Address::random();
+    let origin_escrow = Address::repeat_byte(0xEE);
+    let origin_tx_hash = B256::random();
+    let origin_log_index = 0u32;
+    let tempo_recipient = Address::random();
+    let amount = 1_000_000u64;
+    let origin_block_number = 12345u64;
+
+    let validator_signer = PrivateKeySigner::random();
+    let validator_addr = validator_signer.address();
+
+    StorageCtx::enter(&mut storage, || {
+        let token = TIP20Setup::create("Bridged Token", "BT", admin)
+            .with_role(tempo_contracts::precompiles::BRIDGE_ADDRESS, *ISSUER_ROLE)
+            .apply()?;
+        let tempo_tip20 = token.address();
+
+        let mut validator_config = ValidatorConfig::new();
+        validator_config.initialize(admin)?;
+        add_validator(&mut validator_config, admin, validator_addr, true)?;
+
+        let mut bridge = setup_bridge(admin)?;
+        register_mapping(&mut bridge, admin, origin_chain_id, origin_token, tempo_tip20)?;
+
+        let request_id = Bridge::compute_request_id(
+            origin_chain_id,
+            origin_escrow,
+            origin_tx_hash,
+            origin_log_index,
+        );
+
+        // Compute validator set hash
+        let validator_set_hash = validator_config.compute_validator_set_hash()?;
+
+        let chain_id = bridge.storage.chain_id();
+        let digest = Bridge::compute_deposit_attestation_digest(
+            chain_id,
+            request_id,
+            origin_chain_id,
+            origin_escrow,
+            origin_token,
+            origin_tx_hash,
+            origin_log_index,
+            tempo_recipient,
+            amount,
+            origin_block_number,
+            validator_set_hash,
+        );
+
+        // Get a valid low-s signature first
+        let signature = validator_signer.sign_hash_sync(&digest)?;
+        let mut sig_bytes = signature.as_bytes().to_vec();
+
+        // Convert s to high-s: s' = n - s (where n is the secp256k1 curve order)
+        // secp256k1 curve order n
+        let secp256k1_n = U256::from_be_slice(&[
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFE, 0xBA, 0xAE, 0xDC, 0xE6, 0xAF, 0x48, 0xA0, 0x3B, 0xBF, 0xD2, 0x5E, 0x8C,
+            0xD0, 0x36, 0x41, 0x41,
+        ]);
+        let s = U256::from_be_slice(&sig_bytes[32..64]);
+        let high_s = secp256k1_n - s;
+
+        // Replace s with high-s
+        let high_s_bytes: [u8; 32] = high_s.to_be_bytes();
+        sig_bytes[32..64].copy_from_slice(&high_s_bytes);
+
+        // Also flip v (27 <-> 28 or 0 <-> 1) to maintain signature validity for the same message
+        // When we negate s, we need to flip the recovery id
+        let v = sig_bytes[64];
+        sig_bytes[64] = if v >= 27 { 27 + 28 - v } else { 1 - v };
+
+        let secp256k1_n_div_2 = U256::from_be_slice(&[
+            0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D, 0xDF, 0xE9, 0x2F, 0x46,
+            0x68, 0x1B, 0x20, 0xA0,
+        ]);
+        assert!(
+            high_s > secp256k1_n_div_2,
+            "high_s should be greater than n/2"
+        );
+
+        let high_s_sig_bytes = alloy::primitives::Bytes::from(sig_bytes);
+
+        let relayer = Address::random();
+        let result = bridge.register_and_finalize_with_signatures(
+            relayer,
+            IBridge::registerAndFinalizeWithSignaturesCall {
+                originChainId: origin_chain_id,
+                originEscrow: origin_escrow,
+                originToken: origin_token,
+                originTxHash: origin_tx_hash,
+                originLogIndex: origin_log_index,
+                tempoRecipient: tempo_recipient,
+                amount,
+                originBlockNumber: origin_block_number,
+                signatures: vec![high_s_sig_bytes],
+            },
+        );
+
+        // Should fail because the only signature has high-s and is rejected
+        assert_eq!(
+            result,
+            Err(TempoPrecompileError::BridgeError(
+                BridgeError::threshold_not_reached()
+            ))
+        );
+
+        Ok(())
+    })
+}

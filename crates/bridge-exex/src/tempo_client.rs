@@ -3,13 +3,13 @@
 use alloy::{
     eips::BlockNumberOrTag,
     network::EthereumWallet,
-    primitives::{Address, B256},
+    primitives::{keccak256, Address, B256},
     providers::{Provider, ProviderBuilder, RootProvider},
     signers::local::PrivateKeySigner,
     sol_types::{SolCall, SolEvent, SolType},
 };
 use eyre::Result;
-use tempo_contracts::precompiles::{IBridge, BRIDGE_ADDRESS};
+use tempo_contracts::precompiles::{IBridge, IValidatorConfig, BRIDGE_ADDRESS, VALIDATOR_CONFIG_ADDRESS};
 use tracing::{debug, info, warn};
 
 use crate::retry::with_retry;
@@ -345,6 +345,68 @@ impl TempoClient {
         Ok(receipt.transaction_hash)
     }
 
+    /// Register and finalize a deposit with bundled validator signatures.
+    ///
+    /// This is the preferred method - it submits all signatures in one transaction,
+    /// which can be called by any account (doesn't need to be a validator).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn register_and_finalize_with_signatures(
+        &self,
+        origin_chain_id: u64,
+        origin_escrow: Address,
+        origin_token: Address,
+        origin_tx_hash: B256,
+        origin_log_index: u32,
+        tempo_recipient: Address,
+        amount: u64,
+        origin_block_number: u64,
+        signatures: Vec<alloy::primitives::Bytes>,
+    ) -> Result<B256> {
+        // Verify quorum before submitting
+        self.verify_quorum_before_submit().await?;
+
+        let call = IBridge::registerAndFinalizeWithSignaturesCall {
+            originChainId: origin_chain_id,
+            originEscrow: origin_escrow,
+            originToken: origin_token,
+            originTxHash: origin_tx_hash,
+            originLogIndex: origin_log_index,
+            tempoRecipient: tempo_recipient,
+            amount,
+            originBlockNumber: origin_block_number,
+            signatures,
+        };
+
+        debug!(
+            origin_chain_id,
+            %origin_token,
+            %tempo_recipient,
+            amount,
+            "Submitting registerAndFinalizeWithSignatures"
+        );
+
+        let tx = alloy::rpc::types::TransactionRequest::default()
+            .to(BRIDGE_ADDRESS)
+            .input(call.abi_encode().into());
+
+        let pending = self.provider.send_transaction(tx).await?;
+        let receipt = pending.get_receipt().await?;
+
+        info!(
+            tx_hash = %receipt.transaction_hash,
+            "Deposit registered and finalized with signatures"
+        );
+
+        // Parse request ID from logs
+        for log in receipt.inner.logs() {
+            if let Ok(event) = IBridge::DepositFinalized::decode_log(&log.inner) {
+                return Ok(event.requestId);
+            }
+        }
+
+        eyre::bail!("DepositFinalized event not found in receipt")
+    }
+
     /// Attempt to finalize a deposit if threshold is reached
     pub async fn try_finalize_deposit(&self, request_id: B256) -> Result<Option<B256>> {
         // Get deposit status first
@@ -434,6 +496,51 @@ impl TempoClient {
     pub async fn health_check(&self) -> Result<()> {
         let _ = self.provider.get_block_number().await?;
         Ok(())
+    }
+
+    /// Get all validators from the ValidatorConfig precompile.
+    pub async fn get_validators(&self) -> Result<Vec<IValidatorConfig::Validator>> {
+        let call = IValidatorConfig::getValidatorsCall {};
+
+        let tx = alloy::rpc::types::TransactionRequest::default()
+            .to(VALIDATOR_CONFIG_ADDRESS)
+            .input(call.abi_encode().into());
+
+        let result = with_retry("get_validators", || async {
+            Ok(self.provider.call(tx.clone()).await?)
+        })
+        .await?;
+
+        let decoded =
+            <alloy::sol_types::sol_data::Array<IValidatorConfig::Validator> as SolType>::abi_decode(
+                &result,
+            )?;
+        Ok(decoded)
+    }
+
+    /// Compute the validator set hash for the current active validator set.
+    ///
+    /// This must match the computation in the precompile (`ValidatorConfig::compute_validator_set_hash`).
+    /// The hash is: `keccak256(sorted_active_validator_addresses)`
+    pub async fn compute_validator_set_hash(&self) -> Result<B256> {
+        let validators = self.get_validators().await?;
+
+        let mut active_addresses: Vec<Address> = validators
+            .iter()
+            .filter(|v| v.active)
+            .map(|v| v.validatorAddress)
+            .collect();
+
+        // Sort for deterministic ordering (must match precompile)
+        active_addresses.sort();
+
+        // Compute hash of concatenated addresses
+        let mut buf = Vec::with_capacity(active_addresses.len() * 20);
+        for addr in &active_addresses {
+            buf.extend_from_slice(addr.as_slice());
+        }
+
+        Ok(keccak256(&buf))
     }
 
     /// Find the transaction index for a specific burn ID in a block's receipts.

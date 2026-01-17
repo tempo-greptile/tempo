@@ -35,6 +35,15 @@ pub struct BridgeMetrics {
 
     /// Proof generation duration in seconds
     pub proof_generation_duration: Histogram,
+
+    /// Number of deposits currently pending L1 finality
+    pub deposits_pending_finality: Counter,
+
+    /// Number of deposits signed after L1 finality confirmation
+    pub deposits_signed_after_finality: Counter,
+
+    /// Number of deposits deferred due to L1 not yet finalized
+    pub deposits_deferred_for_finality: Counter,
 }
 
 impl BridgeMetrics {
@@ -90,5 +99,23 @@ impl BridgeMetrics {
     #[inline]
     pub fn record_proof_generation(&self, duration_secs: f64) {
         self.proof_generation_duration.record(duration_secs);
+    }
+
+    /// Record a deposit pending L1 finality
+    #[inline]
+    pub fn record_deposit_pending_finality(&self) {
+        self.deposits_pending_finality.increment(1);
+    }
+
+    /// Record a deposit signed after L1 finality
+    #[inline]
+    pub fn record_deposit_signed_after_finality(&self) {
+        self.deposits_signed_after_finality.increment(1);
+    }
+
+    /// Record a deposit deferred for finality
+    #[inline]
+    pub fn record_deposit_deferred_for_finality(&self) {
+        self.deposits_deferred_for_finality.increment(1);
     }
 }

@@ -114,6 +114,28 @@ pub struct ChainConfig {
 
     /// Start block for syncing (0 = latest)
     pub start_block: u64,
+
+    /// Whether to require L1 beacon finality before signing deposit attestations.
+    /// When true, uses eth_getBlockByNumber("finalized") to check finality.
+    /// When false, uses confirmation count only (less secure for PoS chains).
+    /// Default: true
+    #[serde(default = "default_require_l1_finality")]
+    pub require_l1_finality: bool,
+
+    /// Fallback confirmation depth for L1 finality if beacon finality RPC is unavailable.
+    /// Approximately 2 epochs = 64 blocks on Ethereum mainnet (~13 minutes).
+    /// Only used when require_l1_finality is true and finalized block query fails.
+    /// Default: 64
+    #[serde(default = "default_l1_finality_confirmations")]
+    pub l1_finality_confirmations: u64,
+}
+
+fn default_require_l1_finality() -> bool {
+    true
+}
+
+fn default_l1_finality_confirmations() -> u64 {
+    64
 }
 
 /// Token configuration
@@ -181,6 +203,8 @@ impl BridgeConfig {
                 tokens,
                 poll_interval_secs: 12,
                 start_block: 0,
+                require_l1_finality: false, // Disable for tests
+                l1_finality_confirmations: 64,
             },
         );
 
@@ -238,6 +262,10 @@ tempo_tip20 = "0x20C0000000000000000000000000000001000000"
         let anvil = config.chains.get("anvil").unwrap();
         assert!(anvil.secondary_rpc_url.is_none());
         assert!(!anvil.require_rpc_quorum);
+
+        // Verify L1 finality defaults
+        assert!(anvil.require_l1_finality); // Default true
+        assert_eq!(anvil.l1_finality_confirmations, 64); // Default 64
     }
 
     #[test]
@@ -289,5 +317,55 @@ tempo_tip20 = "0x20C0000000000000000000000000000001000000"
             Some("http://localhost:8546".to_string())
         );
         assert!(anvil.require_rpc_quorum);
+    }
+
+    #[test]
+    fn test_parse_config_with_l1_finality() {
+        let toml = r#"
+tempo_chain_id = 62049
+
+[chains.ethereum]
+chain_id = 1
+rpc_url = "http://localhost:8545"
+confirmations = 12
+escrow_address = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+poll_interval_secs = 12
+start_block = 0
+require_l1_finality = true
+l1_finality_confirmations = 96
+
+[chains.ethereum.tokens."0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"]
+name = "USD Coin"
+symbol = "USDC"
+decimals = 6
+tempo_tip20 = "0x20C0000000000000000000000000000001000000"
+
+[chains.anvil]
+chain_id = 31337
+rpc_url = "http://localhost:8545"
+confirmations = 1
+escrow_address = "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+poll_interval_secs = 1
+start_block = 0
+require_l1_finality = false
+
+[chains.anvil.tokens."0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"]
+name = "USD Coin"
+symbol = "USDC"
+decimals = 6
+tempo_tip20 = "0x20C0000000000000000000000000000001000000"
+"#;
+
+        let config: BridgeConfig = toml::from_str(toml).unwrap();
+
+        // Ethereum chain with explicit L1 finality settings
+        let ethereum = config.chains.get("ethereum").unwrap();
+        assert!(ethereum.require_l1_finality);
+        assert_eq!(ethereum.l1_finality_confirmations, 96);
+
+        // Anvil chain with finality disabled
+        let anvil = config.chains.get("anvil").unwrap();
+        assert!(!anvil.require_l1_finality);
+        assert_eq!(anvil.l1_finality_confirmations, 64); // Default still applies
     }
 }

@@ -7,6 +7,8 @@ pub mod config;
 pub mod deposit_id;
 
 #[cfg(test)]
+mod digest_parity_test;
+#[cfg(test)]
 mod tests;
 pub mod consensus_client;
 pub mod exex;

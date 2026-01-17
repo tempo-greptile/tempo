@@ -104,6 +104,37 @@ crate::sol! {
         /// Finalize deposit and mint TIP-20 (anyone can call once threshold reached)
         function finalizeDeposit(bytes32 requestId) external;
 
+        /// Register and finalize a deposit in one call with bundled validator signatures.
+        ///
+        /// This is the preferred method for validators to attest to deposits. Instead of
+        /// each validator submitting a separate transaction (paying gas), validators sign
+        /// attestations off-chain and a single caller (block producer or relayer) submits
+        /// all signatures in one transaction.
+        ///
+        /// The caller does NOT need to be a validator - they are just relaying signatures.
+        /// Each signature is verified via ecrecover against active validators.
+        ///
+        /// @param originChainId Origin chain ID
+        /// @param originEscrow Escrow contract address on origin chain
+        /// @param originToken Token address on origin chain
+        /// @param originTxHash Transaction hash of the deposit on origin chain
+        /// @param originLogIndex Log index of the deposit event
+        /// @param tempoRecipient Recipient address on Tempo
+        /// @param amount Amount deposited (6 decimals)
+        /// @param originBlockNumber Block number of the deposit on origin chain
+        /// @param signatures Array of validator signatures (each 65 bytes: r, s, v)
+        function registerAndFinalizeWithSignatures(
+            uint64 originChainId,
+            address originEscrow,
+            address originToken,
+            bytes32 originTxHash,
+            uint32 originLogIndex,
+            address tempoRecipient,
+            uint64 amount,
+            uint64 originBlockNumber,
+            bytes[] calldata signatures
+        ) external returns (bytes32 requestId);
+
         /// Get deposit request info
         function getDeposit(bytes32 requestId) external view returns (DepositRequest memory);
 

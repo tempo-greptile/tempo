@@ -6,9 +6,51 @@ use alloy::{
 };
 use eyre::Result;
 
+/// Domain separator for deposit attestations (must match precompile)
+pub const DEPOSIT_ATTESTATION_DOMAIN: &[u8] = b"TEMPO_BRIDGE_DEPOSIT_V2";
+
 /// Compute the deposit type hash for domain separation
 pub fn deposit_type_hash() -> B256 {
-    keccak256(b"TEMPO_BRIDGE_DEPOSIT_V1")
+    keccak256(DEPOSIT_ATTESTATION_DOMAIN)
+}
+
+/// Compute the digest that validators sign for deposit attestations.
+///
+/// IMPORTANT: This must match `Bridge::compute_deposit_attestation_digest` in the precompile.
+///
+/// The `validator_set_hash` binds signatures to a specific validator set, preventing
+/// threshold manipulation during validator set transitions.
+pub fn compute_deposit_attestation_digest(
+    tempo_chain_id: u64,
+    bridge_address: Address,
+    request_id: B256,
+    origin_chain_id: u64,
+    origin_escrow: Address,
+    origin_token: Address,
+    origin_tx_hash: B256,
+    origin_log_index: u32,
+    tempo_recipient: Address,
+    amount: u64,
+    origin_block_number: u64,
+    validator_set_hash: B256,
+) -> B256 {
+    let mut buf = Vec::with_capacity(
+        DEPOSIT_ATTESTATION_DOMAIN.len() + 8 + 20 + 32 + 8 + 20 + 20 + 32 + 4 + 20 + 8 + 8 + 32,
+    );
+    buf.extend_from_slice(DEPOSIT_ATTESTATION_DOMAIN);
+    buf.extend_from_slice(&tempo_chain_id.to_be_bytes());
+    buf.extend_from_slice(bridge_address.as_slice());
+    buf.extend_from_slice(request_id.as_slice());
+    buf.extend_from_slice(&origin_chain_id.to_be_bytes());
+    buf.extend_from_slice(origin_escrow.as_slice());
+    buf.extend_from_slice(origin_token.as_slice());
+    buf.extend_from_slice(origin_tx_hash.as_slice());
+    buf.extend_from_slice(&origin_log_index.to_be_bytes());
+    buf.extend_from_slice(tempo_recipient.as_slice());
+    buf.extend_from_slice(&amount.to_be_bytes());
+    buf.extend_from_slice(&origin_block_number.to_be_bytes());
+    buf.extend_from_slice(validator_set_hash.as_slice());
+    keccak256(&buf)
 }
 
 /// Trait for signing bridge attestations.
@@ -328,5 +370,36 @@ mod tests {
         let request_id = B256::repeat_byte(0x45);
         let result = signer.sign_deposit(&request_id).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_local_signer_produces_low_s_signatures() {
+        use alloy::primitives::U256;
+
+        // Half of the secp256k1 curve order (n/2)
+        let secp256k1_n_div_2 = U256::from_be_slice(&[
+            0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D, 0xDF, 0xE9, 0x2F, 0x46,
+            0x68, 0x1B, 0x20, 0xA0,
+        ]);
+
+        // Test with multiple keys and messages to ensure low-s is consistent
+        for i in 1u8..=10 {
+            let key = [i; 32];
+            let signer = LocalSigner::from_bytes(&key).unwrap();
+
+            for j in 1u8..=5 {
+                let hash = B256::repeat_byte(j);
+                let sig = signer.sign_hash(&hash).await.unwrap();
+
+                // Extract s value from signature (bytes 32..64)
+                let s = U256::from_be_slice(&sig[32..64]);
+
+                assert!(
+                    s <= secp256k1_n_div_2,
+                    "LocalSigner must produce low-s signatures. s={s}, n/2={secp256k1_n_div_2}"
+                );
+            }
+        }
     }
 }

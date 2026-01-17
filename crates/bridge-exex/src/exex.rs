@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    config::BridgeConfig,
+    config::{BridgeConfig, ChainConfig},
     consensus_client::ConsensusClient,
     health::{HealthState, start_health_server},
     metrics::BridgeMetrics,
@@ -19,12 +19,14 @@ use crate::{
     origin_watcher::{DetectedDeposit, OriginWatcher},
     persistence::{ProcessedBurn, SignedDeposit, StateManager},
     proof::AttestationGenerator,
+    retry::with_retry,
     signer::BridgeSigner,
     tempo_client::TempoClient,
     tempo_watcher::{DetectedBurn, TempoWatcher},
 };
 
-use std::collections::{HashMap, HashSet};
+use alloy::providers::{Provider, ProviderBuilder};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Mutex;
 
 struct InFlightGuard<'a> {
@@ -65,6 +67,7 @@ pub struct BridgeExEx<Node: FullNodeComponents> {
     in_flight_deposits: Mutex<HashSet<alloy::primitives::B256>>,
     in_flight_burns: Mutex<HashSet<alloy::primitives::B256>>,
     metrics: BridgeMetrics,
+    pending_finality_deposits: Mutex<VecDeque<DetectedDeposit>>,
 }
 
 impl<Node: FullNodeComponents> BridgeExEx<Node> {
@@ -81,6 +84,7 @@ impl<Node: FullNodeComponents> BridgeExEx<Node> {
             in_flight_deposits: Mutex::new(HashSet::new()),
             in_flight_burns: Mutex::new(HashSet::new()),
             metrics: BridgeMetrics::default(),
+            pending_finality_deposits: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -162,6 +166,10 @@ impl<Node: FullNodeComponents> BridgeExEx<Node> {
         // Create Tempo watcher
         let tempo_watcher = TempoWatcher::new(burn_tx);
 
+        // Interval for retrying pending finality deposits
+        let mut pending_finality_interval =
+            tokio::time::interval(tokio::time::Duration::from_secs(12));
+
         // Main event loop
         loop {
             tokio::select! {
@@ -196,6 +204,120 @@ impl<Node: FullNodeComponents> BridgeExEx<Node> {
                         error!("Failed to handle burn: {}", e);
                     }
                 }
+
+                // Retry pending finality deposits
+                _ = pending_finality_interval.tick() => {
+                    if let Err(e) = self.retry_pending_finality_deposits().await {
+                        error!("Failed to retry pending finality deposits: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    async fn retry_pending_finality_deposits(&self) -> Result<()> {
+        let pending: Vec<DetectedDeposit> = {
+            let mut queue = self.pending_finality_deposits.lock().unwrap();
+            queue.drain(..).collect()
+        };
+
+        if pending.is_empty() {
+            return Ok(());
+        }
+
+        debug!(count = pending.len(), "Retrying pending finality deposits");
+
+        for deposit in pending {
+            if let Err(e) = self.handle_deposit(deposit).await {
+                error!("Failed to handle pending deposit: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn get_l1_finalized_block(&self, chain_config: &ChainConfig) -> Result<u64> {
+        let provider = ProviderBuilder::new()
+            .connect(chain_config.rpc_url.as_str())
+            .await?;
+
+        let finalized_block = with_retry("get_finalized_block", || {
+            let provider = provider.clone();
+            async move {
+                let block = provider
+                    .get_block_by_number(alloy::eips::BlockNumberOrTag::Finalized)
+                    .await?
+                    .ok_or_else(|| eyre::eyre!("Finalized block not available"))?;
+                Ok(block.header.number)
+            }
+        })
+        .await?;
+
+        Ok(finalized_block)
+    }
+
+    async fn is_deposit_l1_finalized(&self, deposit: &DetectedDeposit) -> Result<bool> {
+        let chain_config = self
+            .config
+            .chains
+            .values()
+            .find(|c| c.chain_id == deposit.origin_chain_id)
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "No chain config for origin chain {}",
+                    deposit.origin_chain_id
+                )
+            })?;
+
+        if !chain_config.require_l1_finality {
+            return Ok(true);
+        }
+
+        match self.get_l1_finalized_block(chain_config).await {
+            Ok(finalized_block) => {
+                let is_finalized = deposit.block_number <= finalized_block;
+                if !is_finalized {
+                    debug!(
+                        deposit_id = %deposit.deposit_id,
+                        deposit_block = deposit.block_number,
+                        finalized_block,
+                        "Deposit block not yet finalized on L1"
+                    );
+                }
+                Ok(is_finalized)
+            }
+            Err(e) => {
+                warn!(
+                    origin_chain = deposit.origin_chain_id,
+                    error = %e,
+                    "Failed to get finalized block, falling back to confirmation depth"
+                );
+
+                let provider = ProviderBuilder::new()
+                    .connect(chain_config.rpc_url.as_str())
+                    .await?;
+
+                let current_block: u64 = with_retry("get_block_number", || {
+                    let p = provider.clone();
+                    async move { Ok(p.get_block_number().await?) }
+                })
+                .await?;
+
+                let required_block =
+                    deposit.block_number + chain_config.l1_finality_confirmations;
+                let is_finalized = current_block >= required_block;
+
+                if !is_finalized {
+                    debug!(
+                        deposit_id = %deposit.deposit_id,
+                        deposit_block = deposit.block_number,
+                        current_block,
+                        required_confirmations = chain_config.l1_finality_confirmations,
+                        "Deposit not yet confirmed (fallback mode)"
+                    );
+                }
+
+                Ok(is_finalized)
             }
         }
     }
@@ -236,114 +358,166 @@ impl<Node: FullNodeComponents> BridgeExEx<Node> {
             }
             Ok(false) => {}
             Err(e) => {
-                // Deposit may not be registered yet, continue to register it
+                // Deposit may not exist yet, continue
                 debug!(%request_id, error = %e, "Could not check signature status");
             }
         }
 
-        // First, ensure the deposit is registered on Tempo
+        // Check if already finalized
         match tempo_client.get_deposit(request_id).await {
-            Ok(existing) => {
-                if existing.status == tempo_contracts::precompiles::IBridge::DepositStatus::None {
-                    // Need to register first
-                    info!(%request_id, "Registering deposit on Tempo");
-                    if let Err(e) = tempo_client
-                        .register_deposit(
-                            deposit.origin_chain_id,
-                            deposit.origin_escrow,
-                            deposit.origin_token,
-                            deposit.tx_hash,
-                            deposit.log_index,
-                            deposit.tempo_recipient,
-                            deposit.amount,
-                            deposit.block_number,
-                        )
-                        .await
-                    {
-                        // Another validator may have registered it, continue
-                        debug!(%request_id, error = %e, "Could not register deposit");
-                    }
-                }
+            Ok(existing)
+                if existing.status
+                    == tempo_contracts::precompiles::IBridge::DepositStatus::Finalized =>
+            {
+                debug!(%request_id, "Deposit already finalized");
+                return Ok(());
             }
-            Err(_) => {
-                // Register the deposit
-                info!(%request_id, "Registering deposit on Tempo");
-                if let Err(e) = tempo_client
-                    .register_deposit(
-                        deposit.origin_chain_id,
-                        deposit.origin_escrow,
-                        deposit.origin_token,
-                        deposit.tx_hash,
-                        deposit.log_index,
-                        deposit.tempo_recipient,
-                        deposit.amount,
-                        deposit.block_number,
-                    )
-                    .await
-                {
-                    warn!(%request_id, error = %e, "Failed to register deposit");
-                }
+            _ => {}
+        }
+
+        // Check L1 finality before signing attestation
+        match self.is_deposit_l1_finalized(&deposit).await {
+            Ok(true) => {
+                debug!(
+                    %request_id,
+                    block = deposit.block_number,
+                    "Deposit L1 block is finalized, proceeding to sign"
+                );
+            }
+            Ok(false) => {
+                info!(
+                    %request_id,
+                    block = deposit.block_number,
+                    origin_chain = deposit.origin_chain_id,
+                    "Deposit L1 block not yet finalized, deferring attestation"
+                );
+                self.metrics.record_deposit_pending_finality();
+                self.metrics.record_deposit_deferred_for_finality();
+
+                // Queue for later retry
+                self.pending_finality_deposits
+                    .lock()
+                    .unwrap()
+                    .push_back(deposit);
+                return Ok(());
+            }
+            Err(e) => {
+                warn!(
+                    %request_id,
+                    error = %e,
+                    "Failed to check L1 finality, deferring attestation"
+                );
+                self.metrics.record_deposit_deferred_for_finality();
+
+                // Queue for later retry on error
+                self.pending_finality_deposits
+                    .lock()
+                    .unwrap()
+                    .push_back(deposit);
+                return Ok(());
             }
         }
+
+        // Get the current validator set hash (must match what precompile computes)
+        let validator_set_hash = match tempo_client.compute_validator_set_hash().await {
+            Ok(hash) => hash,
+            Err(e) => {
+                error!(%request_id, error = %e, "Failed to compute validator set hash");
+                return Ok(());
+            }
+        };
+
+        // Compute the attestation digest (must match precompile computation)
+        let tempo_chain_id = self.config.tempo_chain_id;
+        let digest = crate::signer::compute_deposit_attestation_digest(
+            tempo_chain_id,
+            tempo_contracts::precompiles::BRIDGE_ADDRESS,
+            request_id,
+            deposit.origin_chain_id,
+            deposit.origin_escrow,
+            deposit.origin_token,
+            deposit.tx_hash,
+            deposit.log_index,
+            deposit.tempo_recipient,
+            deposit.amount,
+            deposit.block_number,
+            validator_set_hash,
+        );
+
+        // Sign the attestation
+        let signature = match signer.sign_hash(&digest).await {
+            Ok(sig) => sig,
+            Err(e) => {
+                self.metrics.record_signature_failure();
+                error!(%request_id, error = %e, "Failed to sign deposit attestation");
+                return Ok(());
+            }
+        };
 
         info!(
             request_id = %request_id,
             validator = %signer.address(),
-            "Submitting deposit vote to bridge precompile"
+            "Signed deposit attestation, submitting registerAndFinalizeWithSignatures"
         );
 
-        // Submit vote to bridge precompile
-        // Security model: The validator's vote is authenticated by the transaction sender address.
-        // No separate signature is required because submitting this transaction from a registered
-        // validator address already proves the validator's intent to vote for this deposit.
-        match tempo_client.submit_deposit_vote(request_id).await
+        // Submit signature via registerAndFinalizeWithSignatures
+        // In a multi-validator setup, we'd collect signatures from other validators first.
+        // For now (single validator dev mode), we submit our signature directly.
+        match tempo_client
+            .register_and_finalize_with_signatures(
+                deposit.origin_chain_id,
+                deposit.origin_escrow,
+                deposit.origin_token,
+                deposit.tx_hash,
+                deposit.log_index,
+                deposit.tempo_recipient,
+                deposit.amount,
+                deposit.block_number,
+                vec![signature.clone()],
+            )
+            .await
         {
-            Ok(tx_hash) => {
-                if !tx_hash.is_zero() {
-                    self.metrics.record_signature_success();
-                    self.metrics.record_deposit_signed();
-                    info!(%request_id, %tx_hash, "Deposit signature submitted");
+            Ok(finalized_request_id) => {
+                self.metrics.record_signature_success();
+                self.metrics.record_deposit_signed();
+                self.metrics.record_deposit_finalized();
+                self.metrics.record_deposit_signed_after_finality();
+                info!(
+                    %request_id,
+                    finalized = %finalized_request_id,
+                    "Deposit registered and finalized with signature!"
+                );
 
-                    // Record in persistent state
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
+                // Record in persistent state
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
 
-                    if let Err(e) = self
-                        .state_manager
-                        .record_signed_deposit(SignedDeposit {
-                            request_id,
-                            origin_chain_id: deposit.origin_chain_id,
-                            origin_tx_hash: deposit.tx_hash,
-                            tempo_recipient: deposit.tempo_recipient,
-                            amount: deposit.amount,
-                            signature_tx_hash: tx_hash,
-                            signed_at: now,
-                        })
-                        .await
-                    {
-                        warn!(%request_id, error = %e, "Failed to persist signed deposit");
-                    }
+                if let Err(e) = self
+                    .state_manager
+                    .record_signed_deposit(SignedDeposit {
+                        request_id,
+                        origin_chain_id: deposit.origin_chain_id,
+                        origin_tx_hash: deposit.tx_hash,
+                        tempo_recipient: deposit.tempo_recipient,
+                        amount: deposit.amount,
+                        signature_tx_hash: finalized_request_id, // Using request_id as tx ref
+                        signed_at: now,
+                    })
+                    .await
+                {
+                    warn!(%request_id, error = %e, "Failed to persist signed deposit");
+                }
 
-                    // Try to finalize if threshold reached
-                    if let Ok(Some(finalize_tx)) =
-                        tempo_client.try_finalize_deposit(request_id).await
-                    {
-                        self.metrics.record_deposit_finalized();
-                        info!(%request_id, tx_hash = %finalize_tx, "Deposit finalized!");
-
-                        // Mark as finalized in state
-                        if let Err(e) = self.state_manager.mark_deposit_finalized(request_id).await
-                        {
-                            warn!(%request_id, error = %e, "Failed to mark deposit finalized");
-                        }
-                    }
+                // Mark as finalized
+                if let Err(e) = self.state_manager.mark_deposit_finalized(request_id).await {
+                    warn!(%request_id, error = %e, "Failed to mark deposit finalized");
                 }
             }
             Err(e) => {
                 self.metrics.record_signature_failure();
-                error!(%request_id, error = %e, "Failed to submit deposit signature");
+                error!(%request_id, error = %e, "Failed to submit deposit with signature");
             }
         }
 

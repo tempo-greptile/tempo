@@ -12,7 +12,7 @@ use crate::{
     error::{Result, TempoPrecompileError},
     storage::{Handler, Mapping},
 };
-use alloy::primitives::{Address, B256};
+use alloy::primitives::{keccak256, Address, B256};
 use tracing::trace;
 
 /// Validator information
@@ -317,6 +317,36 @@ impl ValidatorConfig {
         self.check_owner(sender)?;
         self.next_dkg_ceremony.write(call.epoch)
     }
+
+    /// Compute a hash of the current active validator set.
+    ///
+    /// This is used in deposit attestation digests to bind signatures to a specific
+    /// validator set, preventing threshold manipulation during validator set transitions.
+    ///
+    /// The hash is computed as:
+    /// `keccak256(sorted_active_validator_addresses)`
+    ///
+    /// Addresses are sorted to ensure deterministic ordering regardless of the order
+    /// validators were added.
+    pub fn compute_validator_set_hash(&self) -> Result<B256> {
+        let validators = self.get_validators()?;
+        let mut active_addresses: Vec<Address> = validators
+            .iter()
+            .filter(|v| v.active)
+            .map(|v| v.validatorAddress)
+            .collect();
+
+        // Sort for deterministic ordering
+        active_addresses.sort();
+
+        // Compute hash of concatenated addresses
+        let mut buf = Vec::with_capacity(active_addresses.len() * 20);
+        for addr in &active_addresses {
+            buf.extend_from_slice(addr.as_slice());
+        }
+
+        Ok(keccak256(&buf))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -336,7 +366,7 @@ pub fn ensure_address_is_ip_port(input: &str) -> core::result::Result<(), IpWith
 mod tests {
     use super::*;
     use crate::storage::{StorageCtx, hashmap::HashMapStorageProvider};
-    use alloy::primitives::Address;
+    use alloy::primitives::{address, Address};
     use alloy_primitives::FixedBytes;
 
     #[test]
@@ -1043,6 +1073,98 @@ mod tests {
                 .into()),
                 "Should reject deactivating below minimum validators"
             );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_compute_validator_set_hash() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let owner = Address::random();
+        StorageCtx::enter(&mut storage, || {
+            let mut validator_config = ValidatorConfig::new();
+            validator_config.initialize(owner)?;
+
+            // Add validators in non-sorted order (need 4 to be able to deactivate one and stay above MIN_VALIDATORS=3)
+            let validator_a = address!("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+            let validator_c = address!("cccccccccccccccccccccccccccccccccccccccc");
+            let validator_b = address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+            let validator_d = address!("dddddddddddddddddddddddddddddddddddddddd");
+
+            validator_config.add_validator(
+                owner,
+                IValidatorConfig::addValidatorCall {
+                    newValidatorAddress: validator_c,
+                    publicKey: FixedBytes::<32>::from([0x03; 32]),
+                    inboundAddress: "192.168.1.3:8000".to_string(),
+                    active: true,
+                    outboundAddress: "192.168.1.3:9000".to_string(),
+                },
+            )?;
+            validator_config.add_validator(
+                owner,
+                IValidatorConfig::addValidatorCall {
+                    newValidatorAddress: validator_a,
+                    publicKey: FixedBytes::<32>::from([0x01; 32]),
+                    inboundAddress: "192.168.1.1:8000".to_string(),
+                    active: true,
+                    outboundAddress: "192.168.1.1:9000".to_string(),
+                },
+            )?;
+            validator_config.add_validator(
+                owner,
+                IValidatorConfig::addValidatorCall {
+                    newValidatorAddress: validator_b,
+                    publicKey: FixedBytes::<32>::from([0x02; 32]),
+                    inboundAddress: "192.168.1.2:8000".to_string(),
+                    active: true,
+                    outboundAddress: "192.168.1.2:9000".to_string(),
+                },
+            )?;
+            validator_config.add_validator(
+                owner,
+                IValidatorConfig::addValidatorCall {
+                    newValidatorAddress: validator_d,
+                    publicKey: FixedBytes::<32>::from([0x04; 32]),
+                    inboundAddress: "192.168.1.4:8000".to_string(),
+                    active: true,
+                    outboundAddress: "192.168.1.4:9000".to_string(),
+                },
+            )?;
+
+            // Compute hash
+            let hash = validator_config.compute_validator_set_hash()?;
+
+            // Compute expected hash manually (sorted: a, b, c, d)
+            let mut buf = Vec::with_capacity(80);
+            buf.extend_from_slice(validator_a.as_slice());
+            buf.extend_from_slice(validator_b.as_slice());
+            buf.extend_from_slice(validator_c.as_slice());
+            buf.extend_from_slice(validator_d.as_slice());
+            let expected = keccak256(&buf);
+
+            assert_eq!(hash, expected, "Validator set hash should match sorted order");
+
+            // Deactivate one validator and verify hash changes
+            validator_config.change_validator_status(
+                owner,
+                IValidatorConfig::changeValidatorStatusCall {
+                    validator: validator_b,
+                    active: false,
+                },
+            )?;
+
+            let hash_after = validator_config.compute_validator_set_hash()?;
+            assert_ne!(hash, hash_after, "Hash should change when validator is deactivated");
+
+            // Verify the new hash only includes active validators (a, c, d)
+            let mut buf = Vec::with_capacity(60);
+            buf.extend_from_slice(validator_a.as_slice());
+            buf.extend_from_slice(validator_c.as_slice());
+            buf.extend_from_slice(validator_d.as_slice());
+            let expected_after = keccak256(&buf);
+            assert_eq!(hash_after, expected_after, "Hash should only include active validators");
 
             Ok(())
         })

@@ -449,6 +449,28 @@ contract BridgeTest is Test {
         assertTrue(available || !available);
     }
 
+    function test_BLSVerificationWithStandardHashToCurve() public {
+        if (!lightClient.isBLSAvailable()) return;
+
+        // Standard hash-to-curve test vectors (commonware-compatible)
+        // Generated with: cargo run -p tempo-bridge-exex --bin generate-bls-test-vectors -- --commonware
+        bytes memory pubkey = hex"00000000000000000000000000000000058b3e8b9fc9552e30787cb4a541a1c3bf67a02e91fc648b2c19f4bb333e14c5c73b9bfbc5ec56dadabb07ff15d45124000000000000000000000000000000001772c16106e9c70b2073dfe17989225dd10f3adb675365fc6d833587ad4cbd3ae692ad1e20679003f676b0b089e83feb00000000000000000000000000000000007716a86bd9db89662f87a026604bb85fd531599681071feddab5f40869ea036145f6bcf138e67b986361ce25d9c63c0000000000000000000000000000000006a63710dada90a4ab7b4c89b64cc2f94dc2e77dd6dc77b0b0653620bee399d05a27aea1c12e96540a80aad355af3d40";
+        bytes memory sig = hex"0000000000000000000000000000000016e3720f3e9d86d2266e16aba54b920b53a72f991109f5507cbe915d4ad01a754d6bd4d1ed46ee46b66e28950a6a69740000000000000000000000000000000007b639420728757d57e6529e7e755ddd44b521eb141f60a9dd9449e2770a4a436e35d97fe28355215d59c5bb194128b6";
+        bytes32 msgHash = hex"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+
+        // Verify using standard hash-to-curve (matches commonware-cryptography)
+        bool valid = BLS12381.verifyStandard(sig, pubkey, msgHash);
+        assertTrue(valid, "Standard hash-to-curve BLS verification should pass");
+    }
+
+    function test_HashToG1StandardProducesValidPoint() public {
+        if (!lightClient.isBLSAvailable()) return;
+
+        bytes32 msgHash = hex"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        bytes memory hashedMessage = BLS12381.hashToG1Standard(msgHash);
+        assertEq(hashedMessage.length, 128, "Hash to G1 should return 128-byte point");
+    }
+
     function test_SwitchToBLSMode() public {
         // If precompiles are available, switch should succeed
         // If not, it should revert
@@ -509,7 +531,7 @@ contract BridgeTest is Test {
 
         // Submit header with BLS signature - reverts during BLS verification
         // (either at hash-to-G1 or pairing check depending on precompile behavior)
-        vm.expectRevert(BLS12381.BLSHashToG1Failed.selector);
+        vm.expectRevert(BLS12381.BLSPrecompileCallFailed.selector);
         lightClient.submitHeader(height, parentHash, stateRoot, receiptsRoot, epoch, blsSignature);
     }
 
@@ -538,9 +560,9 @@ contract BridgeTest is Test {
         vm.expectRevert(TempoLightClient.InvalidBLSSignatureLength.selector);
         lightClient.submitHeader(height, parentHash, stateRoot, receiptsRoot, epoch, wrongLengthSig);
 
-        // Correct length but invalid signature - fails at hash-to-G1 step
+        // Correct length but invalid signature - fails during BLS verification
         bytes memory invalidSig = new bytes(128);
-        vm.expectRevert(BLS12381.BLSHashToG1Failed.selector);
+        vm.expectRevert(BLS12381.BLSPrecompileCallFailed.selector);
         lightClient.submitHeader(height, parentHash, stateRoot, receiptsRoot, epoch, invalidSig);
     }
 

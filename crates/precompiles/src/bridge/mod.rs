@@ -84,8 +84,19 @@ use crate::{
 use alloy::primitives::{Address, B256, U256, keccak256};
 use tracing::trace;
 
+/// Half of the secp256k1 curve order (n/2).
+/// Signatures with s > SECP256K1_N_DIV_2 are considered "high-s" and rejected
+/// to prevent signature malleability (BIP-62).
+const SECP256K1_N_DIV_2: U256 = U256::from_be_slice(&[
+    0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D, 0xDF, 0xE9, 0x2F, 0x46, 0x68, 0x1B, 0x20, 0xA0,
+]);
+
 /// Domain separator for burn requests
 pub const BURN_DOMAIN: &[u8] = b"TEMPO_BRIDGE_BURN_V1";
+
+/// Domain separator for deposit attestations
+pub const DEPOSIT_ATTESTATION_DOMAIN: &[u8] = b"TEMPO_BRIDGE_DEPOSIT_V2";
 
 /// Deposit status constants matching Solidity enum
 /// None = 0, Registered = 1, Finalized = 2
@@ -515,6 +526,250 @@ impl Bridge {
         call: IBridge::hasValidatorSignedDepositCall,
     ) -> Result<bool> {
         self.deposit_signatures[call.requestId][call.validator].read()
+    }
+
+    /// Compute the digest that validators sign for deposit attestations.
+    ///
+    /// Domain separation includes:
+    /// - Domain tag: "TEMPO_BRIDGE_DEPOSIT_V2"
+    /// - Tempo chain ID: prevents replay across different Tempo networks
+    /// - Bridge address: binds attestation to specific bridge contract
+    /// - Request ID: the canonical deposit identifier
+    /// - All deposit fields: ensures attestation is for this exact deposit
+    /// - Validator set hash: binds signatures to a specific validator set,
+    ///   preventing threshold manipulation during validator set transitions
+    ///
+    /// IMPORTANT: This formula must match the signer implementation in bridge-exex.
+    pub fn compute_deposit_attestation_digest(
+        tempo_chain_id: u64,
+        request_id: B256,
+        origin_chain_id: u64,
+        origin_escrow: Address,
+        origin_token: Address,
+        origin_tx_hash: B256,
+        origin_log_index: u32,
+        tempo_recipient: Address,
+        amount: u64,
+        origin_block_number: u64,
+        validator_set_hash: B256,
+    ) -> B256 {
+        let mut buf = Vec::with_capacity(
+            DEPOSIT_ATTESTATION_DOMAIN.len() + 8 + 20 + 32 + 8 + 20 + 20 + 32 + 4 + 20 + 8 + 8 + 32,
+        );
+        buf.extend_from_slice(DEPOSIT_ATTESTATION_DOMAIN);
+        buf.extend_from_slice(&tempo_chain_id.to_be_bytes());
+        buf.extend_from_slice(BRIDGE_ADDRESS.as_slice());
+        buf.extend_from_slice(request_id.as_slice());
+        buf.extend_from_slice(&origin_chain_id.to_be_bytes());
+        buf.extend_from_slice(origin_escrow.as_slice());
+        buf.extend_from_slice(origin_token.as_slice());
+        buf.extend_from_slice(origin_tx_hash.as_slice());
+        buf.extend_from_slice(&origin_log_index.to_be_bytes());
+        buf.extend_from_slice(tempo_recipient.as_slice());
+        buf.extend_from_slice(&amount.to_be_bytes());
+        buf.extend_from_slice(&origin_block_number.to_be_bytes());
+        buf.extend_from_slice(validator_set_hash.as_slice());
+        keccak256(&buf)
+    }
+
+    /// Register and finalize a deposit in one call with bundled validator signatures.
+    ///
+    /// This is the preferred method for bridge operation. Instead of each validator
+    /// submitting separate vote transactions (which costs them gas), validators sign
+    /// attestations off-chain and a single caller submits all signatures at once.
+    ///
+    /// The caller does NOT need to be a validator - they are just relaying signatures.
+    /// Each signature is verified via ecrecover against active validators.
+    ///
+    /// # Security Model
+    ///
+    /// - Each signature is verified against the deposit attestation digest
+    /// - Only signatures from active validators are counted
+    /// - Duplicate signatures from the same validator are ignored
+    /// - Finalization requires 2/3+ of active validators
+    pub fn register_and_finalize_with_signatures(
+        &mut self,
+        _sender: Address,
+        call: IBridge::registerAndFinalizeWithSignaturesCall,
+    ) -> Result<B256> {
+        self.check_not_paused()?;
+
+        // Validate inputs
+        if call.amount == 0 {
+            return Err(BridgeError::zero_amount().into());
+        }
+        if call.tempoRecipient == Address::ZERO {
+            return Err(BridgeError::invalid_recipient().into());
+        }
+
+        // Get token mapping
+        let key = Self::token_mapping_key(call.originChainId, call.originToken);
+        let mapping = self.token_mappings[key].read()?;
+        if !mapping.active {
+            return Err(BridgeError::token_mapping_not_found().into());
+        }
+
+        // Compute canonical request ID
+        let request_id = Self::compute_request_id(
+            call.originChainId,
+            call.originEscrow,
+            call.originTxHash,
+            call.originLogIndex,
+        );
+
+        // Check if already finalized - return success to be idempotent
+        let existing = self.deposits[request_id].read()?;
+        if existing.status == DEPOSIT_STATUS_FINALIZED {
+            return Ok(request_id);
+        }
+
+        // Get active validators and compute validator set hash
+        let validator_config = ValidatorConfig::new();
+        let validators = validator_config.get_validators()?;
+        let active_validators: std::collections::HashSet<Address> = validators
+            .iter()
+            .filter(|v| v.active)
+            .map(|v| v.validatorAddress)
+            .collect();
+        let active_count = active_validators.len() as u64;
+
+        if active_count == 0 {
+            return Err(BridgeError::threshold_not_reached().into());
+        }
+
+        let threshold = (active_count * 2).div_ceil(3).max(1);
+
+        // Compute validator set hash for the current active set
+        let validator_set_hash = validator_config.compute_validator_set_hash()?;
+
+        // Compute attestation digest (includes validator_set_hash to bind to this validator set)
+        let tempo_chain_id = self.storage.chain_id();
+        let digest = Self::compute_deposit_attestation_digest(
+            tempo_chain_id,
+            request_id,
+            call.originChainId,
+            call.originEscrow,
+            call.originToken,
+            call.originTxHash,
+            call.originLogIndex,
+            call.tempoRecipient,
+            call.amount,
+            call.originBlockNumber,
+            validator_set_hash,
+        );
+
+        // Verify signatures and count unique valid validators
+        let mut signed_validators = std::collections::HashSet::new();
+
+        for sig_bytes in &call.signatures {
+            if sig_bytes.len() != 65 {
+                trace!("Invalid signature length: {}", sig_bytes.len());
+                continue;
+            }
+
+            // Verify signature has low-s (prevent malleability per BIP-62)
+            // s value is bytes 32..64 of the 65-byte signature
+            let s = U256::from_be_slice(&sig_bytes[32..64]);
+            if s > SECP256K1_N_DIV_2 {
+                trace!("Signature has high-s value, rejecting for malleability protection");
+                continue;
+            }
+
+            // Parse signature (r: 32 bytes, s: 32 bytes, v: 1 byte)
+            let sig = match alloy::primitives::Signature::try_from(sig_bytes.as_ref()) {
+                Ok(s) => s,
+                Err(e) => {
+                    trace!("Failed to parse signature: {}", e);
+                    continue;
+                }
+            };
+
+            // Recover signer address
+            let signer = match sig.recover_address_from_prehash(&digest) {
+                Ok(addr) => addr,
+                Err(e) => {
+                    trace!("Failed to recover signer: {}", e);
+                    continue;
+                }
+            };
+
+            // Check if signer is an active validator
+            if active_validators.contains(&signer) {
+                signed_validators.insert(signer);
+            } else {
+                trace!(%signer, "Signer is not an active validator");
+            }
+        }
+
+        let voting_power = signed_validators.len() as u64;
+        trace!(
+            %request_id,
+            voting_power,
+            threshold,
+            "Verified {} valid validator signatures",
+            signed_validators.len()
+        );
+
+        if voting_power < threshold {
+            return Err(BridgeError::threshold_not_reached().into());
+        }
+
+        // Register deposit if not already registered
+        if existing.status == DEPOSIT_STATUS_NONE {
+            let deposit = DepositRequest {
+                origin_chain_id: call.originChainId,
+                origin_escrow: call.originEscrow,
+                origin_token: call.originToken,
+                origin_tx_hash: call.originTxHash,
+                origin_log_index: call.originLogIndex,
+                tempo_recipient: call.tempoRecipient,
+                amount: call.amount,
+                origin_block_number: call.originBlockNumber,
+                tempo_tip20: mapping.tempo_tip20,
+                voting_power_signed: voting_power,
+                status: DEPOSIT_STATUS_FINALIZED,
+            };
+            self.deposits[request_id].write(deposit.clone())?;
+
+            self.emit_event(IBridge::DepositRegistered {
+                requestId: request_id,
+                originChainId: call.originChainId,
+                originToken: call.originToken,
+                originTxHash: call.originTxHash,
+                tempoRecipient: call.tempoRecipient,
+                amount: call.amount,
+            })?;
+        } else {
+            // Update existing deposit to finalized
+            let mut deposit = existing;
+            deposit.voting_power_signed = voting_power;
+            deposit.status = DEPOSIT_STATUS_FINALIZED;
+            self.deposits[request_id].write(deposit)?;
+        }
+
+        // Record signatures (for auditability)
+        for validator in &signed_validators {
+            self.deposit_signatures[request_id][*validator].write(true)?;
+        }
+
+        // Mint TIP-20 tokens
+        let mut tip20 = TIP20Token::from_address(mapping.tempo_tip20)?;
+        tip20.mint(
+            self.address,
+            tempo_contracts::precompiles::ITIP20::mintCall {
+                to: call.tempoRecipient,
+                amount: U256::from(call.amount),
+            },
+        )?;
+
+        self.emit_event(IBridge::DepositFinalized {
+            requestId: request_id,
+            tempoTip20: mapping.tempo_tip20,
+            recipient: call.tempoRecipient,
+            amount: call.amount,
+        })?;
+
+        Ok(request_id)
     }
 
     /// Compute burn ID
