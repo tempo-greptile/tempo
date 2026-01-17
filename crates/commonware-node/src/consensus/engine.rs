@@ -308,6 +308,7 @@ where
             context.with_label("feed"),
             marshal_mailbox.clone(),
             self.feed_state,
+            scheme_provider.clone(),
         );
 
         let (executor, executor_mailbox) = crate::executor::init(
