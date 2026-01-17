@@ -3,15 +3,15 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use crate::abi::{ITIP20, ITIP20Factory, ITIP403Registry, ITipFeeManager, IValidatorConfig};
+use crate::abi::{
+    IAccountKeychain, ITIP20, ITIP20Factory, ITIP403Registry, ITipFeeManager, IValidatorConfig,
+};
 use alloy::{
     primitives::{Selector, U256},
     sol_types::{Panic, PanicKind, SolError, SolInterface},
 };
 use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileResult};
-use tempo_contracts::precompiles::{
-    AccountKeychainError, NonceError, StablecoinDEXError, UnknownFunctionSelector,
-};
+use tempo_contracts::precompiles::{NonceError, StablecoinDEXError, UnknownFunctionSelector};
 
 /// Top-level error type for all Tempo precompile operations
 #[derive(
@@ -32,7 +32,7 @@ pub enum TempoPrecompileError {
 
     /// Error from 403 registry
     #[error("TIP403 registry error: {0:?}")]
-    TIP403RegistryError(ITIP403Registry::Error),
+    TIP403Registry(ITIP403Registry::Error),
 
     /// Error from TIP fee manager
     #[error("TIP fee manager error: {0:?}")]
@@ -40,18 +40,18 @@ pub enum TempoPrecompileError {
 
     /// Error from Tempo Transaction nonce manager
     #[error("Tempo Transaction nonce error: {0:?}")]
-    NonceError(NonceError),
+    Nonce(NonceError),
 
     #[error("Panic({0:?})")]
     Panic(PanicKind),
 
     /// Error from validator config
     #[error("Validator config error: {0:?}")]
-    ValidatorConfigError(IValidatorConfig::Error),
+    ValidatorConfig(IValidatorConfig::Error),
 
     /// Error from account keychain precompile
     #[error("Account keychain error: {0:?}")]
-    AccountKeychainError(AccountKeychainError),
+    AccountKeychain(IAccountKeychain::Error),
 
     #[error("Gas limit exceeded")]
     OutOfGas,
@@ -81,9 +81,9 @@ impl TempoPrecompileError {
             Self::StablecoinDEX(e) => e.abi_encode().into(),
             Self::TIP20(e) => e.abi_encode().into(),
             Self::TIP20Factory(e) => e.abi_encode().into(),
-            Self::TIP403RegistryError(e) => e.abi_encode().into(),
+            Self::TIP403Registry(e) => e.abi_encode().into(),
             Self::TipFeeManager(e) => e.abi_encode().into(),
-            Self::NonceError(e) => e.abi_encode().into(),
+            Self::Nonce(e) => e.abi_encode().into(),
             Self::Panic(kind) => {
                 let panic = Panic {
                     code: U256::from(kind as u32),
@@ -91,8 +91,8 @@ impl TempoPrecompileError {
 
                 panic.abi_encode().into()
             }
-            Self::ValidatorConfigError(e) => e.abi_encode().into(),
-            Self::AccountKeychainError(e) => e.abi_encode().into(),
+            Self::ValidatorConfig(e) => e.abi_encode().into(),
+            Self::AccountKeychain(e) => e.abi_encode().into(),
             Self::OutOfGas => {
                 return Err(PrecompileError::OutOfGas);
             }
@@ -148,11 +148,11 @@ pub fn error_decoder_registry() -> TempoPrecompileErrorRegistry {
     add_errors_to_registry(&mut registry, TempoPrecompileError::StablecoinDEX);
     add_errors_to_registry(&mut registry, TempoPrecompileError::TIP20);
     add_errors_to_registry(&mut registry, TempoPrecompileError::TIP20Factory);
-    add_errors_to_registry(&mut registry, TempoPrecompileError::TIP403RegistryError);
+    add_errors_to_registry(&mut registry, TempoPrecompileError::TIP403Registry);
     add_errors_to_registry(&mut registry, TempoPrecompileError::TipFeeManager);
-    add_errors_to_registry(&mut registry, TempoPrecompileError::NonceError);
-    add_errors_to_registry(&mut registry, TempoPrecompileError::ValidatorConfigError);
-    add_errors_to_registry(&mut registry, TempoPrecompileError::AccountKeychainError);
+    add_errors_to_registry(&mut registry, TempoPrecompileError::Nonce);
+    add_errors_to_registry(&mut registry, TempoPrecompileError::ValidatorConfig);
+    add_errors_to_registry(&mut registry, TempoPrecompileError::AccountKeychain);
 
     registry
 }

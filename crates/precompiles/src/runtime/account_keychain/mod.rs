@@ -1,21 +1,12 @@
-pub mod dispatch;
+use alloy::primitives::{Address, B256, U256};
+use tempo_precompiles_macros::{Storable, contract};
 
-use tempo_contracts::precompiles::{AccountKeychainError, AccountKeychainEvent};
-pub use tempo_contracts::precompiles::{
-    IAccountKeychain,
-    IAccountKeychain::{
-        KeyInfo, SignatureType, TokenLimit, authorizeKeyCall, getKeyCall, getRemainingLimitCall,
-        getTransactionKeyCall, revokeKeyCall, updateSpendingLimitCall,
-    },
-};
-
+pub use crate::abi::{IAccountKeychain::prelude::*, ACCOUNT_KEYCHAIN_ADDRESS};
 use crate::{
-    ACCOUNT_KEYCHAIN_ADDRESS,
+    abi::account_keychain::abi,
     error::Result,
     storage::{Handler, Mapping},
 };
-use alloy::primitives::{Address, B256, U256};
-use tempo_precompiles_macros::{Storable, contract};
 
 /// Key information stored in the precompile
 ///
@@ -53,7 +44,7 @@ impl AuthorizedKey {
 }
 
 /// Account Keychain contract for managing authorized keys
-#[contract(addr = ACCOUNT_KEYCHAIN_ADDRESS)]
+#[contract(addr = ACCOUNT_KEYCHAIN_ADDRESS, abi, dispatch)]
 pub struct AccountKeychain {
     // keys[account][keyId] -> AuthorizedKey
     keys: Mapping<Address, Mapping<Address, AuthorizedKey>>,
@@ -83,200 +74,6 @@ impl AccountKeychain {
     /// Initializes the account keychain contract.
     pub fn initialize(&mut self) -> Result<()> {
         self.__initialize()
-    }
-
-    /// Authorize a new key for an account
-    /// This can only be called by the account itself (using main key)
-    pub fn authorize_key(&mut self, msg_sender: Address, call: authorizeKeyCall) -> Result<()> {
-        // Check that the transaction key for this transaction is zero (main key)
-        let transaction_key = self.transaction_key.t_read()?;
-
-        // If transaction_key is not zero, it means a secondary key is being used
-        if transaction_key != Address::ZERO {
-            return Err(AccountKeychainError::unauthorized_caller().into());
-        }
-
-        // Validate inputs
-        if call.keyId == Address::ZERO {
-            return Err(AccountKeychainError::zero_public_key().into());
-        }
-
-        // Check if key already exists (key exists if expiry > 0)
-        let existing_key = self.keys[msg_sender][call.keyId].read()?;
-        if existing_key.expiry > 0 {
-            return Err(AccountKeychainError::key_already_exists().into());
-        }
-
-        // Check if this key was previously revoked - prevents replay attacks
-        if existing_key.is_revoked {
-            return Err(AccountKeychainError::key_already_revoked().into());
-        }
-
-        // Convert SignatureType enum to u8 for storage
-        let signature_type = match call.signatureType {
-            SignatureType::Secp256k1 => 0,
-            SignatureType::P256 => 1,
-            SignatureType::WebAuthn => 2,
-            _ => return Err(AccountKeychainError::invalid_signature_type().into()),
-        };
-
-        // Create and store the new key
-        let new_key = AuthorizedKey {
-            signature_type,
-            expiry: call.expiry,
-            enforce_limits: call.enforceLimits,
-            is_revoked: false,
-        };
-
-        self.keys[msg_sender][call.keyId].write(new_key)?;
-
-        // Set initial spending limits (only if enforce_limits is true)
-        if call.enforceLimits {
-            let limit_key = Self::spending_limit_key(msg_sender, call.keyId);
-            for limit in call.limits {
-                self.spending_limits[limit_key][limit.token].write(limit.amount)?;
-            }
-        }
-
-        // Emit event
-        self.emit_event(AccountKeychainEvent::KeyAuthorized(
-            IAccountKeychain::KeyAuthorized {
-                account: msg_sender,
-                publicKey: call.keyId,
-                signatureType: signature_type,
-                expiry: call.expiry,
-            },
-        ))
-    }
-
-    /// Revoke an authorized key
-    ///
-    /// This marks the key as revoked by setting is_revoked to true and expiry to 0.
-    /// Once revoked, a key_id can never be re-authorized for this account, preventing
-    /// replay attacks where old KeyAuthorization signatures could be reused.
-    pub fn revoke_key(&mut self, msg_sender: Address, call: revokeKeyCall) -> Result<()> {
-        let transaction_key = self.transaction_key.t_read()?;
-
-        if transaction_key != Address::ZERO {
-            return Err(AccountKeychainError::unauthorized_caller().into());
-        }
-
-        let key = self.keys[msg_sender][call.keyId].read()?;
-
-        // Key exists if expiry > 0
-        if key.expiry == 0 {
-            return Err(AccountKeychainError::key_not_found().into());
-        }
-
-        // Mark the key as revoked - this prevents replay attacks by ensuring
-        // the same key_id can never be re-authorized for this account.
-        // We keep is_revoked=true but clear other fields.
-        let revoked_key = AuthorizedKey {
-            is_revoked: true,
-            ..Default::default()
-        };
-        self.keys[msg_sender][call.keyId].write(revoked_key)?;
-
-        // Note: We don't clear spending limits here - they become inaccessible
-
-        // Emit event
-        self.emit_event(AccountKeychainEvent::KeyRevoked(
-            IAccountKeychain::KeyRevoked {
-                account: msg_sender,
-                publicKey: call.keyId,
-            },
-        ))
-    }
-
-    /// Update spending limit for a key-token pair
-    ///
-    /// This can be used to add limits to an unlimited key (converting it to limited)
-    /// or to update existing limits.
-    pub fn update_spending_limit(
-        &mut self,
-        msg_sender: Address,
-        call: updateSpendingLimitCall,
-    ) -> Result<()> {
-        let transaction_key = self.transaction_key.t_read()?;
-
-        if transaction_key != Address::ZERO {
-            return Err(AccountKeychainError::unauthorized_caller().into());
-        }
-
-        // Verify key exists, hasn't been revoked, and hasn't expired
-        let mut key = self.load_active_key(msg_sender, call.keyId)?;
-
-        let current_timestamp = self.storage.timestamp().saturating_to::<u64>();
-        if current_timestamp >= key.expiry {
-            return Err(AccountKeychainError::key_expired().into());
-        }
-
-        // If this key had unlimited spending (enforce_limits=false), enable limits now
-        if !key.enforce_limits {
-            key.enforce_limits = true;
-            self.keys[msg_sender][call.keyId].write(key)?;
-        }
-
-        // Update the spending limit
-        let limit_key = Self::spending_limit_key(msg_sender, call.keyId);
-        self.spending_limits[limit_key][call.token].write(call.newLimit)?;
-
-        // Emit event
-        self.emit_event(AccountKeychainEvent::SpendingLimitUpdated(
-            IAccountKeychain::SpendingLimitUpdated {
-                account: msg_sender,
-                publicKey: call.keyId,
-                token: call.token,
-                newLimit: call.newLimit,
-            },
-        ))
-    }
-
-    /// Get key information
-    pub fn get_key(&self, call: getKeyCall) -> Result<KeyInfo> {
-        let key = self.keys[call.account][call.keyId].read()?;
-
-        // Key doesn't exist if expiry == 0, or key has been revoked
-        if key.expiry == 0 || key.is_revoked {
-            return Ok(KeyInfo {
-                signatureType: SignatureType::Secp256k1,
-                keyId: Address::ZERO,
-                expiry: 0,
-                enforceLimits: false,
-                isRevoked: key.is_revoked,
-            });
-        }
-
-        // Convert u8 signature_type to SignatureType enum
-        let signature_type = match key.signature_type {
-            0 => SignatureType::Secp256k1,
-            1 => SignatureType::P256,
-            2 => SignatureType::WebAuthn,
-            _ => SignatureType::Secp256k1, // Default fallback
-        };
-
-        Ok(KeyInfo {
-            signatureType: signature_type,
-            keyId: call.keyId,
-            expiry: key.expiry,
-            enforceLimits: key.enforce_limits,
-            isRevoked: key.is_revoked,
-        })
-    }
-
-    /// Get remaining spending limit
-    pub fn get_remaining_limit(&self, call: getRemainingLimitCall) -> Result<U256> {
-        let limit_key = Self::spending_limit_key(call.account, call.keyId);
-        self.spending_limits[limit_key][call.token].read()
-    }
-
-    /// Get the transaction key used in the current transaction
-    pub fn get_transaction_key(
-        &self,
-        _call: getTransactionKeyCall,
-        _msg_sender: Address,
-    ) -> Result<Address> {
-        self.transaction_key.t_read()
     }
 
     /// Internal: Set the transaction key (called during transaction validation)
@@ -313,11 +110,11 @@ impl AccountKeychain {
         let key = self.keys[account][key_id].read()?;
 
         if key.is_revoked {
-            return Err(AccountKeychainError::key_already_revoked().into());
+            return Err(abi::Error::key_already_revoked().into());
         }
 
         if key.expiry == 0 {
-            return Err(AccountKeychainError::key_not_found().into());
+            return Err(abi::Error::key_not_found().into());
         }
 
         Ok(key)
@@ -336,7 +133,7 @@ impl AccountKeychain {
         let key = self.load_active_key(account, key_id)?;
 
         if current_timestamp >= key.expiry {
-            return Err(AccountKeychainError::key_expired().into());
+            return Err(abi::Error::key_expired().into());
         }
 
         Ok(())
@@ -368,7 +165,7 @@ impl AccountKeychain {
         let remaining = self.spending_limits[limit_key][token].read()?;
 
         if amount > remaining {
-            return Err(AccountKeychainError::spending_limit_exceeded().into());
+            return Err(abi::Error::spending_limit_exceeded().into());
         }
 
         // Update remaining limit
@@ -464,6 +261,180 @@ impl AccountKeychain {
     }
 }
 
+impl IAccountKeychain for AccountKeychain {
+    /// Authorize a new key for an account.
+    /// This can only be called by the account itself (using main key).
+    fn authorize_key(
+        &mut self,
+        msg_sender: Address,
+        key_id: Address,
+        signature_type: SignatureType,
+        expiry: u64,
+        enforce_limits: bool,
+        limits: Vec<TokenLimit>,
+    ) -> Result<()> {
+        // Check that the transaction key for this transaction is zero (main key)
+        let transaction_key = self.transaction_key.t_read()?;
+
+        // If transaction_key is not zero, it means a secondary key is being used
+        if transaction_key != Address::ZERO {
+            return Err(abi::Error::unauthorized_caller().into());
+        }
+
+        // Validate inputs
+        if key_id == Address::ZERO {
+            return Err(abi::Error::zero_public_key().into());
+        }
+
+        // Check if key already exists (key exists if expiry > 0)
+        let existing_key = self.keys[msg_sender][key_id].read()?;
+        if existing_key.expiry > 0 {
+            return Err(abi::Error::key_already_exists().into());
+        }
+
+        // Check if this key was previously revoked - prevents replay attacks
+        if existing_key.is_revoked {
+            return Err(abi::Error::key_already_revoked().into());
+        }
+
+        // Convert SignatureType enum to u8 for storage
+        let sig_type_u8 = match signature_type {
+            SignatureType::Secp256k1 => 0,
+            SignatureType::P256 => 1,
+            SignatureType::WebAuthn => 2,
+        };
+
+        // Create and store the new key
+        let new_key = AuthorizedKey {
+            signature_type: sig_type_u8,
+            expiry,
+            enforce_limits,
+            is_revoked: false,
+        };
+
+        self.keys[msg_sender][key_id].write(new_key)?;
+
+        // Set initial spending limits (only if enforce_limits is true)
+        if enforce_limits {
+            let limit_key = Self::spending_limit_key(msg_sender, key_id);
+            for limit in limits {
+                self.spending_limits[limit_key][limit.token].write(limit.amount)?;
+            }
+        }
+
+        // Emit event
+        self.emit_event(abi::Event::key_authorized(msg_sender, key_id, sig_type_u8, expiry))
+    }
+
+    /// Revoke an authorized key.
+    ///
+    /// This marks the key as revoked by setting is_revoked to true and expiry to 0.
+    /// Once revoked, a key_id can never be re-authorized for this account, preventing
+    /// replay attacks where old KeyAuthorization signatures could be reused.
+    fn revoke_key(&mut self, msg_sender: Address, key_id: Address) -> Result<()> {
+        let transaction_key = self.transaction_key.t_read()?;
+
+        if transaction_key != Address::ZERO {
+            return Err(abi::Error::unauthorized_caller().into());
+        }
+
+        let key = self.keys[msg_sender][key_id].read()?;
+
+        // Key exists if expiry > 0
+        if key.expiry == 0 {
+            return Err(abi::Error::key_not_found().into());
+        }
+
+        // Mark the key as revoked - this prevents replay attacks by ensuring
+        // the same key_id can never be re-authorized for this account.
+        // We keep is_revoked=true but clear other fields.
+        let revoked_key = AuthorizedKey {
+            is_revoked: true,
+            ..Default::default()
+        };
+        self.keys[msg_sender][key_id].write(revoked_key)?;
+
+        // Note: We don't clear spending limits here - they become inaccessible
+
+        // Emit event
+        self.emit_event(abi::Event::key_revoked(msg_sender, key_id))
+    }
+
+    /// Update spending limit for a key-token pair.
+    ///
+    /// This can be used to add limits to an unlimited key (converting it to limited)
+    /// or to update existing limits.
+    fn update_spending_limit(
+        &mut self,
+        msg_sender: Address,
+        key_id: Address,
+        token: Address,
+        new_limit: U256,
+    ) -> Result<()> {
+        let transaction_key = self.transaction_key.t_read()?;
+
+        if transaction_key != Address::ZERO {
+            return Err(abi::Error::unauthorized_caller().into());
+        }
+
+        // Verify key exists, hasn't been revoked, and hasn't expired
+        let mut key = self.load_active_key(msg_sender, key_id)?;
+
+        let current_timestamp = self.storage.timestamp().saturating_to::<u64>();
+        if current_timestamp >= key.expiry {
+            return Err(abi::Error::key_expired().into());
+        }
+
+        // If this key had unlimited spending (enforce_limits=false), enable limits now
+        if !key.enforce_limits {
+            key.enforce_limits = true;
+            self.keys[msg_sender][key_id].write(key)?;
+        }
+
+        // Update the spending limit
+        let limit_key = Self::spending_limit_key(msg_sender, key_id);
+        self.spending_limits[limit_key][token].write(new_limit)?;
+
+        // Emit event
+        self.emit_event(abi::Event::spending_limit_updated(msg_sender, key_id, token, new_limit))
+    }
+
+    /// Get key information.
+    fn get_key(&self, account: Address, key_id: Address) -> Result<KeyInfo> {
+        let key = self.keys[account][key_id].read()?;
+
+        // Key doesn't exist if expiry == 0, or key has been revoked
+        if key.expiry == 0 || key.is_revoked {
+            return Ok(KeyInfo {
+                signature_type: 0,
+                key_id: Address::ZERO,
+                expiry: 0,
+                enforce_limits: false,
+                is_revoked: key.is_revoked,
+            });
+        }
+
+        Ok(KeyInfo {
+            signature_type: key.signature_type,
+            key_id,
+            expiry: key.expiry,
+            enforce_limits: key.enforce_limits,
+            is_revoked: key.is_revoked,
+        })
+    }
+
+    /// Get remaining spending limit.
+    fn get_remaining_limit(&self, account: Address, key_id: Address, token: Address) -> Result<U256> {
+        let limit_key = Self::spending_limit_key(account, key_id);
+        self.spending_limits[limit_key][token].read()
+    }
+
+    /// Get the transaction key used in the current transaction.
+    fn get_transaction_key(&self) -> Result<Address> {
+        self.transaction_key.t_read()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,18 +443,17 @@ mod tests {
         storage::{StorageCtx, hashmap::HashMapStorageProvider},
     };
     use alloy::primitives::{Address, U256};
-    use tempo_contracts::precompiles::IAccountKeychain::SignatureType;
 
     // Helper function to assert unauthorized error
     fn assert_unauthorized_error(error: TempoPrecompileError) {
         match error {
-            TempoPrecompileError::AccountKeychainError(e) => {
+            TempoPrecompileError::AccountKeychain(e) => {
                 assert!(
-                    matches!(e, AccountKeychainError::UnauthorizedCaller(_)),
+                    matches!(e, abi::Error::UnauthorizedCaller(_)),
                     "Expected UnauthorizedCaller error, got: {e:?}"
                 );
             }
-            _ => panic!("Expected AccountKeychainError, got: {error:?}"),
+            _ => panic!("Expected AccountKeychain error, got: {error:?}"),
         }
     }
 
@@ -510,8 +480,7 @@ mod tests {
             assert_eq!(loaded_key, access_key_addr, "Transaction key should be set");
 
             // Test 4: Verify getTransactionKey works
-            let get_tx_key_call = getTransactionKeyCall {};
-            let result = keychain.get_transaction_key(get_tx_key_call, Address::ZERO)?;
+            let result = IAccountKeychain::get_transaction_key(&keychain)?;
             assert_eq!(
                 result, access_key_addr,
                 "getTransactionKey should return the set key"
@@ -545,27 +514,29 @@ mod tests {
 
             // First, authorize a key with main key (transaction_key = 0) to set up the test
             keychain.set_transaction_key(Address::ZERO)?;
-            let setup_call = authorizeKeyCall {
-                keyId: existing_key,
-                signatureType: SignatureType::Secp256k1,
-                expiry: u64::MAX,
-                enforceLimits: true,
-                limits: vec![],
-            };
-            keychain.authorize_key(msg_sender, setup_call)?;
+            IAccountKeychain::authorize_key(
+                &mut keychain,
+                msg_sender,
+                existing_key,
+                SignatureType::Secp256k1,
+                u64::MAX,
+                true,
+                vec![],
+            )?;
 
             // Now set transaction key to non-zero (simulating access key usage)
             keychain.set_transaction_key(access_key)?;
 
             // Test 1: authorize_key should fail with access key
-            let auth_call = authorizeKeyCall {
-                keyId: other,
-                signatureType: SignatureType::P256,
-                expiry: u64::MAX,
-                enforceLimits: true,
-                limits: vec![],
-            };
-            let auth_result = keychain.authorize_key(msg_sender, auth_call);
+            let auth_result = IAccountKeychain::authorize_key(
+                &mut keychain,
+                msg_sender,
+                other,
+                SignatureType::P256,
+                u64::MAX,
+                true,
+                vec![],
+            );
             assert!(
                 auth_result.is_err(),
                 "authorize_key should fail when using access key"
@@ -573,10 +544,7 @@ mod tests {
             assert_unauthorized_error(auth_result.unwrap_err());
 
             // Test 2: revoke_key should fail with access key
-            let revoke_call = revokeKeyCall {
-                keyId: existing_key,
-            };
-            let revoke_result = keychain.revoke_key(msg_sender, revoke_call);
+            let revoke_result = IAccountKeychain::revoke_key(&mut keychain, msg_sender, existing_key);
             assert!(
                 revoke_result.is_err(),
                 "revoke_key should fail when using access key"
@@ -584,12 +552,13 @@ mod tests {
             assert_unauthorized_error(revoke_result.unwrap_err());
 
             // Test 3: update_spending_limit should fail with access key
-            let update_call = updateSpendingLimitCall {
-                keyId: existing_key,
+            let update_result = IAccountKeychain::update_spending_limit(
+                &mut keychain,
+                msg_sender,
+                existing_key,
                 token,
-                newLimit: U256::from(1000),
-            };
-            let update_result = keychain.update_spending_limit(msg_sender, update_call);
+                U256::from(1000),
+            );
             assert!(
                 update_result.is_err(),
                 "update_spending_limit should fail when using access key"
@@ -613,38 +582,40 @@ mod tests {
             keychain.set_transaction_key(Address::ZERO)?;
 
             // Step 1: Authorize a key
-            let auth_call = authorizeKeyCall {
-                keyId: key_id,
-                signatureType: SignatureType::Secp256k1,
-                expiry: u64::MAX,
-                enforceLimits: false,
-                limits: vec![],
-            };
-            keychain.authorize_key(account, auth_call.clone())?;
+            IAccountKeychain::authorize_key(
+                &mut keychain,
+                account,
+                key_id,
+                SignatureType::Secp256k1,
+                u64::MAX,
+                false,
+                vec![],
+            )?;
 
             // Verify key exists
-            let key_info = keychain.get_key(getKeyCall {
-                account,
-                keyId: key_id,
-            })?;
+            let key_info = IAccountKeychain::get_key(&keychain, account, key_id)?;
             assert_eq!(key_info.expiry, u64::MAX);
-            assert!(!key_info.isRevoked);
+            assert!(!key_info.is_revoked);
 
             // Step 2: Revoke the key
-            let revoke_call = revokeKeyCall { keyId: key_id };
-            keychain.revoke_key(account, revoke_call)?;
+            IAccountKeychain::revoke_key(&mut keychain, account, key_id)?;
 
             // Verify key is revoked
-            let key_info = keychain.get_key(getKeyCall {
-                account,
-                keyId: key_id,
-            })?;
+            let key_info = IAccountKeychain::get_key(&keychain, account, key_id)?;
             assert_eq!(key_info.expiry, 0);
-            assert!(key_info.isRevoked);
+            assert!(key_info.is_revoked);
 
             // Step 3: Try to re-authorize the same key (replay attack)
             // This should fail because the key was revoked
-            let replay_result = keychain.authorize_key(account, auth_call);
+            let replay_result = IAccountKeychain::authorize_key(
+                &mut keychain,
+                account,
+                key_id,
+                SignatureType::Secp256k1,
+                u64::MAX,
+                false,
+                vec![],
+            );
             assert!(
                 replay_result.is_err(),
                 "Re-authorizing a revoked key should fail"
@@ -652,13 +623,13 @@ mod tests {
 
             // Verify it's the correct error
             match replay_result.unwrap_err() {
-                TempoPrecompileError::AccountKeychainError(e) => {
+                TempoPrecompileError::AccountKeychain(e) => {
                     assert!(
-                        matches!(e, AccountKeychainError::KeyAlreadyRevoked(_)),
+                        matches!(e, abi::Error::KeyAlreadyRevoked(_)),
                         "Expected KeyAlreadyRevoked error, got: {e:?}"
                     );
                 }
-                e => panic!("Expected AccountKeychainError, got: {e:?}"),
+                e => panic!("Expected AccountKeychain error, got: {e:?}"),
             }
             Ok(())
         })
@@ -678,35 +649,34 @@ mod tests {
             keychain.set_transaction_key(Address::ZERO)?;
 
             // Authorize key 1
-            let auth_call_1 = authorizeKeyCall {
-                keyId: key_id_1,
-                signatureType: SignatureType::Secp256k1,
-                expiry: u64::MAX,
-                enforceLimits: false,
-                limits: vec![],
-            };
-            keychain.authorize_key(account, auth_call_1)?;
+            IAccountKeychain::authorize_key(
+                &mut keychain,
+                account,
+                key_id_1,
+                SignatureType::Secp256k1,
+                u64::MAX,
+                false,
+                vec![],
+            )?;
 
             // Revoke key 1
-            keychain.revoke_key(account, revokeKeyCall { keyId: key_id_1 })?;
+            IAccountKeychain::revoke_key(&mut keychain, account, key_id_1)?;
 
             // Authorizing a different key (key 2) should still work
-            let auth_call_2 = authorizeKeyCall {
-                keyId: key_id_2,
-                signatureType: SignatureType::P256,
-                expiry: 1000,
-                enforceLimits: true,
-                limits: vec![],
-            };
-            keychain.authorize_key(account, auth_call_2)?;
+            IAccountKeychain::authorize_key(
+                &mut keychain,
+                account,
+                key_id_2,
+                SignatureType::P256,
+                1000,
+                true,
+                vec![],
+            )?;
 
             // Verify key 2 is authorized
-            let key_info = keychain.get_key(getKeyCall {
-                account,
-                keyId: key_id_2,
-            })?;
+            let key_info = IAccountKeychain::get_key(&keychain, account, key_id_2)?;
             assert_eq!(key_info.expiry, 1000);
-            assert!(!key_info.isRevoked);
+            assert!(!key_info.is_revoked);
 
             Ok(())
         })
@@ -729,23 +699,21 @@ mod tests {
             keychain.set_transaction_key(Address::ZERO)?;
             keychain.set_tx_origin(eoa)?;
 
-            let auth_call = authorizeKeyCall {
-                keyId: access_key,
-                signatureType: SignatureType::Secp256k1,
-                expiry: u64::MAX,
-                enforceLimits: true,
-                limits: vec![TokenLimit {
+            IAccountKeychain::authorize_key(
+                &mut keychain,
+                eoa,
+                access_key,
+                SignatureType::Secp256k1,
+                u64::MAX,
+                true,
+                vec![TokenLimit {
                     token,
                     amount: U256::from(100),
                 }],
-            };
-            keychain.authorize_key(eoa, auth_call)?;
+            )?;
 
-            let initial_limit = keychain.get_remaining_limit(getRemainingLimitCall {
-                account: eoa,
-                keyId: access_key,
-                token,
-            })?;
+            let initial_limit =
+                IAccountKeychain::get_remaining_limit(&keychain, eoa, access_key, token)?;
             assert_eq!(initial_limit, U256::from(100));
 
             // Switch to access key for remaining tests
@@ -754,49 +722,37 @@ mod tests {
             // Increase approval by 30, which deducts from the limit
             keychain.authorize_approve(eoa, token, U256::ZERO, U256::from(30))?;
 
-            let limit_after = keychain.get_remaining_limit(getRemainingLimitCall {
-                account: eoa,
-                keyId: access_key,
-                token,
-            })?;
+            let limit_after =
+                IAccountKeychain::get_remaining_limit(&keychain, eoa, access_key, token)?;
             assert_eq!(limit_after, U256::from(70));
 
             // Decrease approval to 20, does not affect limit
             keychain.authorize_approve(eoa, token, U256::from(30), U256::from(20))?;
 
-            let limit_unchanged = keychain.get_remaining_limit(getRemainingLimitCall {
-                account: eoa,
-                keyId: access_key,
-                token,
-            })?;
+            let limit_unchanged =
+                IAccountKeychain::get_remaining_limit(&keychain, eoa, access_key, token)?;
             assert_eq!(limit_unchanged, U256::from(70));
 
             // Increase from 20 to 50, reducing the limit by 30
             keychain.authorize_approve(eoa, token, U256::from(20), U256::from(50))?;
 
-            let limit_after_increase = keychain.get_remaining_limit(getRemainingLimitCall {
-                account: eoa,
-                keyId: access_key,
-                token,
-            })?;
+            let limit_after_increase =
+                IAccountKeychain::get_remaining_limit(&keychain, eoa, access_key, token)?;
             assert_eq!(limit_after_increase, U256::from(40));
 
             // Assert that spending limits only applied when account is tx origin
             keychain.authorize_approve(contract, token, U256::ZERO, U256::from(1000))?;
 
-            let limit_after_contract = keychain.get_remaining_limit(getRemainingLimitCall {
-                account: eoa,
-                keyId: access_key,
-                token,
-            })?;
+            let limit_after_contract =
+                IAccountKeychain::get_remaining_limit(&keychain, eoa, access_key, token)?;
             assert_eq!(limit_after_contract, U256::from(40)); // unchanged
 
             // Assert that exceeding remaining limit fails
             let exceed_result = keychain.authorize_approve(eoa, token, U256::ZERO, U256::from(50));
             assert!(matches!(
                 exceed_result,
-                Err(TempoPrecompileError::AccountKeychainError(
-                    AccountKeychainError::SpendingLimitExceeded(_)
+                Err(TempoPrecompileError::AccountKeychain(
+                    abi::Error::SpendingLimitExceeded(_)
                 ))
             ));
 
@@ -804,11 +760,8 @@ mod tests {
             keychain.set_transaction_key(Address::ZERO)?;
             keychain.authorize_approve(eoa, token, U256::ZERO, U256::from(1000))?;
 
-            let limit_main_key = keychain.get_remaining_limit(getRemainingLimitCall {
-                account: eoa,
-                keyId: access_key,
-                token,
-            })?;
+            let limit_main_key =
+                IAccountKeychain::get_remaining_limit(&keychain, eoa, access_key, token)?;
             assert_eq!(limit_main_key, U256::from(40));
 
             Ok(())
@@ -841,24 +794,22 @@ mod tests {
             keychain.set_transaction_key(Address::ZERO)?; // Use main key for setup
             keychain.set_tx_origin(eoa_alice)?;
 
-            let auth_call = authorizeKeyCall {
-                keyId: access_key,
-                signatureType: SignatureType::Secp256k1,
-                expiry: u64::MAX,
-                enforceLimits: true,
-                limits: vec![TokenLimit {
+            IAccountKeychain::authorize_key(
+                &mut keychain,
+                eoa_alice,
+                access_key,
+                SignatureType::Secp256k1,
+                u64::MAX,
+                true,
+                vec![TokenLimit {
                     token,
                     amount: U256::from(100),
                 }],
-            };
-            keychain.authorize_key(eoa_alice, auth_call)?;
+            )?;
 
             // Verify spending limit is set
-            let limit = keychain.get_remaining_limit(getRemainingLimitCall {
-                account: eoa_alice,
-                keyId: access_key,
-                token,
-            })?;
+            let limit =
+                IAccountKeychain::get_remaining_limit(&keychain, eoa_alice, access_key, token)?;
             assert_eq!(
                 limit,
                 U256::from(100),
@@ -873,11 +824,8 @@ mod tests {
             // Spending limit SHOULD be enforced
             keychain.authorize_transfer(eoa_alice, token, U256::from(30))?;
 
-            let limit_after = keychain.get_remaining_limit(getRemainingLimitCall {
-                account: eoa_alice,
-                keyId: access_key,
-                token,
-            })?;
+            let limit_after =
+                IAccountKeychain::get_remaining_limit(&keychain, eoa_alice, access_key, token)?;
             assert_eq!(
                 limit_after,
                 U256::from(70),
@@ -888,11 +836,8 @@ mod tests {
             // Spending limit should NOT be enforced - the contract isn't spending Alice's tokens
             keychain.authorize_transfer(contract_address, token, U256::from(1000))?;
 
-            let limit_unchanged = keychain.get_remaining_limit(getRemainingLimitCall {
-                account: eoa_alice,
-                keyId: access_key,
-                token,
-            })?;
+            let limit_unchanged =
+                IAccountKeychain::get_remaining_limit(&keychain, eoa_alice, access_key, token)?;
             assert_eq!(
                 limit_unchanged,
                 U256::from(70),
@@ -902,11 +847,8 @@ mod tests {
             // Test 3: Alice can still spend her remaining limit
             keychain.authorize_transfer(eoa_alice, token, U256::from(70))?;
 
-            let limit_depleted = keychain.get_remaining_limit(getRemainingLimitCall {
-                account: eoa_alice,
-                keyId: access_key,
-                token,
-            })?;
+            let limit_depleted =
+                IAccountKeychain::get_remaining_limit(&keychain, eoa_alice, access_key, token)?;
             assert_eq!(
                 limit_depleted,
                 U256::ZERO,

@@ -28,9 +28,9 @@ use revm::{
     },
     primitives::eip7702,
 };
-use tempo_contracts::precompiles::IAccountKeychain::SignatureType as PrecompileSignatureType;
 use tempo_precompiles::{
-    account_keychain::{AccountKeychain, TokenLimit, authorizeKeyCall},
+    abi::IAccountKeychain::{SignatureType as PrecompileSignatureType, TokenLimit},
+    account_keychain::{AccountKeychain, IAccountKeychain},
     error::TempoPrecompileError,
     nonce::{INonce::getNonceCall, NonceManager},
     storage::StorageCtx,
@@ -840,25 +840,23 @@ where
                     })
                     .unwrap_or_default();
 
-                // Create the authorize key call
-                let authorize_call = authorizeKeyCall {
-                    keyId: access_key_addr,
-                    signatureType: signature_type,
-                    expiry,
-                    enforceLimits: enforce_limits,
-                    limits: precompile_limits,
-                };
-
                 // Call precompile to authorize the key (same phase as nonce increment)
-                keychain
-                    .authorize_key(*root_account, authorize_call)
-                    .map_err(|err| match err {
-                        TempoPrecompileError::Fatal(err) => EVMError::Custom(err),
-                        err => TempoInvalidTransaction::KeychainPrecompileError {
-                            reason: err.to_string(),
-                        }
-                        .into(),
-                    })
+                IAccountKeychain::authorize_key(
+                    &mut keychain,
+                    *root_account,
+                    access_key_addr,
+                    signature_type,
+                    expiry,
+                    enforce_limits,
+                    precompile_limits,
+                )
+                .map_err(|err| match err {
+                    TempoPrecompileError::Fatal(err) => EVMError::Custom(err),
+                    err => TempoInvalidTransaction::KeychainPrecompileError {
+                        reason: err.to_string(),
+                    }
+                    .into(),
+                })
             })?;
         }
 

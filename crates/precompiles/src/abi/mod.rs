@@ -1,10 +1,13 @@
 use alloy::primitives::{Address, address};
 
+pub mod account_keychain;
 pub mod tip20;
 pub mod tip20_factory;
 pub mod tip403_registry;
 pub mod tip_fee_manager;
 pub mod validator_config;
+
+pub use account_keychain::abi as IAccountKeychain;
 pub use tip_fee_manager::abi as ITipFeeManager;
 pub use tip20::abi as ITIP20;
 pub use tip20_factory::abi as ITIP20Factory;
