@@ -15,8 +15,8 @@ use poem::{EndpointExt as _, Route, Server, get, listener::TcpListener};
 use std::{collections::HashSet, time::Duration};
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS, TIP20_FACTORY_ADDRESS,
-    abi::ITIP20Factory,
-    tip_fee_manager::{IFeeManager::IFeeManagerInstance, IFeeManager::getPoolCall, IFeeManager::rebalanceSwapCall},
+    abi::tip20_factory::tip20_factory,
+    tip_fee_manager::fee_manager::{FeeManagerInstance, getPoolCall, rebalanceSwapCall},
 };
 use tempo_telemetry_util::error_field;
 use tracing::{debug, error, info, instrument};
@@ -47,14 +47,14 @@ pub struct SimpleArbArgs {
 async fn fetch_all_pairs<P: Provider>(provider: P) -> eyre::Result<HashSet<(Address, Address)>> {
     let filter = Filter::new()
         .address(TIP20_FACTORY_ADDRESS)
-        .event_signature(ITIP20Factory::TokenCreated::SIGNATURE_HASH);
+        .event_signature(tip20_factory::TokenCreated::SIGNATURE_HASH);
 
     let logs = provider.get_logs(&filter).await?;
 
     let tokens: Vec<Address> = logs
         .iter()
         .filter_map(|log| {
-            log.log_decode::<ITIP20Factory::TokenCreated>()
+            log.log_decode::<tip20_factory::TokenCreated>()
                 .ok()
                 .map(|event| event.inner.token)
         })
@@ -120,7 +120,7 @@ impl SimpleArbArgs {
             .wallet(wallet)
             .connect_http(self.rpc_url.parse().context("failed to parse RPC URL")?);
 
-        let fee_amm = IFeeManagerInstance::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
+        let fee_amm = FeeManagerInstance::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
 
         info!("Fetching all pairs...");
         let pairs = fetch_all_pairs(provider.clone()).await?;

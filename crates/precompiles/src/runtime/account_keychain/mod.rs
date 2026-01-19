@@ -1,7 +1,10 @@
 use alloy::primitives::{Address, B256, U256};
 use tempo_precompiles_macros::{Storable, contract};
 
-pub use crate::abi::{ACCOUNT_KEYCHAIN_ADDRESS, IAccountKeychain, IAccountKeychain::prelude::*};
+pub use crate::abi::{
+    ACCOUNT_KEYCHAIN_ADDRESS, account_keychain::account_keychain,
+    account_keychain::account_keychain::prelude::*,
+};
 use crate::{
     error::Result,
     storage::{Handler, Mapping},
@@ -43,7 +46,7 @@ impl AuthorizedKey {
 }
 
 /// Account Keychain contract for managing authorized keys
-#[contract(addr = ACCOUNT_KEYCHAIN_ADDRESS, abi = IAccountKeychain, dispatch)]
+#[contract(addr = ACCOUNT_KEYCHAIN_ADDRESS, abi = account_keychain, dispatch)]
 pub struct AccountKeychain {
     // keys[account][keyId] -> AuthorizedKey
     keys: Mapping<Address, Mapping<Address, AuthorizedKey>>,
@@ -109,11 +112,11 @@ impl AccountKeychain {
         let key = self.keys[account][key_id].read()?;
 
         if key.is_revoked {
-            return Err(IAccountKeychain::Error::key_already_revoked().into());
+            return Err(account_keychain::Error::key_already_revoked().into());
         }
 
         if key.expiry == 0 {
-            return Err(IAccountKeychain::Error::key_not_found().into());
+            return Err(account_keychain::Error::key_not_found().into());
         }
 
         Ok(key)
@@ -132,7 +135,7 @@ impl AccountKeychain {
         let key = self.load_active_key(account, key_id)?;
 
         if current_timestamp >= key.expiry {
-            return Err(IAccountKeychain::Error::key_expired().into());
+            return Err(account_keychain::Error::key_expired().into());
         }
 
         Ok(())
@@ -164,7 +167,7 @@ impl AccountKeychain {
         let remaining = self.spending_limits[limit_key][token].read()?;
 
         if amount > remaining {
-            return Err(IAccountKeychain::Error::spending_limit_exceeded().into());
+            return Err(account_keychain::Error::spending_limit_exceeded().into());
         }
 
         // Update remaining limit
@@ -260,7 +263,7 @@ impl AccountKeychain {
     }
 }
 
-impl IAccountKeychain::IAccountKeychain for AccountKeychain {
+impl account_keychain::IAccountKeychain for AccountKeychain {
     /// Authorize a new key for an account.
     /// This can only be called by the account itself (using main key).
     fn authorize_key(
@@ -277,23 +280,23 @@ impl IAccountKeychain::IAccountKeychain for AccountKeychain {
 
         // If transaction_key is not zero, it means a secondary key is being used
         if transaction_key != Address::ZERO {
-            return Err(IAccountKeychain::Error::unauthorized_caller().into());
+            return Err(account_keychain::Error::unauthorized_caller().into());
         }
 
         // Validate inputs
         if key_id == Address::ZERO {
-            return Err(IAccountKeychain::Error::zero_public_key().into());
+            return Err(account_keychain::Error::zero_public_key().into());
         }
 
         // Check if key already exists (key exists if expiry > 0)
         let existing_key = self.keys[msg_sender][key_id].read()?;
         if existing_key.expiry > 0 {
-            return Err(IAccountKeychain::Error::key_already_exists().into());
+            return Err(account_keychain::Error::key_already_exists().into());
         }
 
         // Check if this key was previously revoked - prevents replay attacks
         if existing_key.is_revoked {
-            return Err(IAccountKeychain::Error::key_already_revoked().into());
+            return Err(account_keychain::Error::key_already_revoked().into());
         }
 
         // Convert SignatureType enum to u8 for storage
@@ -322,7 +325,7 @@ impl IAccountKeychain::IAccountKeychain for AccountKeychain {
         }
 
         // Emit event
-        self.emit_event(IAccountKeychain::Event::key_authorized(
+        self.emit_event(account_keychain::Event::key_authorized(
             msg_sender,
             key_id,
             sig_type_u8,
@@ -339,14 +342,14 @@ impl IAccountKeychain::IAccountKeychain for AccountKeychain {
         let transaction_key = self.transaction_key.t_read()?;
 
         if transaction_key != Address::ZERO {
-            return Err(IAccountKeychain::Error::unauthorized_caller().into());
+            return Err(account_keychain::Error::unauthorized_caller().into());
         }
 
         let key = self.keys[msg_sender][key_id].read()?;
 
         // Key exists if expiry > 0
         if key.expiry == 0 {
-            return Err(IAccountKeychain::Error::key_not_found().into());
+            return Err(account_keychain::Error::key_not_found().into());
         }
 
         // Mark the key as revoked - this prevents replay attacks by ensuring
@@ -361,7 +364,7 @@ impl IAccountKeychain::IAccountKeychain for AccountKeychain {
         // Note: We don't clear spending limits here - they become inaccessible
 
         // Emit event
-        self.emit_event(IAccountKeychain::Event::key_revoked(msg_sender, key_id))
+        self.emit_event(account_keychain::Event::key_revoked(msg_sender, key_id))
     }
 
     /// Update spending limit for a key-token pair.
@@ -378,7 +381,7 @@ impl IAccountKeychain::IAccountKeychain for AccountKeychain {
         let transaction_key = self.transaction_key.t_read()?;
 
         if transaction_key != Address::ZERO {
-            return Err(IAccountKeychain::Error::unauthorized_caller().into());
+            return Err(account_keychain::Error::unauthorized_caller().into());
         }
 
         // Verify key exists, hasn't been revoked, and hasn't expired
@@ -386,7 +389,7 @@ impl IAccountKeychain::IAccountKeychain for AccountKeychain {
 
         let current_timestamp = self.storage.timestamp().saturating_to::<u64>();
         if current_timestamp >= key.expiry {
-            return Err(IAccountKeychain::Error::key_expired().into());
+            return Err(account_keychain::Error::key_expired().into());
         }
 
         // If this key had unlimited spending (enforce_limits=false), enable limits now
@@ -400,7 +403,7 @@ impl IAccountKeychain::IAccountKeychain for AccountKeychain {
         self.spending_limits[limit_key][token].write(new_limit)?;
 
         // Emit event
-        self.emit_event(IAccountKeychain::Event::spending_limit_updated(
+        self.emit_event(account_keychain::Event::spending_limit_updated(
             msg_sender, key_id, token, new_limit,
         ))
     }
@@ -454,14 +457,14 @@ mod tests {
         storage::{StorageCtx, hashmap::HashMapStorageProvider},
     };
     use alloy::primitives::{Address, U256};
-    use IAccountKeychain::IAccountKeychain as _;
+    use account_keychain::IAccountKeychain as _;
 
     // Helper function to assert unauthorized error
     fn assert_unauthorized_error(error: TempoPrecompileError) {
         match error {
             TempoPrecompileError::AccountKeychain(e) => {
                 assert!(
-                    matches!(e, IAccountKeychain::Error::UnauthorizedCaller(_)),
+                    matches!(e, account_keychain::Error::UnauthorizedCaller(_)),
                     "Expected UnauthorizedCaller error, got: {e:?}"
                 );
             }
@@ -633,7 +636,7 @@ mod tests {
             match replay_result.unwrap_err() {
                 TempoPrecompileError::AccountKeychain(e) => {
                     assert!(
-                        matches!(e, IAccountKeychain::Error::KeyAlreadyRevoked(_)),
+                        matches!(e, account_keychain::Error::KeyAlreadyRevoked(_)),
                         "Expected KeyAlreadyRevoked error, got: {e:?}"
                     );
                 }
@@ -757,7 +760,7 @@ mod tests {
             assert!(matches!(
                 exceed_result,
                 Err(TempoPrecompileError::AccountKeychain(
-                    IAccountKeychain::Error::SpendingLimitExceeded(_)
+                    account_keychain::Error::SpendingLimitExceeded(_)
                 ))
             ));
 

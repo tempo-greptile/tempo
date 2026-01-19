@@ -11,10 +11,10 @@ use alloy_network::{Ethereum, TxSignerSync};
 use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::TransactionRequest;
 use tempo_chainspec::spec::TEMPO_BASE_FEE;
-use tempo_precompiles::abi::ITIP20;
+use tempo_precompiles::abi::tip20::tip20;
 use tempo_node::node::TempoNode;
 use tempo_precompiles::{
-    PATH_USD_ADDRESS, TIP20_FACTORY_ADDRESS, abi::ITIP20Factory, tip20::ISSUER_ROLE,
+    PATH_USD_ADDRESS, TIP20_FACTORY_ADDRESS, abi::tip20_factory::tip20_factory, tip20::ISSUER_ROLE,
 };
 use tempo_primitives::TempoTxEnvelope;
 
@@ -24,11 +24,11 @@ async fn setup_token_manual<P>(
     provider: &P,
     sender: &alloy::signers::local::PrivateKeySigner,
     chain_id: u64,
-) -> eyre::Result<ITIP20::ITIP20Instance<P>>
+) -> eyre::Result<tip20::Tip20Instance<P>>
 where
     P: Provider + Clone,
 {
-    let factory = ITIP20Factory::new(TIP20_FACTORY_ADDRESS, provider.clone());
+    let factory = tip20_factory::new(TIP20_FACTORY_ADDRESS, provider.clone());
     let sender_address = sender.address();
     let signer = EthereumWallet::from(sender.clone());
 
@@ -76,12 +76,12 @@ where
         .find(|r| !r.inner.logs().is_empty())
         .ok_or_else(|| eyre::eyre!("No receipt with logs found"))?;
     let event =
-        ITIP20Factory::TokenCreated::decode_log(&token_create_receipt.inner.logs()[1].inner)?;
+        tip20_factory::TokenCreated::decode_log(&token_create_receipt.inner.logs()[1].inner)?;
     let token_addr = event.token;
 
     // Grant issuer role
-    let token = ITIP20::ITIP20Instance::new(token_addr, provider.clone());
-    let grant_call = ITIP20::grantRoleCall {
+    let token = tip20::Tip20Instance::new(token_addr, provider.clone());
+    let grant_call = tip20::grantRoleCall {
         role: *ISSUER_ROLE,
         account: sender_address,
     };
@@ -146,7 +146,7 @@ async fn inject_payment_txs_from_sender<P>(
     node: &mut reth_e2e_test_utils::NodeHelperType<TempoNode>,
     provider: &P,
     sender: &alloy::signers::local::PrivateKeySigner,
-    token: &ITIP20::ITIP20Instance<P>,
+    token: &tip20::Tip20Instance<P>,
     chain_id: u64,
     count: usize,
 ) -> eyre::Result<()>

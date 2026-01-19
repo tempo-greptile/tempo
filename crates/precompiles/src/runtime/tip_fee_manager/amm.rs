@@ -1,12 +1,12 @@
 use crate::{
-    abi::{IFeeManager::prelude::*, ITIP20::traits::*},
+    abi::{tip_fee_manager::fee_manager::prelude::*, tip20::tip20::traits::*},
     error::{Result, TempoPrecompileError},
     storage::Handler,
     tip_fee_manager::TipFeeManager,
     tip20::{TIP20Token, validate_usd_currency},
 };
 
-pub use crate::abi::tip_fee_manager::IFeeManager::{MIN_LIQUIDITY, Pool};
+pub use crate::abi::tip_fee_manager::fee_manager::{MIN_LIQUIDITY, Pool};
 use alloy::{
     primitives::{Address, B256, U256, keccak256, uint},
     sol_types::SolValue,

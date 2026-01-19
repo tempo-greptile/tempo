@@ -18,10 +18,10 @@ use std::{
 };
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
-    abi::ITIP20,
+    abi::tip20::tip20,
     tip_fee_manager::{
         Pool,
-        IFeeManager::{Mint, IFeeManagerInstance, getPoolCall},
+        fee_manager::{FeeManagerInstance, Mint, getPoolCall},
     },
 };
 use tracing::{debug, error, info, instrument};
@@ -118,7 +118,7 @@ impl MonitorConfig {
             .iter()
             .map(|addr| {
                 debug!(%addr, "fetching token metadata");
-                let token = ITIP20::new(*addr, provider.clone());
+                let token = tip20::new(*addr, provider.clone());
                 async move {
                     let decimals = token.decimals().call().await.map_err(|e| {
                         counter!("tempo_fee_amm_errors", "request" => "decimals").increment(1);
@@ -149,7 +149,7 @@ impl MonitorConfig {
             .permutations(2)
             .map(|pair| {
                 let (token_a, token_b) = (*pair[0], *pair[1]);
-                let fee_amm = IFeeManagerInstance::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
+                let fee_amm = FeeManagerInstance::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
                 async move {
                     match fee_amm
                         .call_builder(&getPoolCall {
@@ -239,8 +239,8 @@ impl Monitor {
             .connect(self.rpc_url.as_str())
             .await?;
 
-        let fee_amm: IFeeManagerInstance<_, _> =
-            IFeeManagerInstance::new(TIP_FEE_MANAGER_ADDRESS, provider);
+        let fee_amm: FeeManagerInstance<_, _> =
+            FeeManagerInstance::new(TIP_FEE_MANAGER_ADDRESS, provider);
 
         for &(token_a, token_b) in &self.known_pairs {
             debug!(%token_a, %token_b, "fetching pool");

@@ -5,11 +5,13 @@ use alloy::primitives::{Address, B256, U256};
 use tempo_precompiles_macros::contract;
 
 pub use crate::abi::{
-    DEFAULT_FEE_TOKEN, IFeeManager, IFeeManager::prelude::*, TIP_FEE_MANAGER_ADDRESS,
+    DEFAULT_FEE_TOKEN, TIP_FEE_MANAGER_ADDRESS,
+    tip_fee_manager::fee_manager,
+    tip_fee_manager::fee_manager::prelude::*,
 };
 
 use crate::{
-    abi::{ITIP20::traits::*, ITIP20Factory::traits::*},
+    abi::{tip20::tip20::traits::*, tip20_factory::tip20_factory::traits::*},
     error::{Result, TempoPrecompileError},
     storage::Handler,
     tip_fee_manager::amm::compute_amount_out,
@@ -17,7 +19,7 @@ use crate::{
     tip20_factory::TIP20Factory,
 };
 
-#[contract(addr = TIP_FEE_MANAGER_ADDRESS, abi = IFeeManager, dispatch)]
+#[contract(addr = TIP_FEE_MANAGER_ADDRESS, abi = fee_manager, dispatch)]
 pub struct TipFeeManager {
     validator_tokens: Mapping<Address, Address>,
     user_tokens: Mapping<Address, Address>,
@@ -141,13 +143,13 @@ impl TipFeeManager {
         let mut tip20_token = TIP20Token::from_address(token)?;
         tip20_token.transfer(self.address, validator, amount)?;
 
-        self.emit_event(IFeeManager::Event::fees_distributed(
+        self.emit_event(fee_manager::Event::fees_distributed(
             validator, token, amount,
         ))
     }
 }
 
-impl IFeeManager::IFeeManager for TipFeeManager {
+impl fee_manager::IFeeManager for TipFeeManager {
     fn user_tokens(&self, user: Address) -> Result<Address> {
         self.user_tokens[user].read()
     }
@@ -168,31 +170,31 @@ impl IFeeManager::IFeeManager for TipFeeManager {
 
     fn set_user_token(&mut self, msg_sender: Address, token: Address) -> Result<()> {
         if !TIP20Factory::new().is_tip20(token)? {
-            return Err(IFeeManager::Error::invalid_token().into());
+            return Err(fee_manager::Error::invalid_token().into());
         }
 
         validate_usd_currency(token)?;
 
         self.user_tokens[msg_sender].write(token)?;
 
-        self.emit_event(IFeeManager::Event::user_token_set(msg_sender, token))
+        self.emit_event(fee_manager::Event::user_token_set(msg_sender, token))
     }
 
     fn set_validator_token(&mut self, msg_sender: Address, token: Address) -> Result<()> {
         if !TIP20Factory::new().is_tip20(token)? {
-            return Err(IFeeManager::Error::invalid_token().into());
+            return Err(fee_manager::Error::invalid_token().into());
         }
 
         let beneficiary = self.storage.beneficiary();
         if msg_sender == beneficiary {
-            return Err(IFeeManager::Error::cannot_change_within_block().into());
+            return Err(fee_manager::Error::cannot_change_within_block().into());
         }
 
         validate_usd_currency(token)?;
 
         self.validator_tokens[msg_sender].write(token)?;
 
-        self.emit_event(IFeeManager::Event::validator_token_set(msg_sender, token))
+        self.emit_event(fee_manager::Event::validator_token_set(msg_sender, token))
     }
 
     fn distribute_fees(
@@ -215,7 +217,7 @@ mod tests {
         test_util::TIP20Setup,
         tip20::{InvalidCurrency, TIP20Error, TIP20Token},
     };
-    use IFeeManager::IFeeManager as _;
+    use fee_manager::IFeeManager as _;
 
     #[test]
     fn test_set_user_token() -> eyre::Result<()> {

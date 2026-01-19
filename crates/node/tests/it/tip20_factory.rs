@@ -5,9 +5,9 @@ use alloy::{
     sol_types::SolEvent,
 };
 use tempo_chainspec::spec::TEMPO_BASE_FEE;
-use tempo_precompiles::abi::ITIP20;
+use tempo_precompiles::abi::tip20::tip20;
 use tempo_precompiles::{
-    PATH_USD_ADDRESS, TIP20_FACTORY_ADDRESS, abi::ITIP20Factory, tip20::is_tip20_prefix,
+    PATH_USD_ADDRESS, TIP20_FACTORY_ADDRESS, abi::tip20_factory::tip20_factory, tip20::is_tip20_prefix,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -21,7 +21,7 @@ async fn test_create_token() -> eyre::Result<()> {
     let caller = wallet.address();
     let provider = ProviderBuilder::new().wallet(wallet).connect_http(http_url);
 
-    let factory = ITIP20Factory::new(TIP20_FACTORY_ADDRESS, provider.clone());
+    let factory = tip20_factory::new(TIP20_FACTORY_ADDRESS, provider.clone());
 
     let name = "Test".to_string();
     let symbol = "TEST".to_string();
@@ -47,7 +47,7 @@ async fn test_create_token() -> eyre::Result<()> {
         .get_receipt()
         .await?;
 
-    let event = ITIP20Factory::TokenCreated::decode_log(&receipt.logs()[1].inner).unwrap();
+    let event = tip20_factory::TokenCreated::decode_log(&receipt.logs()[1].inner).unwrap();
     assert_eq!(event.address, TIP20_FACTORY_ADDRESS);
     assert_eq!(event.name, "Test");
     assert_eq!(event.symbol, "TEST");
@@ -61,7 +61,7 @@ async fn test_create_token() -> eyre::Result<()> {
         "Token should have TIP20 prefix"
     );
 
-    let token = ITIP20::new(event.token, provider);
+    let token = tip20::new(event.token, provider);
     assert_eq!(token.name().call().await?, name);
     assert_eq!(token.symbol().call().await?, symbol);
     assert_eq!(token.decimals().call().await?, 6);
@@ -84,7 +84,7 @@ async fn test_is_tip20_checks_code_deployment() -> eyre::Result<()> {
     let wallet = MnemonicBuilder::from_phrase(crate::utils::TEST_MNEMONIC).build()?;
     let provider = ProviderBuilder::new().wallet(wallet).connect_http(http_url);
 
-    let factory = ITIP20Factory::new(TIP20_FACTORY_ADDRESS, provider.clone());
+    let factory = tip20_factory::new(TIP20_FACTORY_ADDRESS, provider.clone());
 
     // Create an address with valid TIP20 prefix but no code deployed
     // Using a fake address that has the prefix but was never created

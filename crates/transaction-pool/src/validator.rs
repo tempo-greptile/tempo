@@ -811,7 +811,7 @@ mod tests {
         use alloy_primitives::{Signature, TxKind, address, uint};
         use tempo_precompiles::{
             TIP403_REGISTRY_ADDRESS,
-            abi::ITIP403Registry,
+            abi::tip403_registry::tip403_registry,
             tip20::slots as tip20_slots,
             tip403_registry::PolicyData,
         };
@@ -885,7 +885,7 @@ mod tests {
 
         // Add TIP403Registry with blacklist policy containing fee_payer
         let policy_data = PolicyData {
-            policy_type: ITIP403Registry::PolicyType::BLACKLIST,
+            policy_type: tip403_registry::PolicyType::BLACKLIST,
             admin: Address::ZERO,
         };
         let policy_data_slot = TIP403Registry::new().policy_data[policy_id].base_slot();

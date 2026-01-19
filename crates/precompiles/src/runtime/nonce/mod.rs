@@ -1,4 +1,4 @@
-pub use crate::abi::{INonce, INonce::prelude::*, NONCE_PRECOMPILE_ADDRESS};
+pub use crate::abi::{NONCE_PRECOMPILE_ADDRESS, nonce::nonce, nonce::nonce::prelude::*};
 use tempo_precompiles_macros::contract;
 
 use crate::{
@@ -20,19 +20,19 @@ use alloy::primitives::{Address, U256};
 ///
 /// Note: Protocol nonce (key 0) is stored directly in account state, not here.
 /// Only user nonce keys (1-N) are managed by this precompile.
-#[contract(addr = NONCE_PRECOMPILE_ADDRESS, abi = INonce, dispatch)]
+#[contract(addr = NONCE_PRECOMPILE_ADDRESS, abi = nonce, dispatch)]
 pub struct NonceManager {
     nonces: Mapping<Address, Mapping<U256, u64>>,
 }
 
-impl INonce::INonce for NonceManager {
+impl nonce::INonce for NonceManager {
     /// Get the nonce for a specific account and nonce key.
     ///
     /// Protocol nonce (key 0) is stored in account state, not in this precompile.
     /// Users should query account nonce directly, not through this precompile.
     fn get_nonce(&self, account: Address, nonce_key: U256) -> Result<u64> {
         if nonce_key.is_zero() {
-            return Err(INonce::Error::protocol_nonce_not_supported().into());
+            return Err(nonce::Error::protocol_nonce_not_supported().into());
         }
 
         self.nonces[account][nonce_key].read()
@@ -48,18 +48,18 @@ impl NonceManager {
     /// Internal: Increment nonce for a specific account and nonce key
     pub fn increment_nonce(&mut self, account: Address, nonce_key: U256) -> Result<u64> {
         if nonce_key.is_zero() {
-            return Err(INonce::Error::invalid_nonce_key().into());
+            return Err(nonce::Error::invalid_nonce_key().into());
         }
 
         let current = self.nonces[account][nonce_key].read()?;
 
         let new_nonce = current
             .checked_add(1)
-            .ok_or_else(INonce::Error::nonce_overflow)?;
+            .ok_or_else(nonce::Error::nonce_overflow)?;
 
         self.nonces[account][nonce_key].write(new_nonce)?;
 
-        self.emit_event(INonce::Event::NonceIncremented(INonce::NonceIncremented {
+        self.emit_event(nonce::Event::NonceIncremented(nonce::NonceIncremented {
             account,
             nonce_key,
             new_nonce,
@@ -86,7 +86,7 @@ mod tests {
             let mgr = NonceManager::new();
 
             let account = address!("0x1111111111111111111111111111111111111111");
-            let nonce = INonce::INonce::get_nonce(&mgr, account, U256::from(5))?;
+            let nonce = nonce::INonce::get_nonce(&mgr, account, U256::from(5))?;
 
             assert_eq!(nonce, 0);
             Ok(())
@@ -100,11 +100,11 @@ mod tests {
             let mgr = NonceManager::new();
 
             let account = address!("0x1111111111111111111111111111111111111111");
-            let result = INonce::INonce::get_nonce(&mgr, account, U256::ZERO);
+            let result = nonce::INonce::get_nonce(&mgr, account, U256::ZERO);
 
             assert_eq!(
                 result.unwrap_err(),
-                TempoPrecompileError::Nonce(INonce::Error::protocol_nonce_not_supported())
+                TempoPrecompileError::Nonce(nonce::Error::protocol_nonce_not_supported())
             );
             Ok(())
         })
@@ -126,12 +126,12 @@ mod tests {
             let new_nonce = mgr.increment_nonce(account, nonce_key)?;
             assert_eq!(new_nonce, 2);
             mgr.assert_emitted_events(vec![
-                INonce::NonceIncremented {
+                nonce::NonceIncremented {
                     account,
                     nonce_key,
                     new_nonce: 1,
                 },
-                INonce::NonceIncremented {
+                nonce::NonceIncremented {
                     account,
                     nonce_key,
                     new_nonce: 2,
@@ -159,8 +159,8 @@ mod tests {
                 mgr.increment_nonce(account2, nonce_key)?;
             }
 
-            let nonce1 = INonce::INonce::get_nonce(&mgr, account1, nonce_key)?;
-            let nonce2 = INonce::INonce::get_nonce(&mgr, account2, nonce_key)?;
+            let nonce1 = nonce::INonce::get_nonce(&mgr, account1, nonce_key)?;
+            let nonce2 = nonce::INonce::get_nonce(&mgr, account2, nonce_key)?;
 
             assert_eq!(nonce1, 10);
             assert_eq!(nonce2, 20);

@@ -29,16 +29,15 @@ use revm::{
     primitives::eip7702,
 };
 use tempo_precompiles::{
-    abi::{
-        IAccountKeychain::{SignatureType as PrecompileSignatureType, TokenLimit},
-        INonce,
+    account_keychain::{
+        AccountKeychain,
+        account_keychain::{IAccountKeychain, SignatureType as PrecompileSignatureType, TokenLimit},
     },
-    account_keychain::{AccountKeychain, IAccountKeychain::IAccountKeychain},
     error::TempoPrecompileError,
-    nonce::NonceManager,
+    nonce::{NonceManager, nonce},
     storage::StorageCtx,
     tip_fee_manager::{Error as TipFeeManagerError, TipFeeManager},
-    tip20::{ITIP20::InsufficientBalance, TIP20Error, TIP20Token},
+    tip20::{TIP20Error, TIP20Token, tip20::InsufficientBalance},
 };
 use tempo_primitives::transaction::{
     PrimitiveSignature, SignatureType, TempoSignature, calc_gas_balance_spending, validate_calls,
@@ -149,7 +148,7 @@ fn calculate_2d_nonce_gas(
     }
 
     // Get current nonce for this key
-    let current_nonce = INonce::INonce::get_nonce(nonce_manager, caller, nonce_key)?;
+    let current_nonce = nonce::INonce::get_nonce(nonce_manager, caller, nonce_key)?;
 
     if current_nonce > 0 {
         // Existing key - cold SLOAD + warm SSTORE reset
@@ -686,7 +685,7 @@ where
 
                 if !cfg.is_nonce_check_disabled() {
                     let tx_nonce = tx.nonce();
-                    let state = INonce::INonce::get_nonce(&nonce_manager, tx.caller(), nonce_key)
+                    let state = nonce::INonce::get_nonce(&nonce_manager, tx.caller(), nonce_key)
                         .map_err(|err| match err {
                             TempoPrecompileError::Fatal(err) => EVMError::Custom(err),
                             err => {

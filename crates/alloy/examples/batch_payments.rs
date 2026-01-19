@@ -8,7 +8,7 @@ use alloy::{
     sol_types::SolCall,
 };
 use tempo_alloy::{
-    TempoNetwork, precompiles::abi::ITIP20, primitives::transaction::Call,
+    TempoNetwork, precompiles::abi::tip20::tip20, primitives::transaction::Call,
     rpc::TempoTransactionRequest,
 };
 
@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let calls = vec![
         Call {
             to: token_address.into(),
-            input: ITIP20::transferCall {
+            input: tip20::transferCall {
                 to: recipient1,
                 amount: U256::from(100_000_000),
             }
@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Call {
             to: token_address.into(),
-            input: ITIP20::transferCall {
+            input: tip20::transferCall {
                 to: recipient2,
                 amount: U256::from(50_000_000),
             }

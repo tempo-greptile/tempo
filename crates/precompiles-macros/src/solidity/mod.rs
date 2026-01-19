@@ -329,8 +329,10 @@ pub(crate) fn expand(item: ItemMod, config: SolidityConfig) -> syn::Result<Token
             })
             .unwrap_or_default();
 
-        let inner = interface::generate_instance(&module.name, &module.interfaces, events)?;
-        let instance_name = format_ident!("{}Instance", module.name);
+        let pascal_name = crate::utils::to_pascal_case(&module.name.to_string());
+        let pascal_ident = format_ident!("{}", pascal_name);
+        let instance_name = format_ident!("{}Instance", pascal_name);
+        let inner = interface::generate_instance(&pascal_ident, &module.interfaces, events)?;
         Some(quote! {
             #[cfg(feature = "rpc")]
             mod __instance_impl {

@@ -7,7 +7,8 @@ use alloy::{
 };
 use alloy_rpc_types_eth::TransactionRequest;
 use tempo_chainspec::spec::TEMPO_BASE_FEE;
-use tempo_precompiles::abi::{ITIP20, IFeeManager};
+use tempo_precompiles::abi::tip20::tip20;
+use tempo_precompiles::abi::tip_fee_manager::fee_manager;
 use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -39,13 +40,13 @@ async fn test_payment_lane_with_mixed_load() -> eyre::Result<()> {
     assert_eq!(balance2, U256::ZERO);
 
     // Get fee tokens for both accounts
-    let fee_manager = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
+    let fee_manager = fee_manager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
     let fee_token_address1 = fee_manager.userTokens(caller).call().await?;
-    let fee_token1 = ITIP20::new(fee_token_address1, provider.clone());
+    let fee_token1 = tip20::new(fee_token_address1, provider.clone());
 
-    let fee_manager2 = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, provider2.clone());
+    let fee_manager2 = fee_manager::new(TIP_FEE_MANAGER_ADDRESS, provider2.clone());
     let fee_token_address2 = fee_manager2.userTokens(caller2).call().await?;
-    let fee_token2 = ITIP20::new(fee_token_address2, provider2.clone());
+    let fee_token2 = tip20::new(fee_token_address2, provider2.clone());
 
     // Setup TIP20 tokens for payment transactions
     let token = crate::utils::setup_test_token(provider.clone(), caller).await?;
@@ -443,7 +444,7 @@ async fn test_payment_lane_ordering() -> eyre::Result<()> {
     // Create token instances for each provider
     let mut tokens = Vec::new();
     for provider in &providers {
-        let token = ITIP20::new(*shared_token.address(), provider.clone());
+        let token = tip20::new(*shared_token.address(), provider.clone());
         tokens.push(token);
     }
 

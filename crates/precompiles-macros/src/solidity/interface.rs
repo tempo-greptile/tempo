@@ -435,10 +435,10 @@ fn generate_calls_enum(enum_name: &Ident, methods: &[MethodCodegen<'_>]) -> Toke
 
 /// Generate provider-bound instance struct for RPC interactions.
 ///
-/// This generates a `{ModuleName}Instance<P, N>` struct with methods from ALL
+/// This generates a `{PascalName}Instance` struct with methods from ALL
 /// interface traits, providing a unified API for the module.
 pub(super) fn generate_instance(
-    module_name: &proc_macro2::Ident,
+    pascal_name: &proc_macro2::Ident,
     interfaces: &[InterfaceDef],
     events: Vec<ContractEventInfo>,
 ) -> syn::Result<TokenStream> {
@@ -470,7 +470,7 @@ pub(super) fn generate_instance(
         .collect();
 
     let codegen = ContractCodegen::new(
-        module_name.clone(),
+        pascal_name.clone(),
         functions,
         events,
         false, // No bytecode

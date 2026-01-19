@@ -47,16 +47,17 @@ use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_evm::evm::{TempoEvm, TempoEvmFactory};
 use tempo_precompiles::{
     PATH_USD_ADDRESS,
-    abi::ITIP20::prelude::*,
+    abi::tip20::tip20::{ISSUER_ROLE, prelude::*},
+    abi::tip_fee_manager::fee_manager::traits::IFeeAMM,
     account_keychain::AccountKeychain,
     nonce::NonceManager,
     stablecoin_dex::StablecoinDEX,
     storage::{ContractStorage, StorageCtx},
-    tip_fee_manager::{IFeeManager::traits::*, TipFeeManager},
+    tip_fee_manager::{TipFeeManager, fee_manager::traits::IFeeManager as _},
     tip20::TIP20Token,
     tip20_factory::{TIP20Factory, traits::IFactory as _},
     tip403_registry::TIP403Registry,
-    validator_config::{IValidatorConfig::IValidatorConfig as _, ValidatorConfig},
+    validator_config::{ValidatorConfig, traits::IValidatorConfig as _},
 };
 
 /// Generate genesis allocation file for testing

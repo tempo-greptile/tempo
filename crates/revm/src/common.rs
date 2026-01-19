@@ -11,12 +11,12 @@ use revm::{
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_precompiles::{
     DEFAULT_FEE_TOKEN, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
-    abi::IStablecoinDEX,
     error::{Result as TempoResult, TempoPrecompileError},
+    stablecoin_dex::stablecoin_dex,
     storage::{Handler, PrecompileStorageProvider, StorageCtx},
-    tip_fee_manager::{IFeeManager::setUserTokenCall, TipFeeManager},
-    tip20::{ITIP20 as tip20, TIP20Token, is_tip20_prefix},
-    tip403_registry::{ITIP403Registry::IRegistry as _, TIP403Registry},
+    tip_fee_manager::{TipFeeManager, fee_manager::setUserTokenCall},
+    tip20::{TIP20Token, is_tip20_prefix, tip20},
+    tip403_registry::{TIP403Registry, tip403_registry::IRegistry as _},
 };
 use tempo_primitives::TempoTxEnvelope;
 
@@ -177,11 +177,11 @@ pub trait TempoStateAccess<M = ()> {
             && kind.to() == Some(&STABLECOIN_DEX_ADDRESS)
             && (!tx.is_aa() || calls.next().is_none())
         {
-            if let Ok(call) = IStablecoinDEX::swapExactAmountInCall::abi_decode(input)
+            if let Ok(call) = stablecoin_dex::swapExactAmountInCall::abi_decode(input)
                 && self.is_valid_fee_token(spec, call.token_in)?
             {
                 return Ok(call.token_in);
-            } else if let Ok(call) = IStablecoinDEX::swapExactAmountOutCall::abi_decode(input)
+            } else if let Ok(call) = stablecoin_dex::swapExactAmountOutCall::abi_decode(input)
                 && self.is_valid_fee_token(spec, call.token_in)?
             {
                 return Ok(call.token_in);
@@ -407,7 +407,7 @@ mod tests {
     use super::*;
     use alloy_primitives::address;
     use revm::{context::TxEnv, database::EmptyDB, interpreter::instructions::utility::IntoU256};
-    use tempo_precompiles::{PATH_USD_ADDRESS, abi::IFeeManager::setUserTokenCall};
+    use tempo_precompiles::PATH_USD_ADDRESS;
 
     #[test]
     fn test_get_fee_token_fee_token_set() -> eyre::Result<()> {
@@ -520,7 +520,7 @@ mod tests {
         let token_out = address!("0x20C0000000000000000000000000000000000001");
 
         // Test swapExactAmountIn
-        let call = IStablecoinDEX::swapExactAmountInCall {
+        let call = stablecoin_dex::swapExactAmountInCall {
             token_in,
             token_out,
             amount_in: 1000,
@@ -543,7 +543,7 @@ mod tests {
         assert_eq!(token, token_in);
 
         // Test swapExactAmountOut
-        let call = IStablecoinDEX::swapExactAmountOutCall {
+        let call = stablecoin_dex::swapExactAmountOutCall {
             token_in,
             token_out,
             amount_out: 900,
@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn test_is_tip20_fee_inference_call() {
-        use tempo_precompiles::tip20::ITIP20::{
+        use tempo_precompiles::tip20::tip20::{
             approveCall, distributeRewardCall, grantRoleCall, mintCall, transferCall,
             transferWithMemoCall,
         };

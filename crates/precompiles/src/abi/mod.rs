@@ -9,15 +9,6 @@ pub mod tip403_registry;
 pub mod tip_fee_manager;
 pub mod validator_config;
 
-pub use account_keychain::IAccountKeychain;
-pub use nonce::INonce;
-pub use stablecoin_dex::IStablecoinDEX;
-pub use tip_fee_manager::IFeeManager;
-pub use tip20::ITIP20;
-pub use tip20_factory::ITIP20Factory;
-pub use tip403_registry::ITIP403Registry;
-pub use validator_config::IValidatorConfig;
-
 pub const TIP403_REGISTRY_ADDRESS: Address = address!("0x403C000000000000000000000000000000000000");
 pub const TIP20_FACTORY_ADDRESS: Address = address!("0x20FC000000000000000000000000000000000000");
 pub const STABLECOIN_DEX_ADDRESS: Address = address!("0xdec0000000000000000000000000000000000000");

@@ -4,7 +4,7 @@ use tempo_precompiles_macros::abi;
 
 #[abi(dispatch)]
 #[rustfmt::skip]
-pub mod IAccountKeychain {
+pub mod account_keychain {
     use alloy::primitives::{Address, U256};
 
     #[cfg(feature = "precompile")]

@@ -2,7 +2,7 @@
 
 use crate::{
     PATH_USD_ADDRESS, Precompile, TIP20_FACTORY_ADDRESS,
-    abi::ITIP20::{Error as TIP20Error, prelude::*},
+    abi::tip20::tip20::{Error as TIP20Error, prelude::*, ISSUER_ROLE},
     error::Result,
     storage::{ContractStorage, StorageCtx, hashmap::HashMapStorageProvider},
     tip20::TIP20Token,
@@ -16,7 +16,7 @@ use revm::precompile::PrecompileError;
 use tempo_contracts::precompiles::UnknownFunctionSelector;
 
 #[cfg(any(test, feature = "test-utils"))]
-use crate::{abi::ITIP20Factory::TokenCreated, error::TempoPrecompileError};
+use crate::{abi::tip20_factory::tip20_factory::TokenCreated, error::TempoPrecompileError};
 
 /// Checks that all selectors in an interface have dispatch handlers.
 ///

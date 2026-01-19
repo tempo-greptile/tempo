@@ -215,7 +215,7 @@ mod tests {
         nonce::NonceManager,
         storage::{StorageCtx, evm::EvmPrecompileStorageProvider},
         test_util::TIP20Setup,
-        abi::ITIP20,
+        abi::tip20::tip20,
     };
     use tempo_primitives::{
         TempoTransaction,
@@ -599,7 +599,7 @@ mod tests {
         let caller = Address::repeat_byte(0x01);
         let contract = Address::repeat_byte(0x42);
 
-        let input_bytes = ITIP20::setSupplyCapCall {
+        let input_bytes = tip20::setSupplyCapCall {
             new_supply_cap: U256::from(100),
         }
         .abi_encode();

@@ -14,7 +14,8 @@ use eyre::Context;
 use rand_distr::{Distribution, Exp, Zipf};
 use reqwest::Url;
 use tempo_precompiles::{
-    TIP_FEE_MANAGER_ADDRESS, abi::ITIP20, tip_fee_manager::IFeeManager::IFeeManagerInstance,
+    TIP_FEE_MANAGER_ADDRESS, abi::tip20::tip20,
+    tip_fee_manager::fee_manager::FeeManagerInstance,
 };
 use tempo_telemetry_util::error_field;
 use tracing::{debug, info, warn};
@@ -74,7 +75,7 @@ impl SyntheticLoadGenerator {
         for address in &addresses {
             let fee_token_address =
                 zipf_vec_sample(&mut rng, fee_token_zipf, &self.fee_token_addresses)?;
-            let fee_manager = IFeeManagerInstance::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
+            let fee_manager = FeeManagerInstance::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
             _ = fee_manager
                 .setUserToken(*fee_token_address)
                 .from(*address)
@@ -99,7 +100,7 @@ impl SyntheticLoadGenerator {
                 "sending tip20 tokens"
             );
 
-            let token = ITIP20::new(*token, provider.clone());
+            let token = tip20::new(*token, provider.clone());
             if let Err(e) = token
                 .transfer(*recipient, U256::from(10))
                 .from(*sender)

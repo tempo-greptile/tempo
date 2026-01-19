@@ -6,7 +6,7 @@ use alloy::{
     primitives::{U256, address},
     providers::ProviderBuilder,
 };
-use tempo_alloy::{TempoNetwork, precompiles::abi::ITIP20};
+use tempo_alloy::{TempoNetwork, precompiles::abi::tip20::tip20};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&std::env::var("RPC_URL").expect("No RPC URL set"))
         .await?;
 
-    let token = ITIP20::new(
+    let token = tip20::new(
         address!("0x20c0000000000000000000000000000000000001"), // AlphaUSD
         &provider,
     );

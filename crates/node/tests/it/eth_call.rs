@@ -15,10 +15,9 @@ use reth_evm::revm::interpreter::instructions::utility::IntoU256;
 use tempo_chainspec::spec::TEMPO_BASE_FEE;
 use tempo_contracts::precompiles::UnknownFunctionSelector;
 use tempo_precompiles::{PATH_USD_ADDRESS, TIP20_FACTORY_ADDRESS, tip20::TIP20Token};
-use tempo_precompiles::abi::{
-    ITIP20::{self, transferCall},
-    IFeeManager::new as new_fee_manager,
-};
+use tempo_precompiles::abi::tip20::tip20;
+use tip20::transferCall;
+use tempo_precompiles::abi::tip_fee_manager::fee_manager::new as new_fee_manager;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_eth_call() -> eyre::Result<()> {
@@ -195,16 +194,16 @@ async fn test_eth_get_logs() -> eyre::Result<()> {
 
     // NOTE: this currently reflects the event emission from the reference contract. Double check
     // this is the expected behavior
-    let transfer_event = ITIP20::Transfer::decode_log(&logs[0].inner)?;
+    let transfer_event = tip20::Transfer::decode_log(&logs[0].inner)?;
     assert_eq!(transfer_event.from, Address::ZERO);
     assert_eq!(transfer_event.to, caller);
     assert_eq!(transfer_event.amount, mint_amount);
 
-    let mint_event = ITIP20::Mint::decode_log(&logs[1].inner)?;
+    let mint_event = tip20::Mint::decode_log(&logs[1].inner)?;
     assert_eq!(mint_event.to, caller);
     assert_eq!(mint_event.amount, mint_amount);
 
-    let transfer_event = ITIP20::Transfer::decode_log(&logs[2].inner)?;
+    let transfer_event = tip20::Transfer::decode_log(&logs[2].inner)?;
     assert_eq!(transfer_event.from, caller);
     assert_eq!(transfer_event.to, recipient);
     assert_eq!(transfer_event.amount, mint_amount);

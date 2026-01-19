@@ -4,7 +4,7 @@ use tempo_precompiles_macros::abi;
 
 #[abi(dispatch)]
 #[rustfmt::skip]
-pub mod IFeeManager {
+pub mod fee_manager {
     use alloy::primitives::{Address, B256, U256, uint};
 
     #[cfg(feature = "precompile")]

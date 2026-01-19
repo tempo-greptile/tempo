@@ -4,8 +4,9 @@ use std::{
 };
 
 use crate::abi::{
-    IAccountKeychain, IFeeManager, INonce, IStablecoinDEX, ITIP20, ITIP20Factory, ITIP403Registry,
-    IValidatorConfig,
+    account_keychain::IAccountKeychain, nonce::INonce, stablecoin_dex::IStablecoinDex,
+    tip20::ITip20, tip20_factory::ITip20Factory, tip403_registry::ITip403Registry,
+    tip_fee_manager::IFeeManager, validator_config::IValidatorConfig,
 };
 use alloy::{
     primitives::{Selector, U256},
@@ -21,19 +22,19 @@ use tempo_contracts::precompiles::UnknownFunctionSelector;
 pub enum TempoPrecompileError {
     /// Stablecoin DEX error
     #[error("Stablecoin DEX error: {0:?}")]
-    StablecoinDEX(IStablecoinDEX::Error),
+    StablecoinDEX(IStablecoinDex::Error),
 
     /// Error from TIP20 token
     #[error("TIP20 token error: {0:?}")]
-    TIP20(ITIP20::Error),
+    TIP20(ITip20::Error),
 
     /// Error from TIP20 factory
     #[error("TIP20 factory error: {0:?}")]
-    TIP20Factory(ITIP20Factory::Error),
+    TIP20Factory(ITip20Factory::Error),
 
     /// Error from 403 registry
     #[error("TIP403 registry error: {0:?}")]
-    TIP403Registry(ITIP403Registry::Error),
+    TIP403Registry(ITip403Registry::Error),
 
     /// Error from TIP fee manager
     #[error("TIP fee manager error: {0:?}")]

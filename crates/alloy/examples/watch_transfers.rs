@@ -4,7 +4,7 @@
 
 use alloy::{primitives::address, providers::ProviderBuilder};
 use futures::StreamExt;
-use tempo_alloy::{TempoNetwork, precompiles::abi::ITIP20};
+use tempo_alloy::{TempoNetwork, precompiles::abi::tip20::tip20};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -12,7 +12,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&std::env::var("RPC_URL").expect("No RPC URL set"))
         .await?;
 
-    let mut transfers = ITIP20::new(
+    let mut transfers = tip20::new(
         address!("0x20c0000000000000000000000000000000000001"),
         &provider,
     )

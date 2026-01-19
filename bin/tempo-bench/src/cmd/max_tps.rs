@@ -53,15 +53,15 @@ use std::{
     thread,
     time::Duration,
 };
-use tempo_precompiles::abi::IStablecoinDEX::IStablecoinDEXInstance;
+use tempo_precompiles::abi::stablecoin_dex::stablecoin_dex::StablecoinDexInstance;
 use tempo_precompiles::{
     STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS, TIP20_FACTORY_ADDRESS,
     abi::{
-        ITIP20::{self, ITIP20Instance, prelude::*},
-        ITIP20Factory,
+        tip20::tip20::{self, ISSUER_ROLE, Tip20Instance},
+        tip20_factory::tip20_factory,
     },
     stablecoin_dex::{MAX_TICK, MIN_ORDER_AMOUNT, MIN_TICK, TICK_SPACING},
-    tip_fee_manager::{DEFAULT_FEE_TOKEN, IFeeManager::IFeeManagerInstance},
+    tip_fee_manager::{DEFAULT_FEE_TOKEN, fee_manager::FeeManagerInstance},
 };
 use tokio::{
     select,
@@ -271,7 +271,7 @@ impl MaxTpsArgs {
             signer_providers
                 .iter()
                 .map(async |(_, provider)| {
-                    IFeeManagerInstance::new(TIP_FEE_MANAGER_ADDRESS, provider.clone())
+                    FeeManagerInstance::new(TIP_FEE_MANAGER_ADDRESS, provider.clone())
                         .setUserToken(self.fee_token)
                         .send()
                         .await
@@ -565,7 +565,7 @@ async fn generate_transactions<F: TxFiller<TempoNetwork> + 'static>(
             let mut tx = match tx_index {
                 0 => {
                     tip20_transfers.fetch_add(1, Ordering::Relaxed);
-                    let token = ITIP20Instance::new(token, provider.clone());
+                    let token = Tip20Instance::new(token, provider.clone());
 
                     // Transfer minimum possible amount
                     token
@@ -575,7 +575,7 @@ async fn generate_transactions<F: TxFiller<TempoNetwork> + 'static>(
                 1 => {
                     swaps.fetch_add(1, Ordering::Relaxed);
                     let exchange =
-                        IStablecoinDEXInstance::new(STABLECOIN_DEX_ADDRESS, provider.clone());
+                        StablecoinDexInstance::new(STABLECOIN_DEX_ADDRESS, provider.clone());
 
                     // Swap minimum possible amount
                     exchange
@@ -585,7 +585,7 @@ async fn generate_transactions<F: TxFiller<TempoNetwork> + 'static>(
                 2 => {
                     orders.fetch_add(1, Ordering::Relaxed);
                     let exchange =
-                        IStablecoinDEXInstance::new(STABLECOIN_DEX_ADDRESS, provider.clone());
+                        StablecoinDexInstance::new(STABLECOIN_DEX_ADDRESS, provider.clone());
 
                     // Place an order at a random tick that's a multiple of `TICK_SPACING`
                     let tick =

@@ -24,22 +24,23 @@ use reth_node_core::args::RpcServerArgs;
 use reth_rpc_builder::RpcModuleSelection;
 use std::{sync::Arc, time::Duration};
 use tempo_chainspec::spec::TempoChainSpec;
-use tempo_precompiles::abi::ITIP20::{self, ITIP20Instance, grantRoleCall};
+use tempo_precompiles::abi::tip20::tip20;
+use tip20::{Tip20Instance, grantRoleCall};
 use tempo_node::node::TempoNode;
 use tempo_payload_types::{TempoPayloadAttributes, TempoPayloadBuilderAttributes};
 use tempo_precompiles::{
-    PATH_USD_ADDRESS, TIP20_FACTORY_ADDRESS, abi::ITIP20Factory, tip20::ISSUER_ROLE,
+    PATH_USD_ADDRESS, TIP20_FACTORY_ADDRESS, abi::tip20_factory::tip20_factory, tip20::ISSUER_ROLE,
 };
 
 /// Creates a test TIP20 token with issuer role granted to the caller
 pub(crate) async fn setup_test_token<P>(
     provider: P,
     caller: Address,
-) -> eyre::Result<ITIP20Instance<impl Clone + Provider>>
+) -> eyre::Result<Tip20Instance<impl Clone + Provider>>
 where
     P: Provider + Clone,
 {
-    let factory = ITIP20Factory::new(TIP20_FACTORY_ADDRESS, provider.clone());
+    let factory = tip20_factory::new(TIP20_FACTORY_ADDRESS, provider.clone());
     let salt = B256::random();
     let receipt = factory
         .createToken(
@@ -54,10 +55,10 @@ where
         .await?
         .get_receipt()
         .await?;
-    let event = ITIP20Factory::TokenCreated::decode_log(&receipt.logs()[1].inner).unwrap();
+    let event = tip20_factory::TokenCreated::decode_log(&receipt.logs()[1].inner).unwrap();
 
     let token_addr = event.token;
-    let token = ITIP20::new(token_addr, provider.clone());
+    let token = tip20::new(token_addr, provider.clone());
 
     alloy::contract::SolCallBuilder::new_sol(
         &provider,

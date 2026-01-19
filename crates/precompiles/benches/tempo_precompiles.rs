@@ -2,10 +2,12 @@ use alloy::primitives::{Address, FixedBytes, U256};
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use tempo_precompiles::{
-    abi::{ITIP20::traits::*, ITIP403Registry, ITIP403Registry::traits::*},
+    abi::{
+        tip20::tip20::{ISSUER_ROLE, PAUSE_ROLE, UNPAUSE_ROLE, traits::*},
+        tip403_registry::tip403_registry::{PolicyType, traits::*},
+    },
     storage::{StorageCtx, hashmap::HashMapStorageProvider},
     test_util::TIP20Setup,
-    tip20::{ISSUER_ROLE, PAUSE_ROLE, UNPAUSE_ROLE},
     tip403_registry::TIP403Registry,
 };
 
@@ -449,7 +451,7 @@ fn tip403_registry_view(c: &mut Criterion) {
                 .create_policy(
                     admin,
                     admin,
-                    ITIP403Registry::PolicyType::WHITELIST,
+                    PolicyType::WHITELIST,
                 )
                 .unwrap();
 
@@ -472,7 +474,7 @@ fn tip403_registry_view(c: &mut Criterion) {
                 .create_policy(
                     admin,
                     admin,
-                    ITIP403Registry::PolicyType::WHITELIST,
+                    PolicyType::WHITELIST,
                 )
                 .unwrap();
 
@@ -498,7 +500,7 @@ fn tip403_registry_mutate(c: &mut Criterion) {
                 let registry = black_box(&mut registry);
                 let admin = black_box(admin);
                 let result = registry
-                    .create_policy(admin, admin, ITIP403Registry::PolicyType::WHITELIST)
+                    .create_policy(admin, admin, PolicyType::WHITELIST)
                     .unwrap();
                 black_box(result);
             });
@@ -521,7 +523,7 @@ fn tip403_registry_mutate(c: &mut Criterion) {
                     .create_policy_with_accounts(
                         admin,
                         admin,
-                        ITIP403Registry::PolicyType::WHITELIST,
+                        PolicyType::WHITELIST,
                         accounts.clone(),
                     )
                     .unwrap();
@@ -536,7 +538,7 @@ fn tip403_registry_mutate(c: &mut Criterion) {
         StorageCtx::enter(&mut storage, || {
             let mut registry = TIP403Registry::new();
             let policy_id = registry
-                .create_policy(admin, admin, ITIP403Registry::PolicyType::WHITELIST)
+                .create_policy(admin, admin, PolicyType::WHITELIST)
                 .unwrap();
 
             b.iter(|| {
@@ -554,7 +556,7 @@ fn tip403_registry_mutate(c: &mut Criterion) {
         StorageCtx::enter(&mut storage, || {
             let mut registry = TIP403Registry::new();
             let policy_id = registry
-                .create_policy(admin, admin, ITIP403Registry::PolicyType::WHITELIST)
+                .create_policy(admin, admin, PolicyType::WHITELIST)
                 .unwrap();
 
             b.iter(|| {
@@ -574,7 +576,7 @@ fn tip403_registry_mutate(c: &mut Criterion) {
         StorageCtx::enter(&mut storage, || {
             let mut registry = TIP403Registry::new();
             let policy_id = registry
-                .create_policy(admin, admin, ITIP403Registry::PolicyType::BLACKLIST)
+                .create_policy(admin, admin, PolicyType::BLACKLIST)
                 .unwrap();
 
             b.iter(|| {

@@ -2,10 +2,9 @@ use alloy::{
     primitives::U256, providers::ProviderBuilder, signers::local::MnemonicBuilder,
     sol_types::SolError,
 };
-use tempo_precompiles::abi::{
-    IStablecoinDEX,
-    ITIP20::{self, ITIP20Instance},
-};
+use tempo_precompiles::abi::tip20::tip20;
+use tip20::Tip20Instance;
+use tempo_precompiles::abi::stablecoin_dex::stablecoin_dex;
 use tempo_precompiles::{
     PATH_USD_ADDRESS, STABLECOIN_DEX_ADDRESS, stablecoin_dex::MIN_ORDER_AMOUNT,
 };
@@ -27,7 +26,7 @@ async fn test_bids() -> eyre::Result<()> {
         .connect_http(http_url.clone());
 
     let base = setup_test_token(provider.clone(), caller).await?;
-    let quote = ITIP20Instance::new(PATH_USD_ADDRESS, provider.clone());
+    let quote = Tip20Instance::new(PATH_USD_ADDRESS, provider.clone());
 
     let account_data: Vec<_> = (1..=10)
         .map(|i| {
@@ -58,7 +57,7 @@ async fn test_bids() -> eyre::Result<()> {
     await_receipts(&mut pending).await?;
 
     // Pair is auto-created on first place() call
-    let exchange = IStablecoinDEX::new(STABLECOIN_DEX_ADDRESS, provider.clone());
+    let exchange = stablecoin_dex::new(STABLECOIN_DEX_ADDRESS, provider.clone());
 
     let order_amount = 1000000000;
 
@@ -67,7 +66,7 @@ async fn test_bids() -> eyre::Result<()> {
         let account_provider = ProviderBuilder::new()
             .wallet(signer.clone())
             .connect_http(http_url.clone());
-        let quote = ITIP20::new(*quote.address(), account_provider);
+        let quote = tip20::new(*quote.address(), account_provider);
         pending.push(
             quote
                 .approve(STABLECOIN_DEX_ADDRESS, U256::MAX)
@@ -85,7 +84,7 @@ async fn test_bids() -> eyre::Result<()> {
         let account_provider = ProviderBuilder::new()
             .wallet(signer.clone())
             .connect_http(http_url.clone());
-        let exchange = IStablecoinDEX::new(STABLECOIN_DEX_ADDRESS, account_provider);
+        let exchange = stablecoin_dex::new(STABLECOIN_DEX_ADDRESS, account_provider);
 
         let call = exchange.place(*base.address(), order_amount, true, tick);
 
@@ -179,7 +178,7 @@ async fn test_asks() -> eyre::Result<()> {
         .connect_http(http_url.clone());
 
     let base = setup_test_token(provider.clone(), caller).await?;
-    let quote = ITIP20Instance::new(PATH_USD_ADDRESS, provider.clone());
+    let quote = Tip20Instance::new(PATH_USD_ADDRESS, provider.clone());
 
     let account_data: Vec<_> = (1..=3)
         .map(|i| {
@@ -204,7 +203,7 @@ async fn test_asks() -> eyre::Result<()> {
     await_receipts(&mut pending).await?;
 
     // Pair is auto-created on first place() call
-    let exchange = IStablecoinDEX::new(STABLECOIN_DEX_ADDRESS, provider.clone());
+    let exchange = stablecoin_dex::new(STABLECOIN_DEX_ADDRESS, provider.clone());
 
     let order_amount = 1000000000;
 
@@ -213,7 +212,7 @@ async fn test_asks() -> eyre::Result<()> {
         let account_provider = ProviderBuilder::new()
             .wallet(signer.clone())
             .connect_http(http_url.clone());
-        let base = ITIP20::new(*base.address(), account_provider);
+        let base = tip20::new(*base.address(), account_provider);
         pending.push(
             base.approve(STABLECOIN_DEX_ADDRESS, U256::MAX)
                 .send()
@@ -230,7 +229,7 @@ async fn test_asks() -> eyre::Result<()> {
         let account_provider = ProviderBuilder::new()
             .wallet(signer.clone())
             .connect_http(http_url.clone());
-        let exchange = IStablecoinDEX::new(STABLECOIN_DEX_ADDRESS, account_provider);
+        let exchange = stablecoin_dex::new(STABLECOIN_DEX_ADDRESS, account_provider);
 
         let call = exchange.place(*base.address(), order_amount, false, tick);
 
@@ -340,7 +339,7 @@ async fn test_cancel_orders() -> eyre::Result<()> {
         .connect_http(http_url.clone());
 
     let base = setup_test_token(provider.clone(), caller).await?;
-    let quote = ITIP20Instance::new(PATH_USD_ADDRESS, provider.clone());
+    let quote = Tip20Instance::new(PATH_USD_ADDRESS, provider.clone());
 
     let account_data: Vec<_> = (1..=10)
         .map(|i| {
@@ -364,7 +363,7 @@ async fn test_cancel_orders() -> eyre::Result<()> {
     await_receipts(&mut pending).await?;
 
     // Pair is auto-created on first place() call
-    let exchange = IStablecoinDEX::new(STABLECOIN_DEX_ADDRESS, provider.clone());
+    let exchange = stablecoin_dex::new(STABLECOIN_DEX_ADDRESS, provider.clone());
 
     let order_amount = 1000000000;
 
@@ -373,7 +372,7 @@ async fn test_cancel_orders() -> eyre::Result<()> {
         let account_provider = ProviderBuilder::new()
             .wallet(signer.clone())
             .connect_http(http_url.clone());
-        let quote = ITIP20::new(*quote.address(), account_provider);
+        let quote = tip20::new(*quote.address(), account_provider);
         pending.push(
             quote
                 .approve(STABLECOIN_DEX_ADDRESS, U256::MAX)
@@ -391,7 +390,7 @@ async fn test_cancel_orders() -> eyre::Result<()> {
         let account_provider = ProviderBuilder::new()
             .wallet(signer.clone())
             .connect_http(http_url.clone());
-        let exchange = IStablecoinDEX::new(STABLECOIN_DEX_ADDRESS, account_provider);
+        let exchange = stablecoin_dex::new(STABLECOIN_DEX_ADDRESS, account_provider);
 
         let call = exchange.place(*base.address(), order_amount, true, tick);
         let order_tx = call.send().await?;
@@ -415,7 +414,7 @@ async fn test_cancel_orders() -> eyre::Result<()> {
         let account_provider = ProviderBuilder::new()
             .wallet(signer.clone())
             .connect_http(http_url.clone());
-        let exchange = IStablecoinDEX::new(STABLECOIN_DEX_ADDRESS, account_provider);
+        let exchange = stablecoin_dex::new(STABLECOIN_DEX_ADDRESS, account_provider);
 
         let cancel_tx = exchange.cancel(order_id).send().await?;
         cancel_tx.get_receipt().await?;
@@ -451,7 +450,7 @@ async fn test_multi_hop_swap() -> eyre::Result<()> {
         .connect_http(http_url.clone());
 
     // Setup tokens: pathUSD (token_id=0) <- USDC (token_id=2) and pathUSD <- EURC (token_id=3)
-    let linking_usd = ITIP20Instance::new(PATH_USD_ADDRESS, provider.clone());
+    let linking_usd = Tip20Instance::new(PATH_USD_ADDRESS, provider.clone());
     let usdc = setup_test_token(provider.clone(), caller).await?; // This will be token_id=2
     let eurc = setup_test_token(provider.clone(), caller).await?; // This will be token_id=3
 
@@ -487,9 +486,9 @@ async fn test_multi_hop_swap() -> eyre::Result<()> {
     let alice_provider = ProviderBuilder::new()
         .wallet(alice_signer.clone())
         .connect_http(http_url.clone());
-    let alice_usdc = ITIP20::new(*usdc.address(), alice_provider.clone());
-    let alice_eurc = ITIP20::new(*eurc.address(), alice_provider.clone());
-    let alice_linking_usd = ITIP20::new(*linking_usd.address(), alice_provider.clone());
+    let alice_usdc = tip20::new(*usdc.address(), alice_provider.clone());
+    let alice_eurc = tip20::new(*eurc.address(), alice_provider.clone());
+    let alice_linking_usd = tip20::new(*linking_usd.address(), alice_provider.clone());
 
     let mut pending = vec![];
     pending.push(
@@ -513,7 +512,7 @@ async fn test_multi_hop_swap() -> eyre::Result<()> {
     await_receipts(&mut pending).await?;
 
     // Alice places liquidity orders at tick 0 (1:1 price)
-    let alice_exchange = IStablecoinDEX::new(STABLECOIN_DEX_ADDRESS, alice_provider);
+    let alice_exchange = stablecoin_dex::new(STABLECOIN_DEX_ADDRESS, alice_provider);
     let liquidity_amount = 5_000_000_000u128;
 
     // For USDC -> pathUSD: need bid on USDC (buying USDC with pathUSD)
@@ -534,7 +533,7 @@ async fn test_multi_hop_swap() -> eyre::Result<()> {
     let bob_provider = ProviderBuilder::new()
         .wallet(bob_signer)
         .connect_http(http_url.clone());
-    let bob_usdc = ITIP20::new(*usdc.address(), bob_provider.clone());
+    let bob_usdc = tip20::new(*usdc.address(), bob_provider.clone());
     let tx = bob_usdc
         .approve(STABLECOIN_DEX_ADDRESS, U256::MAX)
         .send()
@@ -542,11 +541,11 @@ async fn test_multi_hop_swap() -> eyre::Result<()> {
     tx.get_receipt().await?;
 
     // Check Bob's balances before swap
-    let bob_exchange = IStablecoinDEX::new(STABLECOIN_DEX_ADDRESS, bob_provider.clone());
+    let bob_exchange = stablecoin_dex::new(STABLECOIN_DEX_ADDRESS, bob_provider.clone());
     let bob_usdc_before = bob_usdc.balanceOf(bob).call().await?;
-    let bob_eurc = ITIP20::new(*eurc.address(), bob_provider.clone());
+    let bob_eurc = tip20::new(*eurc.address(), bob_provider.clone());
     let bob_eurc_before = bob_eurc.balanceOf(bob).call().await?;
-    let bob_linking_usd = ITIP20::new(*linking_usd.address(), bob_provider);
+    let bob_linking_usd = tip20::new(*linking_usd.address(), bob_provider);
     let bob_linking_usd_wallet_before = bob_linking_usd.balanceOf(bob).call().await?;
     let bob_linking_usd_exchange_before = bob_exchange
         .balanceOf(bob, *linking_usd.address())
@@ -628,10 +627,10 @@ async fn test_place_rejects_order_below_dust_limit() -> eyre::Result<()> {
         .connect_http(http_url.clone());
 
     let base = setup_test_token(provider.clone(), caller).await?;
-    let quote = ITIP20Instance::new(PATH_USD_ADDRESS, provider.clone());
+    let quote = Tip20Instance::new(PATH_USD_ADDRESS, provider.clone());
 
     // Pair is auto-created on first place() call
-    let exchange = IStablecoinDEX::new(STABLECOIN_DEX_ADDRESS, provider.clone());
+    let exchange = stablecoin_dex::new(STABLECOIN_DEX_ADDRESS, provider.clone());
 
     // Mint and approve tokens
     let mint_amount = U256::from(1000000000u128);
@@ -656,7 +655,7 @@ async fn test_place_rejects_order_below_dust_limit() -> eyre::Result<()> {
 
     let expected_selector = format!(
         "0x{}",
-        alloy::hex::encode(IStablecoinDEX::BelowMinimumOrderSize::SELECTOR)
+        alloy::hex::encode(stablecoin_dex::BelowMinimumOrderSize::SELECTOR)
     );
 
     // Try to place a bid order below dust limit (should fail)
@@ -720,10 +719,10 @@ async fn test_place_flip_rejects_order_below_dust_limit() -> eyre::Result<()> {
         .connect_http(http_url.clone());
 
     let base = setup_test_token(provider.clone(), caller).await?;
-    let quote = ITIP20Instance::new(PATH_USD_ADDRESS, provider.clone());
+    let quote = Tip20Instance::new(PATH_USD_ADDRESS, provider.clone());
 
     // Pair is auto-created on first place() call
-    let exchange = IStablecoinDEX::new(STABLECOIN_DEX_ADDRESS, provider.clone());
+    let exchange = stablecoin_dex::new(STABLECOIN_DEX_ADDRESS, provider.clone());
 
     // Mint and approve tokens
     let mint_amount = U256::from(1000000000u128);
@@ -748,7 +747,7 @@ async fn test_place_flip_rejects_order_below_dust_limit() -> eyre::Result<()> {
 
     let expected_selector = format!(
         "0x{}",
-        alloy::hex::encode(IStablecoinDEX::BelowMinimumOrderSize::SELECTOR)
+        alloy::hex::encode(stablecoin_dex::BelowMinimumOrderSize::SELECTOR)
     );
 
     // Try to place a flip bid order below dust limit (should fail)

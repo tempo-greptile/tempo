@@ -10,7 +10,8 @@ use alloy_primitives::Bytes;
 use alloy_rpc_types_eth::TransactionRequest;
 use std::env;
 use tempo_alloy::rpc::TempoTransactionReceipt;
-use tempo_precompiles::{abi::ITIP20, tip_fee_manager::IFeeManager};
+use tempo_precompiles::abi::tip20::tip20;
+use tempo_precompiles::abi::tip_fee_manager::fee_manager;
 use tempo_precompiles::{PATH_USD_ADDRESS, TIP_FEE_MANAGER_ADDRESS};
 use tempo_primitives::transaction::calc_gas_balance_spending;
 
@@ -35,11 +36,11 @@ async fn test_fee_in_stable() -> eyre::Result<()> {
     let balance = provider.get_account_info(caller).await?.balance;
     assert_eq!(balance, U256::ZERO);
 
-    let fee_manager = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
+    let fee_manager = fee_manager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
     let fee_token_address = fee_manager.userTokens(caller).call().await?;
 
     // Get the balance of the fee token before the tx
-    let fee_token = ITIP20::new(fee_token_address, provider.clone());
+    let fee_token = tip20::new(fee_token_address, provider.clone());
     let initial_balance = fee_token.balanceOf(caller).call().await?;
 
     let tx = TransactionRequest::default().from(caller).to(caller);
@@ -58,7 +59,7 @@ async fn test_fee_in_stable() -> eyre::Result<()> {
 
     assert!(receipt.status());
     assert_eq!(receipt.logs().len(), 1);
-    let transfer = ITIP20::Transfer::decode_log(&receipt.logs()[0].inner)?;
+    let transfer = tip20::Transfer::decode_log(&receipt.logs()[0].inner)?;
     assert_eq!(transfer.from, caller);
     assert_eq!(transfer.to, TIP_FEE_MANAGER_ADDRESS);
     assert_eq!(transfer.amount, U256::from(cost));
@@ -85,7 +86,7 @@ async fn test_default_fee_token() -> eyre::Result<()> {
     let new_address = new_wallet.address();
 
     // Transfer pathUSD to the new wallet
-    let path_usd = ITIP20::new(PATH_USD_ADDRESS, provider.clone());
+    let path_usd = tip20::new(PATH_USD_ADDRESS, provider.clone());
     let transfer_amount = U256::from(1_000_000u64);
     path_usd
         .transfer(new_address, transfer_amount)
@@ -104,7 +105,7 @@ async fn test_default_fee_token() -> eyre::Result<()> {
     assert_eq!(balance, U256::ZERO);
 
     // Ensure the fee token is not set for the user
-    let fee_manager = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
+    let fee_manager = fee_manager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
     let fee_token_address = fee_manager.userTokens(new_address).call().await?;
     assert_eq!(fee_token_address, Address::ZERO);
 
@@ -125,7 +126,7 @@ async fn test_default_fee_token() -> eyre::Result<()> {
 
     assert!(receipt.status());
     assert_eq!(receipt.logs().len(), 1);
-    let transfer = ITIP20::Transfer::decode_log(&receipt.logs()[0].inner)?;
+    let transfer = tip20::Transfer::decode_log(&receipt.logs()[0].inner)?;
     assert_eq!(transfer.from, new_address);
     assert_eq!(transfer.to, TIP_FEE_MANAGER_ADDRESS);
     assert_eq!(transfer.amount, U256::from(cost));
@@ -153,11 +154,11 @@ async fn test_fee_transfer_logs() -> eyre::Result<()> {
     let balance = provider.get_account_info(caller).await?.balance;
     assert_eq!(balance, U256::ZERO);
 
-    let fee_manager = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
+    let fee_manager = fee_manager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
     let fee_token_address = fee_manager.userTokens(caller).call().await?;
 
     // Get the balance of the fee token before the tx
-    let fee_token = ITIP20::new(fee_token_address, provider.clone());
+    let fee_token = tip20::new(fee_token_address, provider.clone());
     let initial_balance = fee_token.balanceOf(caller).call().await?;
 
     let tx = TransactionRequest::default()
@@ -178,7 +179,7 @@ async fn test_fee_transfer_logs() -> eyre::Result<()> {
 
     assert!(!receipt.status());
     assert_eq!(receipt.logs().len(), 1);
-    let transfer = ITIP20::Transfer::decode_log(&receipt.logs()[0].inner)?;
+    let transfer = tip20::Transfer::decode_log(&receipt.logs()[0].inner)?;
     assert_eq!(transfer.from, caller);
     assert_eq!(transfer.to, TIP_FEE_MANAGER_ADDRESS);
     assert_eq!(transfer.amount, U256::from(cost));

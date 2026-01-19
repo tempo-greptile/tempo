@@ -8,7 +8,7 @@ use crate::{
 use alloy::primitives::{Address, U256};
 use tempo_precompiles_macros::{Storable, contract};
 
-pub use crate::abi::{ITIP403Registry, ITIP403Registry::PolicyType};
+pub use crate::abi::{tip403_registry::tip403_registry, tip403_registry::tip403_registry::PolicyType};
 
 #[derive(Debug, Clone, Storable)]
 pub struct PolicyData {
@@ -16,7 +16,7 @@ pub struct PolicyData {
     pub admin: Address,
 }
 
-#[contract(addr = TIP403_REGISTRY_ADDRESS, abi = ITIP403Registry, dispatch)]
+#[contract(addr = TIP403_REGISTRY_ADDRESS, abi = tip403_registry, dispatch)]
 pub struct TIP403Registry {
     policy_id_counter: u64,
     policy_data: Mapping<u64, PolicyData>,
@@ -100,7 +100,7 @@ impl TIP403Registry {
     }
 }
 
-impl ITIP403Registry::IRegistry for TIP403Registry {
+impl tip403_registry::IRegistry for TIP403Registry {
     fn policy_id_counter(&self) -> Result<u64> {
         self.policy_id_counter_internal()
     }
@@ -290,9 +290,9 @@ mod tests {
         StorageCtx::enter(&mut storage, || {
             let mut registry = TIP403Registry::new();
 
-            assert_eq!(ITIP403Registry::IRegistry::policy_id_counter(&registry)?, 2);
+            assert_eq!(tip403_registry::IRegistry::policy_id_counter(&registry)?, 2);
 
-            let result = ITIP403Registry::IRegistry::create_policy(
+            let result = tip403_registry::IRegistry::create_policy(
                 &mut registry,
                 admin,
                 admin,
@@ -301,9 +301,9 @@ mod tests {
             assert!(result.is_ok());
             assert_eq!(result?, 2);
 
-            assert_eq!(ITIP403Registry::IRegistry::policy_id_counter(&registry)?, 3);
+            assert_eq!(tip403_registry::IRegistry::policy_id_counter(&registry)?, 3);
 
-            let data = ITIP403Registry::IRegistry::policy_data(&registry, 2)?;
+            let data = tip403_registry::IRegistry::policy_data(&registry, 2)?;
             assert_eq!(data.0, PolicyType::WHITELIST);
             assert_eq!(data.1, admin);
             Ok(())
@@ -317,10 +317,10 @@ mod tests {
         StorageCtx::enter(&mut storage, || {
             let registry = TIP403Registry::new();
 
-            assert!(!ITIP403Registry::IRegistry::is_authorized(
+            assert!(!tip403_registry::IRegistry::is_authorized(
                 &registry, 0, user
             )?);
-            assert!(ITIP403Registry::IRegistry::is_authorized(
+            assert!(tip403_registry::IRegistry::is_authorized(
                 &registry, 1, user
             )?);
             Ok(())
@@ -335,18 +335,18 @@ mod tests {
         StorageCtx::enter(&mut storage, || {
             let mut registry = TIP403Registry::new();
 
-            let policy_id = ITIP403Registry::IRegistry::create_policy(
+            let policy_id = tip403_registry::IRegistry::create_policy(
                 &mut registry,
                 admin,
                 admin,
                 PolicyType::WHITELIST,
             )?;
 
-            assert!(!ITIP403Registry::IRegistry::is_authorized(
+            assert!(!tip403_registry::IRegistry::is_authorized(
                 &registry, policy_id, user
             )?);
 
-            ITIP403Registry::IRegistry::modify_policy_whitelist(
+            tip403_registry::IRegistry::modify_policy_whitelist(
                 &mut registry,
                 admin,
                 policy_id,
@@ -354,7 +354,7 @@ mod tests {
                 true,
             )?;
 
-            assert!(ITIP403Registry::IRegistry::is_authorized(
+            assert!(tip403_registry::IRegistry::is_authorized(
                 &registry, policy_id, user
             )?);
 
@@ -370,18 +370,18 @@ mod tests {
         StorageCtx::enter(&mut storage, || {
             let mut registry = TIP403Registry::new();
 
-            let policy_id = ITIP403Registry::IRegistry::create_policy(
+            let policy_id = tip403_registry::IRegistry::create_policy(
                 &mut registry,
                 admin,
                 admin,
                 PolicyType::BLACKLIST,
             )?;
 
-            assert!(ITIP403Registry::IRegistry::is_authorized(
+            assert!(tip403_registry::IRegistry::is_authorized(
                 &registry, policy_id, user
             )?);
 
-            ITIP403Registry::IRegistry::modify_policy_blacklist(
+            tip403_registry::IRegistry::modify_policy_blacklist(
                 &mut registry,
                 admin,
                 policy_id,
@@ -389,7 +389,7 @@ mod tests {
                 true,
             )?;
 
-            assert!(!ITIP403Registry::IRegistry::is_authorized(
+            assert!(!tip403_registry::IRegistry::is_authorized(
                 &registry, policy_id, user
             )?);
 
@@ -403,7 +403,7 @@ mod tests {
         StorageCtx::enter(&mut storage, || {
             let registry = TIP403Registry::new();
 
-            let result = ITIP403Registry::IRegistry::policy_data(&registry, 100);
+            let result = tip403_registry::IRegistry::policy_data(&registry, 100);
             assert!(result.is_err());
 
             let err = result.unwrap_err();
@@ -425,13 +425,13 @@ mod tests {
         StorageCtx::enter(&mut storage, || {
             let mut registry = TIP403Registry::new();
 
-            assert!(ITIP403Registry::IRegistry::policy_exists(&registry, 0)?);
-            assert!(ITIP403Registry::IRegistry::policy_exists(&registry, 1)?);
+            assert!(tip403_registry::IRegistry::policy_exists(&registry, 0)?);
+            assert!(tip403_registry::IRegistry::policy_exists(&registry, 1)?);
 
             let mut rng = rand::thread_rng();
             for _ in 0..100 {
                 let random_policy_id = rng.gen_range(2..u64::MAX);
-                assert!(!ITIP403Registry::IRegistry::policy_exists(
+                assert!(!tip403_registry::IRegistry::policy_exists(
                     &registry,
                     random_policy_id
                 )?);
@@ -439,7 +439,7 @@ mod tests {
 
             let mut created_policy_ids = Vec::new();
             for i in 0..50 {
-                let policy_id = ITIP403Registry::IRegistry::create_policy(
+                let policy_id = tip403_registry::IRegistry::create_policy(
                     &mut registry,
                     admin,
                     admin,
@@ -453,7 +453,7 @@ mod tests {
             }
 
             for policy_id in &created_policy_ids {
-                assert!(ITIP403Registry::IRegistry::policy_exists(
+                assert!(tip403_registry::IRegistry::policy_exists(
                     &registry, *policy_id
                 )?);
             }

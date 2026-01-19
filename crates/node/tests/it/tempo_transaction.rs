@@ -17,8 +17,9 @@ use tempo_alloy::TempoNetwork;
 use tempo_chainspec::spec::TEMPO_BASE_FEE;
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, DEFAULT_FEE_TOKEN,
-    abi::ITIP20::{self, transferCall},
 };
+use tempo_precompiles::abi::tip20::tip20;
+use tip20::transferCall;
 
 use tempo_primitives::{
     SignatureType, TempoTransaction, TempoTxEnvelope,
@@ -648,7 +649,7 @@ fn sign_aa_tx_with_p256_access_key(
 /// Helper to create a TIP20 transfer call
 fn create_transfer_call(to: Address, amount: U256) -> Call {
     use alloy::sol_types::SolCall;
-    use tempo_precompiles::abi::ITIP20::transferCall;
+    use tempo_precompiles::abi::tip20::tip20::transferCall;
 
     Call {
         to: DEFAULT_FEE_TOKEN.into(),
@@ -664,7 +665,7 @@ fn create_balance_of_call(account: Address) -> Call {
     Call {
         to: DEFAULT_FEE_TOKEN.into(),
         value: U256::ZERO,
-        input: ITIP20::balanceOfCall { account }.abi_encode().into(),
+        input: tip20::balanceOfCall { account }.abi_encode().into(),
     }
 }
 
@@ -2243,7 +2244,7 @@ async fn test_aa_p256_call_batching() -> eyre::Result<()> {
 
     println!("\nChecking initial recipient balances:");
     for (i, (recipient, _)) in recipients.iter().enumerate() {
-        let balance = ITIP20::new(fee_token, &provider)
+        let balance = tip20::new(fee_token, &provider)
             .balanceOf(*recipient)
             .call()
             .await?;
@@ -2317,7 +2318,7 @@ async fn test_aa_p256_call_batching() -> eyre::Result<()> {
         recipients.iter().zip(initial_balances.iter()).enumerate()
     {
         let expected_amount = transfer_base_amount * U256::from(*multiplier);
-        let final_balance = ITIP20::new(fee_token, &provider)
+        let final_balance = tip20::new(fee_token, &provider)
             .balanceOf(*recipient)
             .call()
             .await?;
@@ -2344,7 +2345,7 @@ async fn test_aa_p256_call_batching() -> eyre::Result<()> {
         .map(|i| transfer_base_amount * U256::from(i))
         .fold(U256::ZERO, |acc, x| acc + x);
 
-    let signer_final_balance = ITIP20::new(fee_token, &provider)
+    let signer_final_balance = tip20::new(fee_token, &provider)
         .balanceOf(signer_addr)
         .call()
         .await?;
@@ -2390,7 +2391,7 @@ async fn test_aa_fee_payer_tx() -> eyre::Result<()> {
     println!("User address: {user_addr} (unfunded)");
 
     // Verify user has ZERO balance (check AlphaUSD since that's what fees are paid in)
-    let user_token_balance = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let user_token_balance = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(user_addr)
         .call()
         .await?;
@@ -2402,7 +2403,7 @@ async fn test_aa_fee_payer_tx() -> eyre::Result<()> {
     println!("User token balance: {user_token_balance} (expected: 0)");
 
     // Get fee payer's balance before transaction (check AlphaUSD since that's what fees are paid in)
-    let fee_payer_balance_before = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let fee_payer_balance_before = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(fee_payer_addr)
         .call()
         .await?;
@@ -2488,7 +2489,7 @@ async fn test_aa_fee_payer_tx() -> eyre::Result<()> {
     );
 
     // Verify user still has ZERO balance (fee payer paid)
-    let user_token_balance_after = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let user_token_balance_after = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(user_addr)
         .call()
         .await?;
@@ -2499,7 +2500,7 @@ async fn test_aa_fee_payer_tx() -> eyre::Result<()> {
     );
 
     // Verify fee payer's balance decreased (check AlphaUSD since that's what fees are paid in)
-    let fee_payer_balance_after = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let fee_payer_balance_after = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(fee_payer_addr)
         .call()
         .await?;
@@ -3361,7 +3362,7 @@ async fn test_aa_access_key() -> eyre::Result<()> {
     println!("Chain ID: {chain_id}");
 
     // Check root key's initial balance
-    let root_balance_initial = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let root_balance_initial = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(root_key_addr)
         .call()
         .await?;
@@ -3508,7 +3509,7 @@ async fn test_aa_access_key() -> eyre::Result<()> {
     );
 
     // Get recipient's initial balance (should be 0)
-    let recipient_balance_before = ITIP20::new(DEFAULT_FEE_TOKEN, provider.clone())
+    let recipient_balance_before = tip20::new(DEFAULT_FEE_TOKEN, provider.clone())
         .balanceOf(recipient)
         .call()
         .await?;
@@ -3675,7 +3676,7 @@ async fn test_aa_access_key() -> eyre::Result<()> {
     assert!(status, "Transaction should succeed");
 
     // Verify recipient received the tokens
-    let recipient_balance_after = ITIP20::new(DEFAULT_FEE_TOKEN, provider.clone())
+    let recipient_balance_after = tip20::new(DEFAULT_FEE_TOKEN, provider.clone())
         .balanceOf(recipient)
         .call()
         .await?;
@@ -3690,7 +3691,7 @@ async fn test_aa_access_key() -> eyre::Result<()> {
     println!("✓ Recipient received correct amount: {transfer_amount} tokens");
 
     // Verify root key's balance decreased
-    let root_balance_after = ITIP20::new(DEFAULT_FEE_TOKEN, provider.clone())
+    let root_balance_after = tip20::new(DEFAULT_FEE_TOKEN, provider.clone())
         .balanceOf(root_key_addr)
         .call()
         .await?;
@@ -3714,7 +3715,7 @@ async fn test_aa_access_key() -> eyre::Result<()> {
 
     use alloy::sol_types::SolCall;
     use alloy_primitives::address;
-    use tempo_precompiles::abi::IAccountKeychain::{getKeyCall, getRemainingLimitCall};
+    use tempo_precompiles::abi::account_keychain::account_keychain::{getKeyCall, getRemainingLimitCall};
     const ACCOUNT_KEYCHAIN_ADDRESS: Address =
         address!("0xAAAAAAAA00000000000000000000000000000000");
 
@@ -3765,7 +3766,7 @@ async fn test_aa_access_key() -> eyre::Result<()> {
 /// Tests: zero public key, duplicate key, unauthorized authorize
 #[tokio::test]
 async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
-    use tempo_precompiles::abi::IAccountKeychain::{SignatureType, authorizeKeyCall};
+    use tempo_precompiles::abi::account_keychain::account_keychain::{SignatureType, authorizeKeyCall};
     use tempo_primitives::transaction::TokenLimit;
 
     reth_tracing::init_test_tracing();
@@ -4079,8 +4080,8 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
 #[tokio::test]
 async fn test_transaction_key_authorization_and_spending_limits() -> eyre::Result<()> {
     use alloy::sol_types::SolCall;
-    use tempo_precompiles::abi::ITIP20::{balanceOfCall, transferCall};
-    use tempo_precompiles::abi::IAccountKeychain::updateSpendingLimitCall;
+    use tempo_precompiles::abi::tip20::tip20::{balanceOfCall, transferCall};
+    use tempo_precompiles::abi::account_keychain::account_keychain::updateSpendingLimitCall;
     use tempo_primitives::transaction::TokenLimit;
 
     reth_tracing::init_test_tracing();
@@ -4342,7 +4343,7 @@ async fn test_transaction_key_authorization_and_spending_limits() -> eyre::Resul
 
     assert_eq!(status, "0x1", "Transfer within spending limit must succeed");
 
-    let recipient_balance = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let recipient_balance = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(recipient)
         .call()
         .await?;
@@ -4458,7 +4459,7 @@ async fn test_aa_keychain_enforce_limits() -> eyre::Result<()> {
     );
 
     // Verify the large transfer succeeded (unlimited key has no limit enforcement)
-    let recipient1_balance = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let recipient1_balance = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(recipient1)
         .call()
         .await?;
@@ -4548,7 +4549,7 @@ async fn test_aa_keychain_enforce_limits() -> eyre::Result<()> {
     }
 
     // Verify recipient2 received NO tokens
-    let recipient2_balance = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let recipient2_balance = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(recipient2)
         .call()
         .await?;
@@ -4606,7 +4607,7 @@ async fn test_aa_keychain_enforce_limits() -> eyre::Result<()> {
 
     let _tx_hash = submit_and_mine_aa_tx(&mut setup, second_unlimited_tx, unlimited_sig2).await?;
 
-    let recipient3_balance = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let recipient3_balance = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(recipient3)
         .call()
         .await?;
@@ -4718,7 +4719,7 @@ async fn test_aa_keychain_expiry() -> eyre::Result<()> {
     submit_and_mine_aa_tx(&mut setup, transfer_tx, never_expires_sig).await?;
     nonce += 1;
 
-    let recipient1_balance = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let recipient1_balance = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(recipient1)
         .call()
         .await?;
@@ -4806,7 +4807,7 @@ async fn test_aa_keychain_expiry() -> eyre::Result<()> {
     submit_and_mine_aa_tx(&mut setup, before_expiry_tx, short_expiry_sig).await?;
     nonce += 1;
 
-    let recipient2_balance = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let recipient2_balance = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(recipient2)
         .call()
         .await?;
@@ -4884,7 +4885,7 @@ async fn test_aa_keychain_expiry() -> eyre::Result<()> {
     }
 
     // Verify recipient3 received NO tokens
-    let recipient3_balance = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let recipient3_balance = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(recipient3)
         .call()
         .await?;
@@ -5162,7 +5163,7 @@ async fn test_aa_keychain_rpc_validation() -> eyre::Result<()> {
         .expect("Receipt must have status");
     assert_eq!(status2, "0x1", "Positive test transaction must succeed");
 
-    let recipient2_balance = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let recipient2_balance = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(recipient2)
         .call()
         .await?;
@@ -5238,7 +5239,7 @@ async fn test_aa_keychain_rpc_validation() -> eyre::Result<()> {
     );
 
     // Verify recipient3 received NO tokens
-    let recipient3_balance = ITIP20::new(DEFAULT_FEE_TOKEN, &provider)
+    let recipient3_balance = tip20::new(DEFAULT_FEE_TOKEN, &provider)
         .balanceOf(recipient3)
         .call()
         .await?;

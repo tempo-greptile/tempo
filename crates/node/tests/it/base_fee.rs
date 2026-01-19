@@ -7,7 +7,8 @@ use alloy_eips::BlockNumberOrTag;
 use futures::{StreamExt, future::join_all, stream};
 use std::env;
 use tempo_chainspec::spec::TEMPO_BASE_FEE;
-use tempo_precompiles::{PATH_USD_ADDRESS, abi::ITIP20};
+use tempo_precompiles::PATH_USD_ADDRESS;
+use tempo_precompiles::abi::tip20::tip20;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_base_fee() -> eyre::Result<()> {
@@ -35,7 +36,7 @@ async fn test_base_fee() -> eyre::Result<()> {
         .expect("Could not get basefee");
     assert_eq!(base_fee, TEMPO_BASE_FEE as u128 as u64);
 
-    let token = ITIP20::new(PATH_USD_ADDRESS, provider.clone());
+    let token = tip20::new(PATH_USD_ADDRESS, provider.clone());
 
     // Gas limit is set to 200k in test-genesis.json, send 500 txs to exceed limit over multiple
     // blocks

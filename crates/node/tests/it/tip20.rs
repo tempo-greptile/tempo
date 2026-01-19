@@ -6,8 +6,8 @@ use alloy::{
 };
 use futures::future::try_join_all;
 use tempo_chainspec::spec::TEMPO_BASE_FEE;
-use tempo_precompiles::abi::ITIP20;
-use tempo_precompiles::{TIP403_REGISTRY_ADDRESS, abi::ITIP403Registry};
+use tempo_precompiles::abi::tip20::tip20;
+use tempo_precompiles::{TIP403_REGISTRY_ADDRESS, abi::tip403_registry::tip403_registry};
 
 use crate::utils::{TestNodeBuilder, await_receipts, setup_test_token};
 
@@ -68,7 +68,7 @@ async fn test_tip20_transfer() -> eyre::Result<()> {
         let account_provider = ProviderBuilder::new()
             .wallet(wallet.clone())
             .connect_http(http_url.clone());
-        let account_token = ITIP20::new(*token.address(), account_provider);
+        let account_token = tip20::new(*token.address(), account_provider);
 
         let Err(result) = account_token
             .transfer(Address::random(), balance + U256::ONE)
@@ -78,9 +78,9 @@ async fn test_tip20_transfer() -> eyre::Result<()> {
             panic!("expected error");
         };
         assert_eq!(
-            result.as_decoded_interface_error::<ITIP20::Error>(),
-            Some(ITIP20::Error::InsufficientBalance(
-                ITIP20::InsufficientBalance {
+            result.as_decoded_interface_error::<tip20::Error>(),
+            Some(tip20::Error::InsufficientBalance(
+                tip20::InsufficientBalance {
                     available: *balance,
                     required: balance + U256::ONE,
                     token: *token.address()
@@ -96,7 +96,7 @@ async fn test_tip20_transfer() -> eyre::Result<()> {
         let account_provider = ProviderBuilder::new()
             .wallet(wallet.clone())
             .connect_http(http_url.clone());
-        let token = ITIP20::new(*token.address(), account_provider);
+        let token = tip20::new(*token.address(), account_provider);
 
         let sender_balance = token.balanceOf(*account).call().await?;
         let recipient_balance = token.balanceOf(recipient).call().await?;
@@ -121,7 +121,7 @@ async fn test_tip20_transfer() -> eyre::Result<()> {
         let transfer_events: Vec<_> = receipt
             .logs()
             .iter()
-            .filter_map(|log| ITIP20::Transfer::decode_log(&log.inner).ok())
+            .filter_map(|log| tip20::Transfer::decode_log(&log.inner).ok())
             .collect();
         assert!(
             !transfer_events.is_empty(),
@@ -186,7 +186,7 @@ async fn test_tip20_mint() -> eyre::Result<()> {
         let mint_event = receipt
             .logs()
             .iter()
-            .filter_map(|log| ITIP20::Mint::decode_log(&log.inner).ok())
+            .filter_map(|log| tip20::Mint::decode_log(&log.inner).ok())
             .next()
             .expect("Mint event should be emitted");
 
@@ -216,9 +216,9 @@ async fn test_tip20_mint() -> eyre::Result<()> {
 
     let err = max_mint_result.unwrap_err();
     assert_eq!(
-        err.as_decoded_interface_error::<ITIP20::Error>(),
-        Some(ITIP20::Error::SupplyCapExceeded(
-            ITIP20::SupplyCapExceeded {}
+        err.as_decoded_interface_error::<tip20::Error>(),
+        Some(tip20::Error::SupplyCapExceeded(
+            tip20::SupplyCapExceeded {}
         ))
     );
 
@@ -295,7 +295,7 @@ async fn test_tip20_transfer_from() -> eyre::Result<()> {
         let spender_provider = ProviderBuilder::new()
             .wallet(wallet.clone())
             .connect_http(http_url.clone());
-        let spender_token = ITIP20::new(*token.address(), spender_provider);
+        let spender_token = tip20::new(*token.address(), spender_provider);
 
         // Expect transferFrom to fail if it exceeds balance
         let excess_result = spender_token
@@ -373,7 +373,7 @@ async fn test_tip20_transfer_with_memo() -> eyre::Result<()> {
     let memo_event = receipt
         .logs()
         .iter()
-        .filter_map(|log| ITIP20::TransferWithMemo::decode_log(&log.inner).ok())
+        .filter_map(|log| tip20::TransferWithMemo::decode_log(&log.inner).ok())
         .next()
         .unwrap();
     assert_eq!(memo_event.from, caller);
@@ -403,11 +403,11 @@ async fn test_tip20_blacklist() -> eyre::Result<()> {
         .connect_http(http_url.clone());
 
     let token = setup_test_token(provider.clone(), admin).await?;
-    let registry = ITIP403Registry::new(TIP403_REGISTRY_ADDRESS, provider.clone());
+    let registry = tip403_registry::new(TIP403_REGISTRY_ADDRESS, provider.clone());
 
     // Create a blacklist policy
     let policy_receipt = registry
-        .createPolicy(admin, ITIP403Registry::PolicyType::BLACKLIST)
+        .createPolicy(admin, tip403_registry::PolicyType::BLACKLIST)
         .gas_price(TEMPO_BASE_FEE as u128)
         .gas(300_000)
         .send()
@@ -418,7 +418,7 @@ async fn test_tip20_blacklist() -> eyre::Result<()> {
     let policy_id = policy_receipt
         .logs()
         .iter()
-        .filter_map(|log| ITIP403Registry::PolicyCreated::decode_log(&log.inner).ok())
+        .filter_map(|log| tip403_registry::PolicyCreated::decode_log(&log.inner).ok())
         .next()
         .expect("PolicyCreated event should be emitted")
         .policy_id;
@@ -476,7 +476,7 @@ async fn test_tip20_blacklist() -> eyre::Result<()> {
         let provider = ProviderBuilder::new()
             .wallet(account.clone())
             .connect_http(http_url.clone());
-        let token = ITIP20::new(*token.address(), provider);
+        let token = tip20::new(*token.address(), provider);
 
         let transfer_result = token.transfer(Address::random(), U256::ONE).call().await;
         // TODO: assert the actual error once PrecompileError is propagated through revm
@@ -489,7 +489,7 @@ async fn test_tip20_blacklist() -> eyre::Result<()> {
             let provider = ProviderBuilder::new()
                 .wallet(allowed.clone())
                 .connect_http(http_url.clone());
-            let token = ITIP20::new(*token.address(), provider);
+            let token = tip20::new(*token.address(), provider);
 
             // Ensure that blacklisted accounts can not receive tokens
             let transfer_result = token
@@ -529,11 +529,11 @@ async fn test_tip20_whitelist() -> eyre::Result<()> {
         .connect_http(http_url.clone());
 
     let token = setup_test_token(provider.clone(), admin).await?;
-    let registry = ITIP403Registry::new(TIP403_REGISTRY_ADDRESS, provider.clone());
+    let registry = tip403_registry::new(TIP403_REGISTRY_ADDRESS, provider.clone());
 
     // Create a whitelist policy
     let policy_receipt = registry
-        .createPolicy(admin, ITIP403Registry::PolicyType::WHITELIST)
+        .createPolicy(admin, tip403_registry::PolicyType::WHITELIST)
         .gas_price(TEMPO_BASE_FEE as u128)
         .gas(300_000)
         .send()
@@ -544,7 +544,7 @@ async fn test_tip20_whitelist() -> eyre::Result<()> {
     let policy_id = policy_receipt
         .logs()
         .iter()
-        .filter_map(|log| ITIP403Registry::PolicyCreated::decode_log(&log.inner).ok())
+        .filter_map(|log| tip403_registry::PolicyCreated::decode_log(&log.inner).ok())
         .next()
         .expect("PolicyCreated event should be emitted")
         .policy_id;
@@ -616,7 +616,7 @@ async fn test_tip20_whitelist() -> eyre::Result<()> {
             let provider = ProviderBuilder::new()
                 .wallet(account.clone())
                 .connect_http(http_url.clone());
-            ITIP20::new(*token.address(), provider)
+            tip20::new(*token.address(), provider)
         })
         .collect();
 
@@ -625,7 +625,7 @@ async fn test_tip20_whitelist() -> eyre::Result<()> {
         let provider = ProviderBuilder::new()
             .wallet(account.clone())
             .connect_http(http_url.clone());
-        let token = ITIP20::new(*token.address(), provider);
+        let token = tip20::new(*token.address(), provider);
 
         let transfer_result = token.transfer(Address::random(), U256::ONE).call().await;
         assert!(transfer_result.is_err());
@@ -674,7 +674,7 @@ async fn test_tip20_rewards() -> eyre::Result<()> {
         .connect_http(http_url.clone());
 
     let token = setup_test_token(admin_provider.clone(), admin).await?;
-    let admin_rewards = ITIP20::new(*token.address(), admin_provider);
+    let admin_rewards = tip20::new(*token.address(), admin_provider);
 
     let alice_wallet = MnemonicBuilder::from_phrase(crate::utils::TEST_MNEMONIC)
         .index(1)?
@@ -683,8 +683,8 @@ async fn test_tip20_rewards() -> eyre::Result<()> {
     let alice_provider = ProviderBuilder::new()
         .wallet(alice_wallet)
         .connect_http(http_url.clone());
-    let alice_token = ITIP20::new(*token.address(), alice_provider.clone());
-    let alice_rewards = ITIP20::new(*token.address(), alice_provider);
+    let alice_token = tip20::new(*token.address(), alice_provider.clone());
+    let alice_rewards = tip20::new(*token.address(), alice_provider);
 
     let bob_wallet = MnemonicBuilder::from_phrase(crate::utils::TEST_MNEMONIC)
         .index(2)?
@@ -693,7 +693,7 @@ async fn test_tip20_rewards() -> eyre::Result<()> {
     let bob_provider = ProviderBuilder::new()
         .wallet(bob_wallet)
         .connect_http(http_url.clone());
-    let bob_rewards = ITIP20::new(*token.address(), bob_provider);
+    let bob_rewards = tip20::new(*token.address(), bob_provider);
 
     let mint_amount = U256::from(1000e18);
     let reward_amount = U256::from(300e18);
@@ -741,7 +741,7 @@ async fn test_tip20_rewards() -> eyre::Result<()> {
     distribute_receipt
         .logs()
         .iter()
-        .filter_map(|log| ITIP20::RewardDistributed::decode_log(&log.inner).ok())
+        .filter_map(|log| tip20::RewardDistributed::decode_log(&log.inner).ok())
         .next()
         .expect("RewardDistributed event should be emitted");
 
@@ -784,7 +784,7 @@ async fn test_tip20_rewards() -> eyre::Result<()> {
 async fn test_tip20_pause_blocks_fee_collection() -> eyre::Result<()> {
     use tempo_precompiles::{
         PATH_USD_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
-        abi::IFeeManager,
+        abi::tip_fee_manager::fee_manager,
         tip20::PAUSE_ROLE,
     };
 
@@ -811,7 +811,7 @@ async fn test_tip20_pause_blocks_fee_collection() -> eyre::Result<()> {
 
     // Create and setup token
     let token = setup_test_token(admin_provider.clone(), admin).await?;
-    let user_token = ITIP20::new(*token.address(), user_provider.clone());
+    let user_token = tip20::new(*token.address(), user_provider.clone());
 
     let gas = 300_000u64;
     let gas_price = TEMPO_BASE_FEE as u128;
@@ -827,7 +827,7 @@ async fn test_tip20_pause_blocks_fee_collection() -> eyre::Result<()> {
         .await?;
 
     // Add liquidity to the AMM pool so the token can be used for fees
-    let fee_amm = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, admin_provider.clone());
+    let fee_amm = fee_manager::new(TIP_FEE_MANAGER_ADDRESS, admin_provider.clone());
     fee_amm
         .mint(*token.address(), PATH_USD_ADDRESS, U256::from(1e18), admin)
         .gas(gas)
@@ -838,7 +838,7 @@ async fn test_tip20_pause_blocks_fee_collection() -> eyre::Result<()> {
         .await?;
 
     // Set user's fee token to our test token
-    let fee_manager = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, user_provider.clone());
+    let fee_manager = fee_manager::new(TIP_FEE_MANAGER_ADDRESS, user_provider.clone());
     fee_manager
         .setUserToken(*token.address())
         .gas(gas)
@@ -852,7 +852,7 @@ async fn test_tip20_pause_blocks_fee_collection() -> eyre::Result<()> {
     alloy::contract::SolCallBuilder::new_sol(
         &admin_provider,
         token.address(),
-        &ITIP20::grantRoleCall {
+        &tip20::grantRoleCall {
             role: *PAUSE_ROLE,
             account: admin,
         },
@@ -866,7 +866,7 @@ async fn test_tip20_pause_blocks_fee_collection() -> eyre::Result<()> {
     alloy::contract::SolCallBuilder::new_sol(
         &admin_provider,
         token.address(),
-        &ITIP20::grantRoleCall {
+        &tip20::grantRoleCall {
             role: *PAUSE_ROLE,
             account: user,
         },

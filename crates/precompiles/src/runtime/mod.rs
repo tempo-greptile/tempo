@@ -287,7 +287,7 @@ mod tests {
     use super::*;
     use crate::{
         abi::PATH_USD_ADDRESS,
-        tip20::{ITIP20, TIP20Token},
+        tip20::{tip20, TIP20Token},
     };
     use alloy::primitives::{Address, Bytes, U256, bytes};
     use alloy_evm::{
@@ -375,7 +375,7 @@ mod tests {
 
         // Static calls into mutating functions should fail
         let result = call_static(Bytes::from(
-            ITIP20::transferCall {
+            tip20::transferCall {
                 to: Address::random(),
                 amount: U256::from(100),
             }
@@ -387,7 +387,7 @@ mod tests {
 
         // Static calls into mutate void functions should fail
         let result = call_static(Bytes::from(
-            ITIP20::approveCall {
+            tip20::approveCall {
                 spender: Address::random(),
                 amount: U256::from(100),
             }
@@ -399,7 +399,7 @@ mod tests {
 
         // Static calls into view functions should succeed
         let result = call_static(Bytes::from(
-            ITIP20::balanceOfCall {
+            tip20::balanceOfCall {
                 account: Address::random(),
             }
             .abi_encode(),

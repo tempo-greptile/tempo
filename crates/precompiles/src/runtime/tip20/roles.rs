@@ -3,7 +3,7 @@
 use alloy::primitives::{Address, B256};
 
 use crate::{
-    abi::ITIP20::{self, traits::*},
+    abi::tip20::tip20::{self, traits::*},
     error::Result,
     storage::Handler,
     tip20::TIP20Token,
@@ -26,7 +26,7 @@ impl IRolesAuth for TIP20Token {
         self.check_role_internal(msg_sender, admin_role)?;
         self.grant_role_internal(account, role)?;
 
-        self.emit_event(ITIP20::Event::role_membership_updated(
+        self.emit_event(tip20::Event::role_membership_updated(
             role, account, msg_sender, true,
         ))
     }
@@ -36,7 +36,7 @@ impl IRolesAuth for TIP20Token {
         self.check_role_internal(msg_sender, admin_role)?;
         self.revoke_role_internal(account, role)?;
 
-        self.emit_event(ITIP20::Event::role_membership_updated(
+        self.emit_event(tip20::Event::role_membership_updated(
             role, account, msg_sender, false,
         ))
     }
@@ -45,7 +45,7 @@ impl IRolesAuth for TIP20Token {
         self.check_role_internal(msg_sender, role)?;
         self.revoke_role_internal(msg_sender, role)?;
 
-        self.emit_event(ITIP20::Event::role_membership_updated(
+        self.emit_event(tip20::Event::role_membership_updated(
             role, msg_sender, msg_sender, false,
         ))
     }
@@ -55,7 +55,7 @@ impl IRolesAuth for TIP20Token {
         self.check_role_internal(msg_sender, current_admin_role)?;
         self.set_role_admin_internal(role, admin_role)?;
 
-        self.emit_event(ITIP20::Event::role_admin_updated(
+        self.emit_event(tip20::Event::role_admin_updated(
             role, admin_role, msg_sender,
         ))
     }
@@ -71,7 +71,7 @@ impl TIP20Token {
     pub fn grant_default_admin(&mut self, msg_sender: Address, admin: Address) -> Result<()> {
         self.grant_role_internal(admin, DEFAULT_ADMIN_ROLE)?;
 
-        self.emit_event(ITIP20::Event::role_membership_updated(
+        self.emit_event(tip20::Event::role_membership_updated(
             DEFAULT_ADMIN_ROLE,
             admin,
             msg_sender,
@@ -108,7 +108,7 @@ impl TIP20Token {
 
     fn check_role_internal(&self, account: Address, role: B256) -> Result<()> {
         if !self.has_role_internal(account, role)? {
-            return Err(ITIP20::Error::unauthorized().into());
+            return Err(tip20::Error::unauthorized().into());
         }
         Ok(())
     }
@@ -120,7 +120,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        abi::ITIP20::{RoleMembershipUpdated, Unauthorized},
+        abi::tip20::tip20,
         error::TempoPrecompileError,
         storage::StorageCtx,
         test_util::TIP20Setup,
@@ -150,19 +150,9 @@ mod tests {
             // Verify events were emitted
             token.assert_emitted_events(vec![
                 // Event from grant_default_admin during token initialization
-                ITIP20::Event::RoleMembershipUpdated(RoleMembershipUpdated {
-                    role: DEFAULT_ADMIN_ROLE,
-                    account: admin,
-                    sender: admin,
-                    has_role: true,
-                }),
+                tip20::Event::role_membership_updated(DEFAULT_ADMIN_ROLE, admin, admin, true),
                 // Event from grant_role call above
-                ITIP20::Event::RoleMembershipUpdated(RoleMembershipUpdated {
-                    role: custom_role,
-                    account: user,
-                    sender: admin,
-                    has_role: true,
-                }),
+                tip20::Event::role_membership_updated(custom_role, user, admin, true),
             ]);
 
             Ok(())
@@ -227,9 +217,7 @@ mod tests {
 
             assert!(matches!(
                 result,
-                Err(TempoPrecompileError::TIP20(ITIP20::Error::Unauthorized(
-                    Unauthorized
-                )))
+                Err(TempoPrecompileError::TIP20(tip20::Error::Unauthorized(_)))
             ));
 
             Ok(())

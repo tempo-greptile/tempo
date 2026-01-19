@@ -3,9 +3,9 @@
 use crate::{
     TIP20_FACTORY_ADDRESS,
     abi::{
-        ITIP20::{Error as TIP20Error, traits::*},
-        ITIP20Factory::{self, traits::*},
         PATH_USD_ADDRESS,
+        tip20::tip20::{Error as TIP20Error, traits::*},
+        tip20_factory::tip20_factory::{self, traits::*},
     },
     error::Result,
     tip20::{TIP20Token, USD_CURRENCY, is_tip20_prefix},
@@ -25,7 +25,7 @@ const TIP20_PREFIX_BYTES: [u8; 12] = [
     0x20, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
-#[contract(addr = TIP20_FACTORY_ADDRESS, abi = ITIP20Factory, dispatch)]
+#[contract(addr = TIP20_FACTORY_ADDRESS, abi = tip20_factory, dispatch)]
 pub struct TIP20Factory {}
 
 /// Computes the deterministic TIP20 address from sender and salt.
@@ -113,7 +113,7 @@ impl TIP20Factory {
     }
 }
 
-impl ITIP20Factory::IFactory for TIP20Factory {
+impl tip20_factory::IFactory for TIP20Factory {
     fn create_token(
         &mut self,
         msg_sender: Address,
@@ -340,7 +340,7 @@ mod tests {
             let salt1 = B256::random();
             let salt2 = B256::random();
 
-            let token_addr_1 = ITIP20Factory::IFactory::create_token(
+            let token_addr_1 = tip20_factory::IFactory::create_token(
                 &mut factory,
                 sender,
                 "Test Token 1".to_string(),
@@ -350,7 +350,7 @@ mod tests {
                 sender,
                 salt1,
             )?;
-            let token_addr_2 = ITIP20Factory::IFactory::create_token(
+            let token_addr_2 = tip20_factory::IFactory::create_token(
                 &mut factory,
                 sender,
                 "Test Token 2".to_string(),
@@ -364,8 +364,8 @@ mod tests {
             assert_ne!(token_addr_1, token_addr_2);
             assert!(is_tip20_prefix(token_addr_1));
             assert!(is_tip20_prefix(token_addr_2));
-            assert!(ITIP20Factory::IFactory::is_tip20(&factory, token_addr_1)?);
-            assert!(ITIP20Factory::IFactory::is_tip20(&factory, token_addr_2)?);
+            assert!(tip20_factory::IFactory::is_tip20(&factory, token_addr_1)?);
+            assert!(tip20_factory::IFactory::is_tip20(&factory, token_addr_2)?);
 
             factory.assert_emitted_events(vec![
                 TIP20FactoryEvent::token_created(
@@ -400,7 +400,7 @@ mod tests {
             let mut factory = TIP20Setup::factory()?;
             TIP20Setup::path_usd(sender).apply()?;
 
-            let result = ITIP20Factory::IFactory::create_token(
+            let result = tip20_factory::IFactory::create_token(
                 &mut factory,
                 sender,
                 "Test Token".to_string(),
@@ -456,7 +456,7 @@ mod tests {
 
             let non_existent_tip20 =
                 Address::from(alloy::hex!("20C0000000000000000000000000000000009999"));
-            let result = ITIP20Factory::IFactory::create_token(
+            let result = tip20_factory::IFactory::create_token(
                 &mut factory,
                 sender,
                 "Test Token".to_string(),
@@ -484,7 +484,7 @@ mod tests {
 
             let salt = B256::random();
 
-            let token = ITIP20Factory::IFactory::create_token(
+            let token = tip20_factory::IFactory::create_token(
                 &mut factory,
                 sender,
                 "Test Token".to_string(),
@@ -494,7 +494,7 @@ mod tests {
                 sender,
                 salt,
             )?;
-            let result = ITIP20Factory::IFactory::create_token(
+            let result = tip20_factory::IFactory::create_token(
                 &mut factory,
                 sender,
                 "Test Token".to_string(),

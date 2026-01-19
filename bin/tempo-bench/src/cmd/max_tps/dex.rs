@@ -1,11 +1,8 @@
 use super::*;
 use alloy::providers::DynProvider;
 use indicatif::ProgressIterator;
-use tempo_precompiles::abi::IStablecoinDEX;
-use tempo_precompiles::{
-    PATH_USD_ADDRESS,
-    tip20::{ITIP20::grantRoleCall, U128_MAX},
-};
+use tempo_precompiles::abi::stablecoin_dex::stablecoin_dex::StablecoinDexInstance;
+use tempo_precompiles::{PATH_USD_ADDRESS, abi::tip20::tip20::grantRoleCall, tip20::U128_MAX};
 
 /// This method performs a one-time setup for sending a lot of transactions:
 /// * Deploys the specified number of user tokens.
@@ -52,7 +49,7 @@ pub(super) async fn setup(
 
     // Create exchange pairs for each user token
     info!("Creating exchange pairs");
-    let exchange = IStablecoinDEX::new(STABLECOIN_DEX_ADDRESS, provider.clone());
+    let exchange = StablecoinDexInstance::new(STABLECOIN_DEX_ADDRESS, provider.clone());
     join_all(
         user_token_addresses
             .iter()
@@ -101,7 +98,7 @@ pub(super) async fn setup(
             .iter()
             .flat_map(|(_, provider)| {
                 all_token_addresses.iter().copied().map(move |token| {
-                    let token = ITIP20Instance::new(token, provider.clone());
+                    let token = Tip20Instance::new(token, provider.clone());
                     Box::pin(async move {
                         let tx = token.approve(STABLECOIN_DEX_ADDRESS, U256::MAX);
                         tx.send().await
@@ -126,7 +123,7 @@ pub(super) async fn setup(
             .flat_map(|(_, provider)| {
                 user_token_addresses.iter().copied().map(move |token| {
                     let exchange =
-                        IStablecoinDEXInstance::new(STABLECOIN_DEX_ADDRESS, provider.clone());
+                        StablecoinDexInstance::new(STABLECOIN_DEX_ADDRESS, provider.clone());
                     Box::pin(async move {
                         let tx =
                             exchange.placeFlip(token, order_amount, true, tick_under, tick_over);
@@ -149,10 +146,10 @@ async fn setup_test_token(
     provider: DynProvider<TempoNetwork>,
     admin: Address,
     quote_token: Address,
-) -> eyre::Result<ITIP20Instance<DynProvider<TempoNetwork>, TempoNetwork>>
+) -> eyre::Result<Tip20Instance<DynProvider<TempoNetwork>, TempoNetwork>>
 where
 {
-    let factory = ITIP20Factory::new(TIP20_FACTORY_ADDRESS, provider.clone());
+    let factory = tip20_factory::new(TIP20_FACTORY_ADDRESS, provider.clone());
     let salt = alloy::primitives::B256::random();
     let receipt = factory
         .createToken(
@@ -168,14 +165,14 @@ where
         .get_receipt()
         .await?;
     let event = receipt
-        .decoded_log::<ITIP20Factory::TokenCreated>()
+        .decoded_log::<tip20_factory::TokenCreated>()
         .ok_or_eyre("Token creation event not found")?;
     assert_receipt(receipt)
         .await
         .context("Failed to create TIP-20 token")?;
 
     let token_addr = event.token;
-    let token = ITIP20::new(token_addr, provider.clone());
+    let token = tip20::new(token_addr, provider.clone());
     let grant_role_receipt = alloy::contract::SolCallBuilder::new_sol(
         &provider,
         &token_addr,

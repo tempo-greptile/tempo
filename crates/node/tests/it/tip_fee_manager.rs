@@ -14,7 +14,8 @@ use alloy_primitives::{Address, Signature, U256, address};
 use alloy_rpc_types_eth::TransactionRequest;
 use tempo_alloy::rpc::TempoTransactionReceipt;
 use tempo_precompiles::{PATH_USD_ADDRESS, TIP_FEE_MANAGER_ADDRESS};
-use tempo_precompiles::abi::{ITIP20, IFeeManager};
+use tempo_precompiles::abi::tip20::tip20;
+use tempo_precompiles::abi::tip_fee_manager::fee_manager;
 use tempo_primitives::{
     TempoTransaction, TempoTxEnvelope,
     transaction::{calc_gas_balance_spending, tempo_transaction::Call},
@@ -33,8 +34,8 @@ async fn test_set_user_token() -> eyre::Result<()> {
 
     // Create test tokens
     let user_token = setup_test_token(provider.clone(), user_address).await?;
-    let validator_token = ITIP20::new(PATH_USD_ADDRESS, &provider);
-    let fee_manager = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
+    let validator_token = tip20::new(PATH_USD_ADDRESS, &provider);
+    let fee_manager = fee_manager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
 
     user_token
         .mint(user_address, U256::from(1e10))
@@ -59,7 +60,7 @@ async fn test_set_user_token() -> eyre::Result<()> {
 
     let validator_balance_before = validator_token.balanceOf(validator).call().await?;
 
-    let fee_amm = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
+    let fee_amm = fee_manager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
 
     // Track collected fees before this transaction
     let collected_fees_before = fee_manager
@@ -194,7 +195,7 @@ async fn test_set_validator_token() -> eyre::Result<()> {
     let provider = ProviderBuilder::new().wallet(wallet).connect_http(http_url);
 
     let validator_token = setup_test_token(provider.clone(), validator_address).await?;
-    let fee_manager = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, provider);
+    let fee_manager = fee_manager::new(TIP_FEE_MANAGER_ADDRESS, provider);
 
     let initial_token = fee_manager
         .validatorTokens(validator_address)
@@ -238,7 +239,7 @@ async fn test_fee_token_tx() -> eyre::Result<()> {
     let user_address = provider.default_signer_address();
 
     let user_token = setup_test_token(provider.clone(), user_address).await?;
-    let fee_amm = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
+    let fee_amm = fee_manager::new(TIP_FEE_MANAGER_ADDRESS, provider.clone());
 
     let fees = provider.estimate_eip1559_fees().await?;
 
@@ -360,18 +361,18 @@ async fn test_fee_payer_tx() -> eyre::Result<()> {
     let tx: TempoTxEnvelope = tx.into_signed(user_signature.into()).into();
 
     // Query the fee payer's actual fee token from the FeeManager
-    let fee_manager = IFeeManager::new(TIP_FEE_MANAGER_ADDRESS, &provider);
+    let fee_manager = fee_manager::new(TIP_FEE_MANAGER_ADDRESS, &provider);
     let fee_payer_token = fee_manager.userTokens(fee_payer.address()).call().await?;
 
     assert!(
-        ITIP20::new(fee_payer_token, &provider)
+        tip20::new(fee_payer_token, &provider)
             .balanceOf(user.address())
             .call()
             .await?
             .is_zero()
     );
 
-    let balance_before = ITIP20::new(fee_payer_token, provider.clone())
+    let balance_before = tip20::new(fee_payer_token, provider.clone())
         .balanceOf(fee_payer.address())
         .call()
         .await?;
@@ -388,7 +389,7 @@ async fn test_fee_payer_tx() -> eyre::Result<()> {
 
     assert!(receipt.status());
 
-    let balance_after = ITIP20::new(fee_payer_token, &provider)
+    let balance_after = tip20::new(fee_payer_token, &provider)
         .balanceOf(fee_payer.address())
         .call()
         .await?;
