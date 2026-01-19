@@ -1,6 +1,6 @@
 # Fallback Subblock Transactions and Fee Recipient Registry
 
-This document specifies fallback inclusion for 0x5b transactions outside signed subblocks, and introduces an onchain fee recipient registry for validators.
+This document specifies inclusion of 0x5b transactions outside signed subblocks, and introduces an onchain fee recipient registry for validators.
 
 - **TIP ID**: TIP-1010
 - **Authors/Owners**: TBD
@@ -13,11 +13,11 @@ This document specifies fallback inclusion for 0x5b transactions outside signed 
 
 ## Abstract
 
-This TIP allows 0x5b transactions to be included outside signed subblocks as a fallback path when a validator is offline or its subblock is full. It keeps root-only signing for all 0x5b transactions and introduces a validator fee recipient registry to support fee routing without requiring a signed subblock. The subblock metadata system transaction is extended with offsets to disambiguate which 0x5b transactions are signed subblock transactions.
+This TIP allows 0x5b transactions to be included outside signed subblocks unconditionally. It keeps root-only signing for all 0x5b transactions and introduces a validator fee recipient registry to support fee routing without requiring a signed subblock. The subblock metadata system transaction is extended with offsets to disambiguate which 0x5b transactions are signed subblock transactions.
 
 ## Motivation
 
-Today, 0x5b transactions are only valid when included inside signed subblocks. This provides strong ordering and fee routing guarantees but leaves no fallback when a validator is unavailable or has exhausted its subblock gas budget. Allowing fallback 0x5b transactions improves inclusion reliability while preserving the reserved nonce space and root-only signing requirements.
+Today, 0x5b transactions are only valid when included inside signed subblocks. This provides strong ordering and fee routing guarantees but means users have no alternative inclusion path. Allowing 0x5b transactions outside subblocks provides flexibility and improves inclusion reliability—for example, when a validator is unavailable or has exhausted its subblock gas budget—while preserving the reserved nonce space and root-only signing requirements.
 
 This change requires a canonical fee recipient mapping (for unsigned fallback 0x5b transactions) and a way to distinguish signed subblock transactions from fallback 0x5b transactions in the block body. Extending subblock metadata with offsets is the minimal mechanism to achieve this without introducing a new transaction type.
 
