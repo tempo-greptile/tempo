@@ -6,9 +6,9 @@ use alloy::{
 };
 use futures::future::try_join_all;
 use tempo_chainspec::spec::TEMPO_BASE_FEE;
-contracts::use tempo_precompiles::{
+use tempo_precompiles::{
     TIP403_REGISTRY_ADDRESS,
-    contracts::tip403_registry::tip403_registry},
+    contracts::{tip20::tip20, tip403_registry::tip403_registry},
 };
 
 use crate::utils::{TestNodeBuilder, await_receipts, setup_test_token};

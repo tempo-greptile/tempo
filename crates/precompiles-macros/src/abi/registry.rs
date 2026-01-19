@@ -476,7 +476,7 @@ impl TypeRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::solidity::test_utils::{
+    use crate::abi::test_utils::{
         empty_module, make_error_enum, make_field, make_interface, make_method, make_struct,
         make_unit_enum, make_variant,
     };

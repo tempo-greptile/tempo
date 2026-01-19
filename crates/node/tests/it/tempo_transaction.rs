@@ -17,7 +17,7 @@ use tempo_alloy::TempoNetwork;
 use tempo_chainspec::spec::TEMPO_BASE_FEE;
 use tempo_precompiles::contracts::tip20::tip20;
 use tempo_precompiles::{ACCOUNT_KEYCHAIN_ADDRESS, DEFAULT_FEE_TOKEN};
-contracts::use tip20::transferCall;
+use tempo_precompiles::contracts::tip20::tip20::transferCall;
 
 use tempo_primitives::{
     SignatureType, TempoTransaction, TempoTxEnvelope,
@@ -4082,7 +4082,8 @@ async fn test_aa_keychain_negative_cases() -> eyre::Result<()> {
 #[tokio::test]
 async fn test_transaction_key_authorization_and_spending_limits() -> eyre::Result<()> {
     use alloy::sol_types::SolCall;
-    use tempo_precompiles::contracts::    contracts::account_keychain::account_keychain::updateSpendingLimitCall,
+    use tempo_precompiles::contracts::{
+        account_keychain::account_keychain::updateSpendingLimitCall,
         tip20::tip20::{balanceOfCall, transferCall},
     };
     use tempo_primitives::transaction::TokenLimit;

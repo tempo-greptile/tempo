@@ -5,9 +5,9 @@ use alloy::{
     sol_types::SolEvent,
 };
 use tempo_chainspec::spec::TEMPO_BASE_FEE;
-contracts::use tempo_precompiles::{
+use tempo_precompiles::{
     PATH_USD_ADDRESS, TIP20_FACTORY_ADDRESS,
-    contracts::tip20_factory::tip20_factory},
+    contracts::{tip20::tip20, tip20_factory::tip20_factory},
     tip20::is_tip20_prefix,
 };
 

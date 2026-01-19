@@ -13,7 +13,7 @@ use alloy_network::{AnyReceiptEnvelope, EthereumWallet};
 use alloy_primitives::{Address, Signature, U256, address};
 use alloy_rpc_types_eth::TransactionRequest;
 use tempo_alloy::rpc::TempoTransactionReceipt;
-use tempo_precompiles::contracts::contracts::tip_fee_manager::fee_manager, tip20::tip20};
+use tempo_precompiles::contracts::{tip_fee_manager::fee_manager, tip20::tip20};
 use tempo_precompiles::{PATH_USD_ADDRESS, TIP_FEE_MANAGER_ADDRESS};
 use tempo_primitives::{
     TempoTransaction, TempoTxEnvelope,

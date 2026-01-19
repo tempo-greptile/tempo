@@ -8,10 +8,10 @@
 //! - `storable_alloy_bytes!` macro for generating alloy FixedBytes storage implementations
 //! - `storable_rust_ints!` macro for generating standard Rust integer storage implementations
 
+mod abi;
 mod composition;
 mod layout;
 mod packing;
-mod solidity;
 mod storable;
 mod storable_primitives;
 mod storable_tests;
@@ -351,7 +351,7 @@ pub fn abi(attr: TokenStream, item: TokenStream) -> TokenStream {
     let config = parse_macro_input!(attr as SolidityConfig);
     let input = parse_macro_input!(item as syn::ItemMod);
 
-    match solidity::expand(input, config) {
+    match abi::expand(input, config) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
