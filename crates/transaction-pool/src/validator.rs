@@ -201,8 +201,15 @@ where
     ) -> Result<(), TempoPoolTransactionError> {
         let current_time = self.inner.fork_tracker().tip_timestamp();
 
+        // Check if T1 is active for expiring nonce specific validations
+        let spec = self
+            .inner
+            .chain_spec()
+            .tempo_hardfork_at(current_time);
+        let is_expiring_nonce = tx.is_expiring_nonce_tx() && spec.is_t1();
+
         // Expiring nonce transactions MUST have valid_before set
-        if tx.is_expiring_nonce_tx() && tx.valid_before.is_none() {
+        if is_expiring_nonce && tx.valid_before.is_none() {
             return Err(TempoPoolTransactionError::ExpiringNonceMissingValidBefore);
         }
 
@@ -218,7 +225,7 @@ where
             }
 
             // For expiring nonce transactions, valid_before must also be within the max expiry window
-            if tx.is_expiring_nonce_tx() {
+            if is_expiring_nonce {
                 let max_allowed = current_time.saturating_add(TEMPO_EXPIRING_NONCE_MAX_EXPIRY_SECS);
                 if valid_before > max_allowed {
                     return Err(TempoPoolTransactionError::ExpiringNonceValidBeforeTooFar {

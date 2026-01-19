@@ -589,6 +589,11 @@ where
             .map(|aa| aa.nonce_key)
             .unwrap_or_default();
 
+        let spec = cfg.spec();
+
+        // Only treat as expiring nonce if T1 is active, otherwise treat as regular 2D nonce
+        let is_expiring_nonce = nonce_key == TEMPO_EXPIRING_NONCE_KEY && spec.is_t1();
+
         // Validate account nonce and code (EIP-3607) using upstream helper
         pre_execution::validate_account_nonce_and_code(
             &caller_account.account().info,
@@ -601,7 +606,7 @@ where
         // modify account nonce and touch the account.
         caller_account.touch();
 
-        if nonce_key == TEMPO_EXPIRING_NONCE_KEY {
+        if is_expiring_nonce {
             // Expiring nonce transaction - use tx hash for replay protection
             let tempo_tx_env = tx
                 .tempo_tx_env
@@ -1264,11 +1269,14 @@ where
 
     let spec = evm.ctx_ref().cfg().spec();
 
+    // Only treat as expiring nonce if T1 is active
+    let is_expiring_nonce = aa_env.nonce_key == TEMPO_EXPIRING_NONCE_KEY && spec.is_t1();
+
     // Calculate nonce gas based on nonce type:
-    // - Expiring nonce (nonce_key == MAX): ring buffer + seen mapping operations
+    // - Expiring nonce (nonce_key == MAX, T1 active): ring buffer + seen mapping operations
     // - 2D nonce (nonce_key != 0): SLOAD + SSTORE for nonce increment
     // - Regular nonce (nonce_key == 0): no additional gas
-    let nonce_2d_gas = if aa_env.nonce_key == TEMPO_EXPIRING_NONCE_KEY {
+    let nonce_2d_gas = if is_expiring_nonce {
         // Expiring nonce - 2 cold SLOADs + 3 warm SSTOREs for ring buffer ops
         EXPIRING_NONCE_GAS
     } else if !aa_env.nonce_key.is_zero() {
