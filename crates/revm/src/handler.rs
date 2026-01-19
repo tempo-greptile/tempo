@@ -41,9 +41,8 @@ use tempo_precompiles::{
     tip20::{ITIP20::InsufficientBalance, TIP20Error, TIP20Token, is_tip20_prefix},
 };
 use tempo_primitives::transaction::{
-    PrimitiveSignature, SignatureType, TEMPO_EXPIRING_NONCE_KEY,
-    TEMPO_EXPIRING_NONCE_MAX_EXPIRY_SECS, TempoSignature, calc_gas_balance_spending,
-    validate_calls,
+    PrimitiveSignature, SignatureType, TEMPO_EXPIRING_NONCE_KEY, TempoSignature,
+    calc_gas_balance_spending, validate_calls,
 };
 
 use crate::{
@@ -622,18 +621,12 @@ where
             let valid_before = tempo_tx_env
                 .valid_before
                 .ok_or(TempoInvalidTransaction::ExpiringNonceMissingValidBefore)?;
-            let now: u64 = block.timestamp().saturating_to();
 
             StorageCtx::enter_evm(journal, block, cfg, tx, || {
                 let mut nonce_manager = NonceManager::new();
 
                 nonce_manager
-                    .check_and_mark_expiring_nonce(
-                        tx_hash,
-                        valid_before,
-                        now,
-                        TEMPO_EXPIRING_NONCE_MAX_EXPIRY_SECS,
-                    )
+                    .check_and_mark_expiring_nonce(tx_hash, valid_before)
                     .map_err(|err| match err {
                         TempoPrecompileError::Fatal(err) => EVMError::Custom(err),
                         err => TempoInvalidTransaction::NonceManagerError(err.to_string()).into(),
