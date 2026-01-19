@@ -290,8 +290,7 @@ fn subblocks_are_included_with_failing_txs() {
             if block.block_number() == 20 {
                 assert!(
                     pending_transactions.is_empty(),
-                    "not all transactions were included by block 20: {:?}",
-                    pending_transactions
+                    "not all transactions were included by block 20: {pending_transactions:?}"
                 );
                 break;
             }
