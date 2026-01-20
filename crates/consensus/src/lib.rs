@@ -4,6 +4,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use alloy_consensus::{BlockHeader, Transaction, transaction::TxHashRef};
+use alloy_primitives::{B256, Bloom};
 use alloy_evm::block::BlockExecutionResult;
 use reth_chainspec::EthChainSpec;
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator};
@@ -173,8 +174,9 @@ impl FullConsensus<TempoPrimitives> for TempoConsensus {
         &self,
         block: &RecoveredBlock<Block>,
         result: &BlockExecutionResult<TempoReceipt>,
+        state_root_with_bloom: Option<(B256, Bloom)>,
     ) -> Result<(), ConsensusError> {
-        FullConsensus::<TempoPrimitives>::validate_block_post_execution(&self.inner, block, result)
+        FullConsensus::<TempoPrimitives>::validate_block_post_execution(&self.inner, block, result, state_root_with_bloom)
     }
 }
 
