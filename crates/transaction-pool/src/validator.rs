@@ -314,9 +314,12 @@ where
         // Add nonce gas based on hardfork
         // If tx nonce is 0, it's a new key (0 -> 1 transition), otherwise existing key
         if spec.is_t1() {
-            // TIP-1000: Storage pricing updates for launch
-            // Tempo transactions with any `nonce_key` and `nonce == 0` require an additional 250,000 gas
-            if tx.nonce == 0 {
+            // Expiring nonce transactions
+            if tx.nonce_key == TEMPO_EXPIRING_NONCE_KEY {
+                init_and_floor_gas.initial_gas += EXPIRING_NONCE_GAS;
+            } else if tx.nonce == 0 {
+                // TIP-1000: Storage pricing updates for launch
+                // Tempo transactions with any `nonce_key` and `nonce == 0` require an additional 250,000 gas
                 init_and_floor_gas.initial_gas += gas_params.get(GasId::new_account_cost());
             }
         } else if !tx.nonce_key.is_zero() {
