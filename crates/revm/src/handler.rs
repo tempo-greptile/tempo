@@ -1119,8 +1119,7 @@ where
             // TIP-1000: Storage pricing updates for launch
             // Tempo transactions with any `nonce_key` and `nonce == 0` require an additional 250,000 gas.
             if spec.is_t1() && tx.nonce == 0 {
-                // TODO(rakita): make simpler function that give only the value without additional checks.
-                init_gas.initial_gas += gas_params.new_account_cost(true, true);
+                init_gas.initial_gas += gas_params.get(GasId::new_account_cost());
             }
 
             init_gas
@@ -1335,19 +1334,18 @@ where
         // TIP-1000: Storage pricing updates for launch
         // Tempo transactions with any `nonce_key` and `nonce == 0` require an additional 250,000 gas
         if tx.nonce == 0 {
-            // TODO(rakita): make simpler function that give only the value without additional checks.
-            batch_gas.initial_gas += gas_params.new_account_cost(true, true);
+            batch_gas.initial_gas += gas_params.get(GasId::new_account_cost());
         }
-    } else if let Some(aa_env) = &tx.tempo_tx_env {
-        if !aa_env.nonce_key.is_zero() {
-            nonce_2d_gas = if tx.nonce() == 0 {
-                // New key - cold SLOAD + SSTORE set (0 -> non-zero)
-                NEW_NONCE_KEY_GAS
-            } else {
-                // Existing key - cold SLOAD + warm SSTORE reset
-                EXISTING_NONCE_KEY_GAS
-            };
-        }
+    } else if let Some(aa_env) = &tx.tempo_tx_env
+        && !aa_env.nonce_key.is_zero()
+    {
+        nonce_2d_gas = if tx.nonce() == 0 {
+            // New key - cold SLOAD + SSTORE set (0 -> non-zero)
+            NEW_NONCE_KEY_GAS
+        } else {
+            // Existing key - cold SLOAD + warm SSTORE reset
+            EXISTING_NONCE_KEY_GAS
+        };
     };
 
     if evm.ctx.cfg.is_eip7623_disabled() {
