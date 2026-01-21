@@ -119,15 +119,9 @@ pub(crate) async fn setup_test_node(
 pub(crate) async fn await_receipts(
     pending_txs: &mut Vec<PendingTransactionBuilder<Ethereum>>,
 ) -> eyre::Result<()> {
-    for (i, tx) in pending_txs.drain(..).enumerate() {
+    for tx in pending_txs.drain(..) {
         let receipt = tx.get_receipt().await?;
-        assert!(
-            receipt.status(),
-            "tx {} failed: hash={:?}, gas_used={}",
-            i,
-            receipt.transaction_hash,
-            receipt.gas_used
-        );
+        assert!(receipt.status());
     }
 
     Ok(())
