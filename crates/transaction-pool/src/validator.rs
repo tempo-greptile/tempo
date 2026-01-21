@@ -30,6 +30,7 @@ use tempo_revm::{
     EXISTING_NONCE_KEY_GAS, NEW_NONCE_KEY_GAS, TempoBatchCallEnv, TempoStateAccess,
     calculate_aa_batch_intrinsic_gas, gas_params::tempo_gas_params,
 };
+use revm::context_interface::cfg::GasId;
 
 // Reject AA txs where `valid_before` is too close to current time (or already expired) to prevent block invalidation.
 const AA_VALID_BEFORE_MIN_SECS: u64 = 3;
@@ -279,9 +280,16 @@ where
             calculate_aa_batch_intrinsic_gas(&aa_env, &gas_params, Some(tx.access_list.iter()))
                 .map_err(|_| TempoPoolTransactionError::NonZeroValue)?;
 
-        // Add 2D nonce gas if nonce_key is non-zero
+        // Add nonce gas based on hardfork
         // If tx nonce is 0, it's a new key (0 -> 1 transition), otherwise existing key
-        if !tx.nonce_key.is_zero() {
+        if spec.is_t1() {
+            // TIP-1000: Storage pricing updates for launch
+            // Tempo transactions with any `nonce_key` and `nonce == 0` require an additional 250,000 gas
+            if tx.nonce == 0 {
+                init_and_floor_gas.initial_gas += gas_params.get(GasId::new_account_cost());
+            }
+        } else if !tx.nonce_key.is_zero() {
+            // Pre-T1: Add 2D nonce gas if nonce_key is non-zero
             if tx.nonce == 0 {
                 // New key - cold SLOAD + SSTORE set (0 -> non-zero)
                 init_and_floor_gas.initial_gas += NEW_NONCE_KEY_GAS;
