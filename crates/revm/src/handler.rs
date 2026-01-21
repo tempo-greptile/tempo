@@ -469,27 +469,23 @@ where
         evm: &mut Self::Evm,
         init_and_floor_gas: &InitialAndFloorGas,
     ) -> Result<FrameResult, Self::Error> {
-        // Add 2D nonce gas to the initial gas
+        // Add key_authorization gas to the initial gas (calculated in validate_aa_initial_tx_gas)
         let adjusted_gas = InitialAndFloorGas::new(
             init_and_floor_gas.initial_gas + evm.additional_initial_gas,
             init_and_floor_gas.floor_gas,
         );
 
-        if evm.ctx().tx().gas_limit() < adjusted_gas.initial_gas {
-            let kind = *evm
-                .ctx()
-                .tx()
+        let tx = evm.tx();
+        if tx.gas_limit() < adjusted_gas.initial_gas {
+            let kind = *tx
                 .first_call()
                 .expect("we already checked that there is at least one call in aa tx")
                 .0;
-            // return 0 as this is case where we can't cover the initial gas.
-            // TODO(rakita) need a test for this!
-            // check both execution and inspect_execution
             return Ok(oog_frame_result(kind, 0));
         }
 
         // Check if this is an AA transaction by checking for tempo_tx_env
-        if let Some(tempo_tx_env) = evm.ctx().tx().tempo_tx_env.as_ref() {
+        if let Some(tempo_tx_env) = tx.tempo_tx_env.as_ref() {
             // AA transaction - use batch execution with calls field
             let calls = tempo_tx_env.aa_calls.clone();
             self.execute_multi_call(evm, &adjusted_gas, calls)
@@ -1441,28 +1437,23 @@ where
         evm: &mut Self::Evm,
         init_and_floor_gas: &InitialAndFloorGas,
     ) -> Result<FrameResult, Self::Error> {
-        // Add 2D nonce gas to the initial gas (calculated in validate_against_state_and_deduct_caller)
+        // Add key_authorization gas to the initial gas (calculated in validate_aa_initial_tx_gas)
         let adjusted_gas = InitialAndFloorGas::new(
             init_and_floor_gas.initial_gas + evm.additional_initial_gas,
             init_and_floor_gas.floor_gas,
         );
 
-        if evm.ctx().tx().gas_limit() < adjusted_gas.initial_gas {
-            let kind = *evm
-                .ctx()
-                .tx()
+        let tx = evm.tx();
+        if tx.gas_limit() < adjusted_gas.initial_gas {
+            let kind = *tx
                 .first_call()
                 .expect("we already checked that there is at least one call in aa tx")
                 .0;
-            // return 0 as this is case where we can't cover the initial gas.
-            // TODO(rakita) need a test for this!
-            // check both execution and inspect_execution
             return Ok(oog_frame_result(kind, 0));
         }
 
         // Check if this is an AA transaction by checking for tempo_tx_env
-        let evm_ctx = evm.ctx();
-        if let Some(tempo_tx_env) = evm_ctx.tx().tempo_tx_env.as_ref() {
+        if let Some(tempo_tx_env) = tx.tempo_tx_env.as_ref() {
             // AA transaction - use batch execution with calls field
             let calls = tempo_tx_env.aa_calls.clone();
             self.inspect_execute_multi_call(evm, &adjusted_gas, calls)
