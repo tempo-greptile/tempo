@@ -18,6 +18,9 @@ use tempo_revm::{
 
 use crate::TempoBlockEnv;
 
+/// TIP-1000 gas limit cap (30 million gas).
+const TIP1000_GAS_LIMIT_CAP: u64 = 30_000_000;
+
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
 pub struct TempoEvmFactory;
@@ -70,7 +73,7 @@ impl<DB: Database> TempoEvm<DB> {
 
         // In TIP-1000 we bumped gas to 30M.
         if input.cfg_env.spec.is_t1() {
-            input.cfg_env.tx_gas_limit_cap = Some(30_000_000);
+            input.cfg_env.tx_gas_limit_cap = Some(TIP1000_GAS_LIMIT_CAP);
         }
 
         let ctx = Context::mainnet()
@@ -473,7 +476,7 @@ mod tests {
         // Verify 30M gas limit cap
         assert_eq!(
             evm.ctx().cfg.tx_gas_limit_cap,
-            Some(30_000_000),
+            Some(TIP1000_GAS_LIMIT_CAP),
             "TIP-1000 requires 30M gas limit cap"
         );
     }

@@ -192,9 +192,10 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::gas_params::tempo_gas_params;
     use alloy_eips::eip7702::Authorization;
     use alloy_evm::{Evm, EvmFactory, FromRecoveredTx};
-    use alloy_primitives::{Address, Bytes, TxKind, U256, bytes};
+    use alloy_primitives::{Address, Bytes, Log, TxKind, U256, bytes};
     use alloy_sol_types::SolCall;
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use p256::{
@@ -205,13 +206,14 @@ mod tests {
     use revm::{
         Context, DatabaseRef, ExecuteCommitEvm, ExecuteEvm, InspectEvm, MainContext,
         bytecode::opcode,
-        context::{ContextTr, TxEnv},
+        context::{CfgEnv, ContextTr, TxEnv},
         database::{CacheDB, EmptyDB},
         handler::system_call::SystemCallEvm,
         inspector::{CountInspector, InspectSystemCallEvm},
         state::{AccountInfo, Bytecode},
     };
     use sha2::{Digest, Sha256};
+    use tempo_chainspec::hardfork::TempoHardfork;
     use tempo_evm::TempoEvmFactory;
     use tempo_precompiles::{
         NONCE_PRECOMPILE_ADDRESS, PATH_USD_ADDRESS,
@@ -293,10 +295,6 @@ mod tests {
     /// Create an EVM with T1 hardfork enabled and a funded account.
     /// This applies TIP-1000 gas params via `tempo_gas_params()`.
     fn create_funded_evm_t1(address: Address) -> TempoEvm<CacheDB<EmptyDB>, ()> {
-        use crate::gas_params::tempo_gas_params;
-        use revm::context::CfgEnv;
-        use tempo_chainspec::hardfork::TempoHardfork;
-
         let db = CacheDB::new(EmptyDB::new());
         let mut cfg = CfgEnv::<TempoHardfork>::default();
         cfg.spec = TempoHardfork::T1;
@@ -1478,8 +1476,6 @@ mod tests {
     /// Test that take_logs clears logs and returns them.
     #[test]
     fn test_tempo_evm_take_logs() {
-        use alloy_primitives::Log;
-
         let mut evm = create_evm();
 
         // Manually add some logs
