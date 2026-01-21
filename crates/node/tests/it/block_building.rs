@@ -36,7 +36,7 @@ where
         async move {
             tx_req.nonce = Some(nonce);
             tx_req.chain_id = Some(chain_id);
-            tx_req.gas = tx_req.gas.or(Some(400_000));
+            tx_req.gas = tx_req.gas.or(Some(1_500_000));
             tx_req.max_fee_per_gas = tx_req.max_fee_per_gas.or(Some(TEMPO_BASE_FEE as u128));
             tx_req.max_priority_fee_per_gas = tx_req
                 .max_priority_fee_per_gas
@@ -115,7 +115,7 @@ async fn inject_non_payment_txs(
             .build()?;
         let mut tx = TxEip1559 {
             chain_id,
-            gas_limit: 21000,
+            gas_limit: 300_000,
             to: Address::ZERO.into(),
             max_fee_per_gas: TEMPO_BASE_FEE as u128,
             max_priority_fee_per_gas: TEMPO_BASE_FEE as u128,
@@ -354,7 +354,7 @@ async fn test_block_building_only_non_payment_txs() -> eyre::Result<()> {
         let raw_tx = {
             let mut tx = TxEip1559 {
                 chain_id,
-                gas_limit: 21000,
+                gas_limit: 300_000,
                 to: Address::ZERO.into(),
                 max_fee_per_gas: TEMPO_BASE_FEE as u128,
                 max_priority_fee_per_gas: TEMPO_BASE_FEE as u128,
