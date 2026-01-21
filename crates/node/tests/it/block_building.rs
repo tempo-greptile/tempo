@@ -402,9 +402,12 @@ async fn test_block_building_only_non_payment_txs() -> eyre::Result<()> {
 async fn test_block_building_more_txs_than_fit() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
-    // Use lower gas limit to ensure transactions overflow to multiple blocks
+    // Use a gas limit high enough for token setup (~5M per token) but low enough
+    // to cause overflow when many transactions are injected.
+    // With T1 gas costs, we need at least 5M for token creation, so use 10M to allow
+    // setup but still force overflow during the test phase.
     let mut setup = crate::utils::TestNodeBuilder::new()
-        .with_gas_limit("0xf4240") // 1,000,000 gas
+        .with_gas_limit("0x989680") // 10,000,000 gas
         .build_with_node_access()
         .await?;
 
