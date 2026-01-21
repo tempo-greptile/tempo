@@ -1255,8 +1255,8 @@ pub fn calculate_aa_batch_intrinsic_gas<'a>(
 
         // 4b. CREATE-specific costs
         if call.to.is_create() {
-            // CREATE costs 32000 additional gas
-            gas.initial_gas += gas_params.create_cost(); // 32_000 gas after TIP-1000 250_000 gas
+            // CREATE costs 500,000 gas in TIP-1000 (T1), 32,000 before
+            gas.initial_gas += gas_params.create_cost();
 
             // EIP-3860: Initcode analysis gas using revm helper
             gas.initial_gas += gas_params.tx_initcode_cost(call.input.len());
