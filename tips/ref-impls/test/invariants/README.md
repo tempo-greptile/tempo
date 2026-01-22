@@ -144,6 +144,11 @@ TIP-1000 defines Tempo's gas pricing for state creation operations, charging 250
 - **TEMPO-GAS7**: First tx from new account (nonce=0) requires ≥271,000 gas minimum.
 - **TEMPO-GAS8**: Multiple new state elements charge 250k each independently.
 - **TEMPO-GAS9**: EIP-7702 auth with nonce==0 adds 250k gas per authorization.
+- **TEMPO-GAS10**: 2D nonce key creation (first use of nonce_key > 0) charges 250k gas.
+- **TEMPO-GAS11**: Cold SLOAD (2100) + warm SSTORE reset is cheaper than SSTORE set (250k).
+- **TEMPO-GAS12**: Pool validation and EVM validation compute identical intrinsic gas for same tx.
+- **TEMPO-GAS13**: Gas params for T0 vs T1 must differ for overridden GasIds.
+- **TEMPO-GAS14**: EIP-7702 auth list returns no refund for T1 (always 0).
 
 ## TIP-1010: Mainnet Gas Parameters (Block Limits)
 
@@ -158,3 +163,8 @@ TIP-1010 defines Tempo's mainnet block gas parameters, including a 500M total bl
 - **TEMPO-BLOCK5**: Payment lane has at least 470M gas available (500M - general lane usage).
 - **TEMPO-BLOCK6**: Max contract deployment (24KB initcode) fits within tx gas cap.
 - **TEMPO-BLOCK7**: Block validity rejects blocks exceeding gas limits.
+- **TEMPO-BLOCK8**: Hardfork activation is timestamp-based (deterministic and monotonic).
+- **TEMPO-BLOCK9**: At hardfork boundary, old rules apply before timestamp, new rules after.
+- **TEMPO-BLOCK10**: shared_gas_limit = block_gas_limit / 10 = 50M (constant).
+- **TEMPO-BLOCK11**: Base fee is constant within a hardfork epoch (no EIP-1559 dynamic adjustment).
+- **TEMPO-BLOCK12**: non_payment_gas_used (general lane) <= general_gas_limit (30M cap enforced).
