@@ -459,8 +459,12 @@ impl ConsensusFeed for FeedStateHandle {
         })
     }
 
-    async fn epoch_number(&self) -> Option<u64> {
-        let mut mailbox = self.epoch_manager.read().clone()?;
+    async fn epoch_number(&self) -> eyre::Result<Option<u64>> {
+        let mut mailbox = self
+            .epoch_manager
+            .read()
+            .clone()
+            .ok_or_else(|| eyre::eyre!("epoch manager not yet initialized"))?;
         mailbox.get_current_epoch().await
     }
 }

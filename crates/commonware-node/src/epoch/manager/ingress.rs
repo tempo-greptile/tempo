@@ -43,12 +43,12 @@ impl Mailbox {
             .wrap_err("epoch manager no longer running")
     }
 
-    pub async fn get_current_epoch(&mut self) -> Option<u64> {
+    pub async fn get_current_epoch(&mut self) -> eyre::Result<Option<u64>> {
         let (tx, rx) = oneshot::channel();
         self.inner
             .unbounded_send(Message::in_current_span(GetCurrentEpoch { response: tx }))
-            .ok()?;
-        rx.await.ok().flatten()
+            .wrap_err("epoch manager no longer running")?;
+        rx.await.wrap_err("epoch manager dropped the response channel")
     }
 }
 

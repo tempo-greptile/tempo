@@ -150,5 +150,8 @@ pub trait ConsensusFeed: Send + Sync + 'static {
     ) -> impl Future<Output = Result<IdentityTransitionResponse, IdentityProofError>> + Send;
 
     /// Get the current consensus epoch number based on the latest finalized block height.
-    fn epoch_number(&self) -> impl Future<Output = Option<u64>> + Send;
+    ///
+    /// Returns `Ok(None)` if no epoch is currently active.
+    /// Returns `Err` if the epoch manager is not available or communication fails.
+    fn epoch_number(&self) -> impl Future<Output = eyre::Result<Option<u64>>> + Send;
 }

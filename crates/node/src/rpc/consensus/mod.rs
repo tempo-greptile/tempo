@@ -128,6 +128,9 @@ impl<I: ConsensusFeed> TempoConsensusApiServer for TempoConsensusRpc<I> {
     }
 
     async fn epoch_number(&self) -> RpcResult<Option<u64>> {
-        Ok(self.consensus_feed.epoch_number().await)
+        self.consensus_feed
+            .epoch_number()
+            .await
+            .map_err(|e| ErrorObject::owned(INTERNAL_ERROR_CODE, e.to_string(), None::<()>))
     }
 }
