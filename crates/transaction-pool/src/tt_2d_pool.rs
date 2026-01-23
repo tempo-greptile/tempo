@@ -21,7 +21,7 @@ use std::{
     },
     sync::Arc,
 };
-use tempo_chainspec::spec::TEMPO_BASE_FEE;
+use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_precompiles::NONCE_PRECOMPILE_ADDRESS;
 
 type Ordering = CoinbaseTipOrdering<TempoPooledTransaction>;
@@ -49,6 +49,9 @@ pub struct AA2dPool {
     by_id: BTreeMap<AA2dTransactionId, AA2dInternalTransaction>,
     /// _All_ transactions by hash.
     by_hash: HashMap<TxHash, Arc<ValidPoolTransaction<TempoPooledTransaction>>>,
+    /// Expiring nonce transactions, keyed by tx hash (always pending/independent).
+    /// These use tx hash for replay protection instead of sequential nonces.
+    expiring_nonce_txs: HashMap<TxHash, PendingTransaction<Ordering>>,
     /// Reverse index for the storage slot of an account's nonce
     ///
     /// ```solidity
@@ -63,6 +66,10 @@ pub struct AA2dPool {
     config: AA2dPoolConfig,
     /// Metrics for tracking pool statistics
     metrics: AA2dPoolMetrics,
+    /// Number of pending (executable) transactions
+    pending_count: usize,
+    /// Number of queued (non-executable) transactions
+    queued_count: usize,
 }
 
 impl Default for AA2dPool {
@@ -79,10 +86,13 @@ impl AA2dPool {
             independent_transactions: Default::default(),
             by_id: Default::default(),
             by_hash: Default::default(),
+            expiring_nonce_txs: Default::default(),
             slot_to_seq_id: Default::default(),
             seq_id_to_slot: Default::default(),
             config,
             metrics: AA2dPoolMetrics::default(),
+            pending_count: 0,
+            queued_count: 0,
         }
     }
 
@@ -98,10 +108,15 @@ impl AA2dPool {
     /// `on_chain_nonce` is expected to be the nonce of the sender at the time of validation.
     /// If transaction is using 2D nonces, this is expected to be the nonce corresponding
     /// to the transaction's nonce key.
+    ///
+    /// `hardfork` indicates the active Tempo hardfork. When T1 or later, expiring nonce
+    /// transactions (nonce_key == U256::MAX) are handled specially. Otherwise, they are
+    /// treated as regular 2D nonce transactions.
     pub(crate) fn add_transaction(
         &mut self,
         transaction: Arc<ValidPoolTransaction<TempoPooledTransaction>>,
         on_chain_nonce: u64,
+        hardfork: tempo_chainspec::hardfork::TempoHardfork,
     ) -> PoolResult<AddedTransaction<TempoPooledTransaction>> {
         debug_assert!(
             transaction.transaction.is_aa(),
@@ -112,6 +127,12 @@ impl AA2dPool {
                 *transaction.hash(),
                 PoolErrorKind::AlreadyImported,
             ));
+        }
+
+        // Handle expiring nonce transactions separately - they use tx hash as unique ID
+        // Only treat as expiring nonce if T1 hardfork is active
+        if hardfork.is_t1() && transaction.transaction.is_expiring_nonce() {
+            return self.add_expiring_nonce_transaction(transaction);
         }
 
         let tx_id = transaction
@@ -143,7 +164,7 @@ impl AA2dPool {
             inner: PendingTransaction {
                 submission_id: self.next_id(),
                 priority: CoinbaseTipOrdering::default()
-                    .priority(&transaction.transaction, TEMPO_BASE_FEE),
+                    .priority(&transaction.transaction, hardfork.base_fee()),
                 transaction: transaction.clone(),
             },
             is_pending: inserted_as_pending,
@@ -165,7 +186,14 @@ impl AA2dPool {
                     ));
                 }
 
-                Some(entry.insert(tx.clone()))
+                let old_tx = entry.insert(tx.clone());
+                // counters always mirror actual tx count, so underflow is impossible
+                if old_tx.is_pending {
+                    self.pending_count -= 1;
+                } else {
+                    self.queued_count -= 1;
+                }
+                Some(old_tx)
             }
             Entry::Vacant(entry) => {
                 entry.insert(tx.clone());
@@ -219,12 +247,22 @@ impl AA2dPool {
             }
         }
 
+        // Update counters for promoted transactions
+        let promoted_count = promoted.len();
+        if !promoted.is_empty() {
+            self.queued_count -= promoted_count;
+            self.pending_count += promoted_count;
+        }
+
         // Record metrics
         self.metrics.inc_inserted();
 
         if inserted_as_pending {
+            // Increment pending counter for the newly inserted transaction
+            self.pending_count += 1;
+
             if !promoted.is_empty() {
-                self.metrics.inc_promoted(promoted.len());
+                self.metrics.inc_promoted(promoted_count);
             }
             // if this is the next nonce in line we can mark it as independent
             if tx_id.nonce == on_chain_nonce {
@@ -239,6 +277,12 @@ impl AA2dPool {
             }));
         }
 
+        // Increment queued counter for the newly inserted transaction
+        self.queued_count += 1;
+
+        // Call discard for queued transactions too
+        let _ = self.discard();
+
         Ok(AddedTransaction::Parked {
             transaction,
             replaced: replaced.map(|tx| tx.inner.transaction),
@@ -247,49 +291,121 @@ impl AA2dPool {
         })
     }
 
+    /// Adds an expiring nonce transaction to the pool.
+    ///
+    /// Expiring nonce transactions use the tx hash as their unique identifier instead of
+    /// (sender, nonce_key, nonce). They are always immediately pending since they don't
+    /// have sequential nonce dependencies.
+    fn add_expiring_nonce_transaction(
+        &mut self,
+        transaction: Arc<ValidPoolTransaction<TempoPooledTransaction>>,
+    ) -> PoolResult<AddedTransaction<TempoPooledTransaction>> {
+        let tx_hash = *transaction.hash();
+
+        // Check if already exists (by hash)
+        if self.expiring_nonce_txs.contains_key(&tx_hash) {
+            return Err(PoolError::new(tx_hash, PoolErrorKind::AlreadyImported));
+        }
+
+        // Create pending transaction
+        let pending_tx = PendingTransaction {
+            submission_id: self.next_id(),
+            priority: CoinbaseTipOrdering::default()
+                .priority(&transaction.transaction, TempoHardfork::T1.base_fee()),
+            transaction: transaction.clone(),
+        };
+
+        // Insert into expiring nonce map and by_hash
+        self.expiring_nonce_txs.insert(tx_hash, pending_tx);
+        self.by_hash.insert(tx_hash, transaction.clone());
+
+        trace!(target: "txpool", hash = %tx_hash, "Added expiring nonce transaction");
+
+        self.update_metrics();
+
+        // Expiring nonce transactions are always immediately pending
+        Ok(AddedTransaction::Pending(AddedPendingTransaction {
+            transaction,
+            replaced: None,
+            promoted: vec![],
+            discarded: vec![],
+        }))
+    }
+
     /// Returns how many pending and queued transactions are in the pool.
     pub(crate) fn pending_and_queued_txn_count(&self) -> (usize, usize) {
-        self.by_id.values().fold((0, 0), |mut acc, tx| {
+        let (pending_2d, queued_2d) = self.by_id.values().fold((0, 0), |mut acc, tx| {
             if tx.is_pending {
                 acc.0 += 1;
             } else {
                 acc.1 += 1;
             }
             acc
-        })
+        });
+        // Expiring nonce txs are always pending
+        let expiring_pending = self.expiring_nonce_txs.len();
+        (pending_2d + expiring_pending, queued_2d)
+    }
+
+    /// Returns the current pending and queued counts
+    #[cfg(test)]
+    pub(crate) fn counts(&self) -> (usize, usize) {
+        (self.pending_count, self.queued_count)
     }
 
     /// Returns all transactions that where submitted with the given [`TransactionOrigin`]
     pub(crate) fn get_transactions_by_origin_iter(
         &self,
         origin: TransactionOrigin,
-    ) -> impl Iterator<Item = Arc<ValidPoolTransaction<TempoPooledTransaction>>> {
-        self.by_id
+    ) -> impl Iterator<Item = Arc<ValidPoolTransaction<TempoPooledTransaction>>> + '_ {
+        let regular = self
+            .by_id
             .values()
             .filter(move |tx| tx.inner.transaction.origin == origin)
-            .map(|tx| tx.inner.transaction.clone())
+            .map(|tx| tx.inner.transaction.clone());
+        let expiring = self
+            .expiring_nonce_txs
+            .values()
+            .filter(move |tx| tx.transaction.origin == origin)
+            .map(|tx| tx.transaction.clone());
+        regular.chain(expiring)
     }
 
     /// Returns all transactions that where submitted with the given [`TransactionOrigin`]
     pub(crate) fn get_pending_transactions_by_origin_iter(
         &self,
         origin: TransactionOrigin,
-    ) -> impl Iterator<Item = Arc<ValidPoolTransaction<TempoPooledTransaction>>> {
-        self.by_id
+    ) -> impl Iterator<Item = Arc<ValidPoolTransaction<TempoPooledTransaction>>> + '_ {
+        let regular = self
+            .by_id
             .values()
             .filter(move |tx| tx.is_pending && tx.inner.transaction.origin == origin)
-            .map(|tx| tx.inner.transaction.clone())
+            .map(|tx| tx.inner.transaction.clone());
+        // Expiring nonce txs are always pending
+        let expiring = self
+            .expiring_nonce_txs
+            .values()
+            .filter(move |tx| tx.transaction.origin == origin)
+            .map(|tx| tx.transaction.clone());
+        regular.chain(expiring)
     }
 
     /// Returns all transactions of the address
     pub(crate) fn get_transactions_by_sender_iter(
         &self,
         sender: Address,
-    ) -> impl Iterator<Item = Arc<ValidPoolTransaction<TempoPooledTransaction>>> {
-        self.by_id
+    ) -> impl Iterator<Item = Arc<ValidPoolTransaction<TempoPooledTransaction>>> + '_ {
+        let regular = self
+            .by_id
             .values()
             .filter(move |tx| tx.inner.transaction.sender() == sender)
-            .map(|tx| tx.inner.transaction.clone())
+            .map(|tx| tx.inner.transaction.clone());
+        let expiring = self
+            .expiring_nonce_txs
+            .values()
+            .filter(move |tx| tx.transaction.sender() == sender)
+            .map(|tx| tx.transaction.clone());
+        regular.chain(expiring)
     }
 
     /// Returns an iterator over all transaction hashes in this pool
@@ -310,17 +426,31 @@ impl AA2dPool {
     /// Returns all transactions that are pending.
     pub(crate) fn pending_transactions(
         &self,
-    ) -> impl Iterator<Item = Arc<ValidPoolTransaction<TempoPooledTransaction>>> {
-        self.by_id
+    ) -> impl Iterator<Item = Arc<ValidPoolTransaction<TempoPooledTransaction>>> + '_ {
+        // Include both regular pending 2D nonce txs and expiring nonce txs
+        let regular_pending = self
+            .by_id
             .values()
             .filter(|tx| tx.is_pending)
-            .map(|tx| tx.inner.transaction.clone())
+            .map(|tx| tx.inner.transaction.clone());
+        let expiring_pending = self
+            .expiring_nonce_txs
+            .values()
+            .map(|tx| tx.transaction.clone());
+        regular_pending.chain(expiring_pending)
     }
 
     /// Returns the best, executable transactions for this sub-pool
+    #[allow(clippy::mutable_key_type)]
     pub(crate) fn best_transactions(&self) -> BestAA2dTransactions {
+        // Collect independent transactions from both 2D nonce pool and expiring nonce pool
+        let mut independent: BTreeSet<_> =
+            self.independent_transactions.values().cloned().collect();
+        // Expiring nonce txs are always independent (no nonce dependencies)
+        independent.extend(self.expiring_nonce_txs.values().cloned());
+
         BestAA2dTransactions {
-            independent: self.independent_transactions.values().cloned().collect(),
+            independent,
             by_id: self
                 .by_id
                 .iter()
@@ -390,9 +520,15 @@ impl AA2dPool {
 
     /// Returns an iterator over all senders in this pool.
     pub(crate) fn senders_iter(&self) -> impl Iterator<Item = &Address> {
-        self.by_id
+        let regular = self
+            .by_id
             .values()
-            .map(|tx| tx.inner.transaction.sender_ref())
+            .map(|tx| tx.inner.transaction.sender_ref());
+        let expiring = self
+            .expiring_nonce_txs
+            .values()
+            .map(|tx| tx.transaction.sender_ref());
+        regular.chain(expiring)
     }
 
     /// Returns all mutable transactions that _follow_ after the given id but have the same sender.
@@ -428,6 +564,13 @@ impl AA2dPool {
         id: &AA2dTransactionId,
     ) -> Option<Arc<ValidPoolTransaction<TempoPooledTransaction>>> {
         let tx = self.by_id.remove(id)?;
+
+        // Update counters based on the removed transaction's pending status
+        if tx.is_pending {
+            self.pending_count -= 1;
+        } else {
+            self.queued_count -= 1;
+        }
 
         // Clean up cached nonce key slots if this was the last transaction of the sequence
         if self.by_id.range(id.seq_id.range()).next().is_none()
@@ -484,6 +627,14 @@ impl AA2dPool {
         tx_hash: &B256,
     ) -> Option<Arc<ValidPoolTransaction<TempoPooledTransaction>>> {
         let tx = self.by_hash.remove(tx_hash)?;
+
+        // Check if this is an expiring nonce transaction
+        if tx.transaction.is_expiring_nonce() {
+            self.expiring_nonce_txs.remove(tx_hash);
+            return Some(tx);
+        }
+
+        // Regular 2D nonce transaction
         let id = tx
             .transaction
             .aa_transaction_id()
@@ -524,7 +675,14 @@ impl AA2dPool {
             .get_transactions_by_sender_iter(sender_id)
             .collect::<Vec<_>>();
         for tx in txs {
-            if let Some(tx) = tx
+            // Handle expiring nonce transactions separately - they are stored by hash
+            if tx.transaction.is_expiring_nonce() {
+                let hash = *tx.hash();
+                if self.expiring_nonce_txs.remove(&hash).is_some() {
+                    self.by_hash.remove(&hash);
+                    removed.push(tx);
+                }
+            } else if let Some(tx) = tx
                 .transaction
                 .aa_transaction_id()
                 .and_then(|id| self.remove_transaction_by_id(&id))
@@ -608,6 +766,9 @@ impl AA2dPool {
                 if existing_id.nonce == next_nonce {
                     // Promote if transaction was previously queued (not pending)
                     if !std::mem::replace(&mut existing_tx.is_pending, true) {
+                        // Update counters for txs promoted from queued to pending
+                        self.queued_count -= 1;
+                        self.pending_count += 1;
                         promoted.push(existing_tx.inner.transaction.clone());
                     }
 
@@ -619,10 +780,20 @@ impl AA2dPool {
 
                     next_nonce = next_nonce.saturating_add(1);
                 } else {
-                    // Gap detected - remaining transactions should not be pending
-                    existing_tx.is_pending = false;
-                    break;
+                    // Gap detected - mark this and all remaining transactions as non-pending
+                    // Update counters if tx was previously pending
+                    if std::mem::replace(&mut existing_tx.is_pending, false) {
+                        self.pending_count -= 1;
+                        self.queued_count += 1;
+                    }
                 }
+            }
+
+            // If no transaction was found at the on-chain nonce (next_nonce unchanged),
+            // remove any stale independent transaction entry for this seq_id.
+            // This handles reorgs where the on-chain nonce decreases.
+            if next_nonce == on_chain_nonce {
+                self.independent_transactions.remove(&sender_id);
             }
         }
 
@@ -646,16 +817,27 @@ impl AA2dPool {
         (promoted, mined)
     }
 
-    /// Removes stale transactions if the pool is above capacity.
+    /// Removes excess transactions if the pool is above capacity.
+    /// Evicts queued transactions first, then pending if needed.
     fn discard(&mut self) -> Vec<Arc<ValidPoolTransaction<TempoPooledTransaction>>> {
         let mut removed = Vec::new();
 
-        while self.by_id.len() > self.config.aa_2d_limit.max_txs {
-            // TODO: this needs a more sophisticated approach for now simply pop any non pending
-            let Some(id) = self.by_id.last_key_value().map(|(id, _)| *id) else {
-                return removed;
-            };
-            removed.push(self.remove_transaction_by_id(&id).unwrap());
+        // Evict queued transactions if over queued limit
+        while self.queued_count > self.config.queued_limit.max_txs {
+            if let Some(tx) = self.evict_one(false) {
+                removed.push(tx);
+            } else {
+                break;
+            }
+        }
+
+        // Evict pending if over pending limit
+        while self.pending_count > self.config.pending_limit.max_txs {
+            if let Some(tx) = self.evict_one(true) {
+                removed.push(tx);
+            } else {
+                break;
+            }
         }
 
         if !removed.is_empty() {
@@ -665,9 +847,47 @@ impl AA2dPool {
         removed
     }
 
+    /// Attempts to evict one (pending or queued) transaction from the pool.
+    fn evict_one(
+        &mut self,
+        is_pending: bool,
+    ) -> Option<Arc<ValidPoolTransaction<TempoPooledTransaction>>> {
+        // Reverse-iterate `by_id`, filtering by `is_pending`
+        let id_to_remove = self
+            .by_id
+            .iter()
+            .rev()
+            .find(|(_, tx)| tx.is_pending == is_pending)
+            .map(|(id, _)| *id)?;
+
+        self.remove_transaction_by_id(&id_to_remove)
+    }
+
     /// Returns a reference to the metrics for this pool
     pub fn metrics(&self) -> &AA2dPoolMetrics {
         &self.metrics
+    }
+
+    /// Removes expiring nonce transactions that were included in a block.
+    ///
+    /// This should be called with the transaction hashes from mined blocks to clean up
+    /// expiring nonce transactions on inclusion, rather than waiting for expiry.
+    pub(crate) fn remove_included_expiring_nonce_txs<'a>(
+        &mut self,
+        tx_hashes: impl Iterator<Item = &'a TxHash>,
+    ) -> Vec<Arc<ValidPoolTransaction<TempoPooledTransaction>>> {
+        let mut removed = Vec::new();
+        for tx_hash in tx_hashes {
+            if let Some(pending_tx) = self.expiring_nonce_txs.remove(tx_hash) {
+                self.by_hash.remove(tx_hash);
+                removed.push(pending_tx.transaction);
+            }
+        }
+        if !removed.is_empty() {
+            self.metrics.inc_removed(removed.len());
+            self.update_metrics();
+        }
+        removed
     }
 
     /// Returns `true` if the transaction with the given hash is already included in this pool.
@@ -753,11 +973,13 @@ impl AA2dPool {
             self.independent_transactions.len(),
             self.by_id.len()
         );
+        // by_hash contains both regular 2D nonce txs (in by_id) and expiring nonce txs
         assert_eq!(
-            self.by_id.len(),
+            self.by_id.len() + self.expiring_nonce_txs.len(),
             self.by_hash.len(),
-            "by_id.len() ({}) != by_hash.len() ({})",
+            "by_id.len() ({}) + expiring_nonce_txs.len() ({}) != by_hash.len() ({})",
             self.by_id.len(),
+            self.expiring_nonce_txs.len(),
             self.by_hash.len()
         );
 
@@ -812,6 +1034,15 @@ impl AA2dPool {
                 tx.hash()
             );
 
+            // Expiring nonce txs are stored in expiring_nonce_txs, not by_id
+            if tx.transaction.is_expiring_nonce() {
+                assert!(
+                    self.expiring_nonce_txs.contains_key(hash),
+                    "Expiring nonce transaction with hash {hash:?} in by_hash but not in expiring_nonce_txs"
+                );
+                continue;
+            }
+
             // Transaction in by_hash should exist in by_id
             let id = tx
                 .transaction
@@ -864,15 +1095,54 @@ impl AA2dPool {
         }
 
         // Verify pending/queued consistency
+        // pending_and_queued_txn_count includes expiring nonce txs in pending count
         let (pending_count, queued_count) = self.pending_and_queued_txn_count();
         assert_eq!(
             pending_count + queued_count,
-            self.by_id.len(),
-            "Pending ({}) + queued ({}) != total transactions ({})",
+            self.by_id.len() + self.expiring_nonce_txs.len(),
+            "Pending ({}) + queued ({}) != total transactions (by_id: {} + expiring: {})",
             pending_count,
             queued_count,
-            self.by_id.len()
+            self.by_id.len(),
+            self.expiring_nonce_txs.len()
         );
+
+        // Verify counters match the computed values
+        let (counted_pending, counted_queued) = self.counts();
+        assert_eq!(
+            counted_pending, pending_count,
+            "pending_count ({counted_pending}) != computed pending count ({pending_count})",
+        );
+        assert_eq!(
+            counted_queued, queued_count,
+            "queued_count ({counted_queued}) != computed queued count ({queued_count})",
+        );
+
+        // Verify quota compliance - counts don't exceed limits
+        assert!(
+            self.pending_count <= self.config.pending_limit.max_txs,
+            "pending_count {} exceeds limit {}",
+            self.pending_count,
+            self.config.pending_limit.max_txs
+        );
+        assert!(
+            self.queued_count <= self.config.queued_limit.max_txs,
+            "queued_count {} exceeds limit {}",
+            self.queued_count,
+            self.config.queued_limit.max_txs
+        );
+
+        // Verify expiring nonce txs integrity
+        for (hash, pending_tx) in &self.expiring_nonce_txs {
+            assert!(
+                self.by_hash.contains_key(hash),
+                "Expiring nonce tx {hash:?} not in by_hash"
+            );
+            assert!(
+                pending_tx.transaction.transaction.is_expiring_nonce(),
+                "Transaction in expiring_nonce_txs is not an expiring nonce tx"
+            );
+        }
     }
 }
 
@@ -881,8 +1151,10 @@ impl AA2dPool {
 pub struct AA2dPoolConfig {
     /// Price bump (in %) for the transaction pool underpriced check.
     pub price_bump_config: PriceBumpConfig,
-    /// How many transactions
-    pub aa_2d_limit: SubPoolLimit,
+    /// Maximum number of pending (executable) transactions
+    pub pending_limit: SubPoolLimit,
+    /// Maximum number of queued (non-executable) transactions
+    pub queued_limit: SubPoolLimit,
 }
 
 #[derive(Debug, Clone)]
@@ -953,6 +1225,12 @@ impl Iterator for BestAA2dTransactions {
 
 impl BestTransactions for BestAA2dTransactions {
     fn mark_invalid(&mut self, transaction: &Self::Item, _kind: &InvalidPoolTransactionError) {
+        // Skip invalidation for expiring nonce transactions - they are independent
+        // and should not block other expiring nonce txs from the same sender
+        if transaction.transaction.is_expiring_nonce() {
+            return;
+        }
+
         if let Some(id) = transaction.transaction.aa_transaction_id() {
             self.invalid.insert(id.seq_id);
         }
@@ -967,14 +1245,16 @@ impl BestTransactions for BestAA2dTransactions {
 ///
 /// This combines the sender address with its nonce key, which
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub(crate) struct AASequenceId {
-    pub(crate) address: Address,
-    pub(crate) nonce_key: U256,
+pub struct AASequenceId {
+    /// The sender address.
+    pub address: Address,
+    /// The nonce key for 2D nonce transactions.
+    pub nonce_key: U256,
 }
 
 impl AASequenceId {
     /// Creates a new instance with the address and nonce key.
-    pub(crate) const fn new(address: Address, nonce_key: U256) -> Self {
+    pub const fn new(address: Address, nonce_key: U256) -> Self {
         Self { address, nonce_key }
     }
 
@@ -1018,6 +1298,7 @@ mod tests {
     use alloy_primitives::{Address, U256};
     use reth_transaction_pool::PoolTransaction;
     use std::collections::HashSet;
+    use tempo_chainspec::hardfork::TempoHardfork;
 
     #[test_case::test_case(U256::ZERO)]
     #[test_case::test_case(U256::random())]
@@ -1032,7 +1313,7 @@ mod tests {
         let valid_tx = wrap_valid_tx(tx, TransactionOrigin::Local);
 
         // Add the transaction to the pool
-        let result = pool.add_transaction(Arc::new(valid_tx), 0);
+        let result = pool.add_transaction(Arc::new(valid_tx), 0, TempoHardfork::T1);
 
         // Should be added as pending
         assert!(result.is_ok(), "Transaction should be added successfully");
@@ -1063,7 +1344,7 @@ mod tests {
         let valid_tx1 = wrap_valid_tx(tx1, TransactionOrigin::Local);
         let tx1_hash = *valid_tx1.hash();
 
-        let result1 = pool.add_transaction(Arc::new(valid_tx1), 0);
+        let result1 = pool.add_transaction(Arc::new(valid_tx1), 0, TempoHardfork::T1);
 
         // Should be queued due to nonce gap
         assert!(
@@ -1102,7 +1383,7 @@ mod tests {
         let valid_tx0 = wrap_valid_tx(tx0, TransactionOrigin::Local);
         let tx0_hash = *valid_tx0.hash();
 
-        let result0 = pool.add_transaction(Arc::new(valid_tx0), 0);
+        let result0 = pool.add_transaction(Arc::new(valid_tx0), 0, TempoHardfork::T1);
 
         // Should be pending and promote tx1
         assert!(
@@ -1179,7 +1460,7 @@ mod tests {
         let valid_tx_low = wrap_valid_tx(tx_low, TransactionOrigin::Local);
         let tx_low_hash = *valid_tx_low.hash();
 
-        let result_low = pool.add_transaction(Arc::new(valid_tx_low), 0);
+        let result_low = pool.add_transaction(Arc::new(valid_tx_low), 0, TempoHardfork::T1);
 
         // Should be pending (at on-chain nonce)
         assert!(
@@ -1225,7 +1506,7 @@ mod tests {
         let valid_tx_high = wrap_valid_tx(tx_high, TransactionOrigin::Local);
         let tx_high_hash = *valid_tx_high.hash();
 
-        let result_high = pool.add_transaction(Arc::new(valid_tx_high), 0);
+        let result_high = pool.add_transaction(Arc::new(valid_tx_high), 0, TempoHardfork::T1);
 
         // Should successfully replace
         assert!(
@@ -1331,11 +1612,16 @@ mod tests {
         let tx6_hash = *valid_tx6.hash();
 
         // Add all transactions
-        pool.add_transaction(Arc::new(valid_tx0), 0).unwrap();
-        pool.add_transaction(Arc::new(valid_tx1), 0).unwrap();
-        pool.add_transaction(Arc::new(valid_tx3), 0).unwrap();
-        pool.add_transaction(Arc::new(valid_tx4), 0).unwrap();
-        pool.add_transaction(Arc::new(valid_tx6), 0).unwrap();
+        pool.add_transaction(Arc::new(valid_tx0), 0, TempoHardfork::T1)
+            .unwrap();
+        pool.add_transaction(Arc::new(valid_tx1), 0, TempoHardfork::T1)
+            .unwrap();
+        pool.add_transaction(Arc::new(valid_tx3), 0, TempoHardfork::T1)
+            .unwrap();
+        pool.add_transaction(Arc::new(valid_tx4), 0, TempoHardfork::T1)
+            .unwrap();
+        pool.add_transaction(Arc::new(valid_tx6), 0, TempoHardfork::T1)
+            .unwrap();
 
         // Verify initial state
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
@@ -1510,7 +1796,7 @@ mod tests {
         let valid_tx = wrap_valid_tx(tx, TransactionOrigin::Local);
 
         // Try to insert it and specify the on-chain nonce 5, making it outdated
-        let result = pool.add_transaction(Arc::new(valid_tx), 5);
+        let result = pool.add_transaction(Arc::new(valid_tx), 5, TempoHardfork::T1);
 
         // Should fail with nonce error
         assert!(result.is_err(), "Should reject outdated transaction");
@@ -1551,7 +1837,8 @@ mod tests {
             .build();
         let valid_tx_low = wrap_valid_tx(tx_low, TransactionOrigin::Local);
 
-        pool.add_transaction(Arc::new(valid_tx_low), 0).unwrap();
+        pool.add_transaction(Arc::new(valid_tx_low), 0, TempoHardfork::T1)
+            .unwrap();
 
         // Try to replace with only 5% price bump (default requires 10%)
         let tx_insufficient = TxBuilder::aa(sender)
@@ -1561,7 +1848,7 @@ mod tests {
             .build();
         let valid_tx_insufficient = wrap_valid_tx(tx_insufficient, TransactionOrigin::Local);
 
-        let result = pool.add_transaction(Arc::new(valid_tx_insufficient), 0);
+        let result = pool.add_transaction(Arc::new(valid_tx_insufficient), 0, TempoHardfork::T1);
 
         // Should fail with ReplacementUnderpriced
         assert!(
@@ -1591,14 +1878,30 @@ mod tests {
         let tx3 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(3).build();
         let tx4 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(4).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx3, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx4, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx3, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx4, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         // Verify initial state: 0, 1 pending | 3, 4 queued
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
@@ -1609,7 +1912,7 @@ mod tests {
         let tx2 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(2).build();
         let valid_tx2 = wrap_valid_tx(tx2, TransactionOrigin::Local);
 
-        let result = pool.add_transaction(Arc::new(valid_tx2), 0);
+        let result = pool.add_transaction(Arc::new(valid_tx2), 0, TempoHardfork::T1);
         assert!(result.is_ok(), "Should successfully add tx2");
 
         // Verify tx3 and tx4 were promoted
@@ -1654,9 +1957,12 @@ mod tests {
 
         let tx1_hash = *valid_tx1.hash();
 
-        pool.add_transaction(Arc::new(valid_tx0), 0).unwrap();
-        pool.add_transaction(Arc::new(valid_tx1), 0).unwrap();
-        pool.add_transaction(Arc::new(valid_tx2), 0).unwrap();
+        pool.add_transaction(Arc::new(valid_tx0), 0, TempoHardfork::T1)
+            .unwrap();
+        pool.add_transaction(Arc::new(valid_tx1), 0, TempoHardfork::T1)
+            .unwrap();
+        pool.add_transaction(Arc::new(valid_tx2), 0, TempoHardfork::T1)
+            .unwrap();
 
         // All should be pending
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
@@ -1725,10 +2031,14 @@ mod tests {
 
         let tx_a0_hash = *valid_tx_a0.hash();
 
-        pool.add_transaction(Arc::new(valid_tx_a0), 0).unwrap();
-        pool.add_transaction(Arc::new(valid_tx_a1), 0).unwrap();
-        pool.add_transaction(Arc::new(valid_tx_b0), 0).unwrap();
-        pool.add_transaction(Arc::new(valid_tx_b1), 0).unwrap();
+        pool.add_transaction(Arc::new(valid_tx_a0), 0, TempoHardfork::T1)
+            .unwrap();
+        pool.add_transaction(Arc::new(valid_tx_a1), 0, TempoHardfork::T1)
+            .unwrap();
+        pool.add_transaction(Arc::new(valid_tx_b0), 0, TempoHardfork::T1)
+            .unwrap();
+        pool.add_transaction(Arc::new(valid_tx_b1), 0, TempoHardfork::T1)
+            .unwrap();
 
         // Both senders' tx0 should be in independent set
         let sender_a_id = AASequenceId::new(sender_a, nonce_key_a);
@@ -1809,7 +2119,7 @@ mod tests {
             .build();
         let tx0_hash = *tx0.hash();
         let valid_tx0 = wrap_valid_tx(tx0, TransactionOrigin::Local);
-        let result = pool.add_transaction(Arc::new(valid_tx0), 0);
+        let result = pool.add_transaction(Arc::new(valid_tx0), 0, TempoHardfork::T1);
         assert!(result.is_ok());
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
         assert_eq!(pending_count + queued_count, 1);
@@ -1821,7 +2131,7 @@ mod tests {
             .max_fee(2_100_000_000)
             .build();
         let valid_tx1 = wrap_valid_tx(tx0_replacement1, TransactionOrigin::Local);
-        let result = pool.add_transaction(Arc::new(valid_tx1), 0);
+        let result = pool.add_transaction(Arc::new(valid_tx1), 0, TempoHardfork::T1);
         assert!(result.is_err(), "Should reject insufficient price bump");
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
         assert_eq!(pending_count + queued_count, 1);
@@ -1838,7 +2148,7 @@ mod tests {
             .build();
         let tx0_replacement2_hash = *tx0_replacement2.hash();
         let valid_tx2 = wrap_valid_tx(tx0_replacement2, TransactionOrigin::Local);
-        let result = pool.add_transaction(Arc::new(valid_tx2), 0);
+        let result = pool.add_transaction(Arc::new(valid_tx2), 0, TempoHardfork::T1);
         assert!(result.is_ok(), "Should accept 10% price bump");
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
         assert_eq!(pending_count + queued_count, 1, "Pool size should remain 1");
@@ -1856,7 +2166,7 @@ mod tests {
             .build();
         let tx0_replacement3_hash = *tx0_replacement3.hash();
         let valid_tx3 = wrap_valid_tx(tx0_replacement3, TransactionOrigin::Local);
-        let result = pool.add_transaction(Arc::new(valid_tx3), 0);
+        let result = pool.add_transaction(Arc::new(valid_tx3), 0, TempoHardfork::T1);
         assert!(result.is_ok(), "Should accept higher price bump");
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
         assert_eq!(pending_count + queued_count, 1);
@@ -1892,14 +2202,30 @@ mod tests {
         let tx10 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(10).build();
         let tx15 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(15).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx5, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx10, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx15, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx5, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx10, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx15, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
         assert_eq!(pending_count + queued_count, 4);
@@ -1936,8 +2262,12 @@ mod tests {
                 .nonce_key(nonce_key)
                 .nonce(nonce)
                 .build();
-            pool.add_transaction(Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)), 0)
-                .unwrap();
+            pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                0,
+                TempoHardfork::T1,
+            )
+            .unwrap();
         }
 
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
@@ -1973,8 +2303,12 @@ mod tests {
                 .nonce_key(nonce_key)
                 .nonce(nonce)
                 .build();
-            pool.add_transaction(Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)), 0)
-                .unwrap();
+            pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                0,
+                TempoHardfork::T1,
+            )
+            .unwrap();
         }
 
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
@@ -2003,8 +2337,12 @@ mod tests {
                 .nonce_key(nonce_key)
                 .nonce(nonce)
                 .build();
-            pool.add_transaction(Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)), 0)
-                .unwrap();
+            pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                0,
+                TempoHardfork::T1,
+            )
+            .unwrap();
         }
 
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
@@ -2038,8 +2376,12 @@ mod tests {
                 .nonce_key(nonce_key)
                 .nonce(nonce)
                 .build();
-            pool.add_transaction(Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)), 0)
-                .unwrap();
+            pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                0,
+                TempoHardfork::T1,
+            )
+            .unwrap();
         }
 
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
@@ -2089,12 +2431,24 @@ mod tests {
         let tx2 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(2).build();
         let tx4 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(4).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx4, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx4, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         // Only tx0 should be in independent set
         assert_eq!(pool.independent_transactions.len(), 1);
@@ -2107,8 +2461,12 @@ mod tests {
 
         // Fill first gap: insert [1]
         let tx1 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(1).build();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         // Now [0, 1, 2] should be pending, tx4 still queued
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
@@ -2121,8 +2479,12 @@ mod tests {
 
         // Fill second gap: insert [3]
         let tx3 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(3).build();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx3, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx3, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         // Now all [0,1,2,3,4] should be pending
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
@@ -2168,8 +2530,12 @@ mod tests {
                     .nonce_key(nonce_key)
                     .nonce(nonce)
                     .build();
-                pool.add_transaction(Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)), 0)
-                    .unwrap();
+                pool.add_transaction(
+                    Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                    0,
+                    TempoHardfork::T1,
+                )
+                .unwrap();
             }
         }
 
@@ -2263,12 +2629,24 @@ mod tests {
         let tx3 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(3).build();
         let tx5 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(5).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx3, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx5, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx3, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx5, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         // Only tx0 should be in independent set
         assert_eq!(pool.independent_transactions.len(), 1);
@@ -2281,12 +2659,20 @@ mod tests {
 
         // Fill gaps to get [0, 1, 2, 3, 5]
         let tx1 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(1).build();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let tx2 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(2).build();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         // Now [0,1,2,3] should be pending, tx5 still queued
         let (pending_count, queued_count) = pool.pending_and_queued_txn_count();
@@ -2326,8 +2712,12 @@ mod tests {
         // Now insert tx4 to fill the gap between tx3 and tx5
         // This is where the original test failure occurred
         let tx4 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(4).build();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx4, TransactionOrigin::Local)), 3)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx4, TransactionOrigin::Local)),
+            3,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         // After inserting tx4, we should have [3, 4, 5] all in the pool
         let (_pending_count_after, _queued_count_after) = pool.pending_and_queued_txn_count();
@@ -2344,20 +2734,32 @@ mod tests {
         let tx0 = TxBuilder::aa(sender).nonce_key(nonce_key).build();
         let tx0_hash = *tx0.hash();
         let tx0_len = tx0.encoded_length();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let tx1 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(1).build();
         let tx1_hash = *tx1.hash();
         let tx1_len = tx1.encoded_length();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let tx2 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(2).build();
         let tx2_hash = *tx2.hash();
         let tx2_len = tx2.encoded_length();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         // Test with no limit - should return all 3 transactions
         let mut accumulated = 0;
@@ -2447,8 +2849,12 @@ mod tests {
         assert!(!pool.contains(&tx_hash));
         assert!(pool.get(&tx_hash).is_none());
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         assert!(pool.contains(&tx_hash));
         let retrieved = pool.get(&tx_hash);
@@ -2467,10 +2873,18 @@ mod tests {
         let tx1_hash = *tx1.hash();
         let fake_hash = alloy_primitives::B256::random();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let hashes = [tx0_hash, tx1_hash, fake_hash];
         let results = pool.get_all(hashes.iter());
@@ -2487,10 +2901,18 @@ mod tests {
         let tx1 = TxBuilder::aa(sender1).build();
         let tx2 = TxBuilder::aa(sender2).nonce_key(U256::from(1)).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let senders: Vec<_> = pool.senders_iter().collect();
         assert_eq!(senders.len(), 2);
@@ -2520,8 +2942,12 @@ mod tests {
         let tx7_hash = *tx7.hash();
 
         for tx in [tx0, tx1, tx2, tx5, tx6, tx7] {
-            pool.add_transaction(Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)), 0)
-                .unwrap();
+            pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                0,
+                TempoHardfork::T1,
+            )
+            .unwrap();
         }
 
         let pending: Vec<_> = pool.pending_transactions().collect();
@@ -2548,10 +2974,18 @@ mod tests {
         let tx1 = TxBuilder::aa(sender1).nonce_key(U256::ZERO).build();
         let tx2 = TxBuilder::aa(sender2).nonce_key(U256::from(1)).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let sender1_txs: Vec<_> = pool.get_transactions_by_sender_iter(sender1).collect();
         assert_eq!(sender1_txs.len(), 1);
@@ -2570,10 +3004,18 @@ mod tests {
         let tx0 = TxBuilder::aa(sender).nonce_key(U256::ZERO).build();
         let tx1 = TxBuilder::aa(sender).nonce_key(U256::ZERO).nonce(1).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::External)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::External)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let local_txs: Vec<_> = pool
             .get_transactions_by_origin_iter(TransactionOrigin::Local)
@@ -2594,10 +3036,18 @@ mod tests {
         let tx0 = TxBuilder::aa(sender).nonce_key(U256::ZERO).build();
         let tx2 = TxBuilder::aa(sender).nonce_key(U256::ZERO).nonce(2).build(); // Queued due to gap
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let pending_local: Vec<_> = pool
             .get_pending_transactions_by_origin_iter(TransactionOrigin::Local)
@@ -2615,10 +3065,18 @@ mod tests {
         let tx0_hash = *tx0.hash();
         let tx1_hash = *tx1.hash();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let hashes: Vec<_> = pool.all_transaction_hashes_iter().collect();
         assert_eq!(hashes.len(), 2);
@@ -2634,10 +3092,18 @@ mod tests {
         let tx0 = TxBuilder::aa(sender).nonce_key(U256::ZERO).build();
         let tx1 = TxBuilder::aa(sender).nonce_key(U256::ZERO).nonce(1).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let hashes: Vec<_> = pool.pooled_transactions_hashes_iter().collect();
         assert_eq!(hashes.len(), 2);
@@ -2651,10 +3117,18 @@ mod tests {
         let tx0 = TxBuilder::aa(sender).nonce_key(U256::ZERO).build();
         let tx1 = TxBuilder::aa(sender).nonce_key(U256::ZERO).nonce(1).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let txs: Vec<_> = pool.pooled_transactions_iter().collect();
         assert_eq!(txs.len(), 2);
@@ -2672,10 +3146,18 @@ mod tests {
         let tx0 = TxBuilder::aa(sender).nonce_key(U256::ZERO).build();
         let tx1 = TxBuilder::aa(sender).nonce_key(U256::ZERO).nonce(1).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let mut best = pool.best_transactions();
 
@@ -2700,10 +3182,18 @@ mod tests {
         let tx0 = TxBuilder::aa(sender).nonce_key(U256::ZERO).build();
         let tx1 = TxBuilder::aa(sender).nonce_key(U256::ZERO).nonce(1).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let mut best = pool.best_transactions();
 
@@ -2732,10 +3222,18 @@ mod tests {
         let tx1 = TxBuilder::aa(sender1).nonce_key(U256::ZERO).build();
         let tx2 = TxBuilder::aa(sender2).nonce_key(U256::from(1)).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let removed = pool.remove_transactions_by_sender(sender1);
         assert_eq!(removed.len(), 1);
@@ -2758,12 +3256,24 @@ mod tests {
         let tx2 = TxBuilder::aa(sender).nonce_key(U256::ZERO).nonce(2).build();
         let tx0_hash = *tx0.hash();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         // Remove tx0 and its descendants (tx1, tx2)
         let removed = pool.remove_transactions_and_descendants([&tx0_hash].into_iter());
@@ -2830,7 +3340,7 @@ mod tests {
             .build();
         let valid_tx = wrap_valid_tx(tx, TransactionOrigin::Local);
 
-        let result = pool.add_transaction(Arc::new(valid_tx), u64::MAX);
+        let result = pool.add_transaction(Arc::new(valid_tx), u64::MAX, TempoHardfork::T1);
         assert!(result.is_ok());
 
         let (pending, queued) = pool.pending_and_queued_txn_count();
@@ -2867,6 +3377,7 @@ mod tests {
         pool.add_transaction(
             Arc::new(wrap_valid_tx(tx_max, TransactionOrigin::Local)),
             u64::MAX - 1,
+            TempoHardfork::T1,
         )
         .unwrap();
 
@@ -2877,6 +3388,7 @@ mod tests {
         pool.add_transaction(
             Arc::new(wrap_valid_tx(tx_max_minus_1, TransactionOrigin::Local)),
             u64::MAX - 1,
+            TempoHardfork::T1,
         )
         .unwrap();
 
@@ -2950,9 +3462,10 @@ mod tests {
         let tx_hash = *tx.hash();
         let valid_tx = Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local));
 
-        pool.add_transaction(valid_tx.clone(), 0).unwrap();
+        pool.add_transaction(valid_tx.clone(), 0, TempoHardfork::T1)
+            .unwrap();
 
-        let result = pool.add_transaction(valid_tx, 0);
+        let result = pool.add_transaction(valid_tx, 0, TempoHardfork::T1);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.hash, tx_hash);
@@ -2974,7 +3487,7 @@ mod tests {
         let tx_hash = *tx.hash();
         let valid_tx = Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local));
 
-        let result = pool.add_transaction(valid_tx, 10);
+        let result = pool.add_transaction(valid_tx, 10, TempoHardfork::T1);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert_eq!(err.hash, tx_hash);
@@ -3003,8 +3516,12 @@ mod tests {
             .max_priority_fee(1_000_000_000)
             .max_fee(2_000_000_000)
             .build();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let tx2 = TxBuilder::aa(sender)
             .nonce_key(U256::ZERO)
@@ -3012,8 +3529,11 @@ mod tests {
             .max_fee(2_000_000_001)
             .build();
         let tx2_hash = *tx2.hash();
-        let result =
-            pool.add_transaction(Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)), 0);
+        let result = pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        );
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -3038,8 +3558,12 @@ mod tests {
     fn test_discard_at_max_txs_limit() {
         let config = AA2dPoolConfig {
             price_bump_config: PriceBumpConfig::default(),
-            aa_2d_limit: SubPoolLimit {
+            pending_limit: SubPoolLimit {
                 max_txs: 3,
+                max_size: usize::MAX,
+            },
+            queued_limit: SubPoolLimit {
+                max_txs: 10000,
                 max_size: usize::MAX,
             },
         };
@@ -3048,8 +3572,11 @@ mod tests {
         for i in 0..5usize {
             let sender = Address::from_word(B256::from(U256::from(i)));
             let tx = TxBuilder::aa(sender).nonce_key(U256::from(i)).build();
-            let result =
-                pool.add_transaction(Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)), 0);
+            let result = pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                0,
+                TempoHardfork::T1,
+            );
             assert!(result.is_ok());
         }
 
@@ -3064,8 +3591,12 @@ mod tests {
     fn test_discard_removes_from_back() {
         let config = AA2dPoolConfig {
             price_bump_config: PriceBumpConfig::default(),
-            aa_2d_limit: SubPoolLimit {
+            pending_limit: SubPoolLimit {
                 max_txs: 2,
+                max_size: usize::MAX,
+            },
+            queued_limit: SubPoolLimit {
+                max_txs: 10000,
                 max_size: usize::MAX,
             },
         };
@@ -3079,12 +3610,23 @@ mod tests {
         let tx1_hash = *tx1.hash();
         let tx2_hash = *tx2.hash();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
-        let result =
-            pool.add_transaction(Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)), 0);
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        let result = pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        );
         assert!(result.is_ok());
 
         let added = result.unwrap();
@@ -3106,6 +3648,174 @@ mod tests {
         assert!(pool.contains(&tx1_hash));
         assert!(!pool.contains(&tx2_hash));
 
+        pool.assert_invariants();
+    }
+
+    /// Tests that queued transactions (with nonce gaps) also respect the max_txs limit.
+    #[test]
+    fn test_discard_enforced_for_queued_transactions() {
+        let config = AA2dPoolConfig {
+            price_bump_config: PriceBumpConfig::default(),
+            pending_limit: SubPoolLimit {
+                max_txs: 2,
+                max_size: usize::MAX,
+            },
+            queued_limit: SubPoolLimit {
+                max_txs: 2,
+                max_size: usize::MAX,
+            },
+        };
+        let mut pool = AA2dPool::new(config);
+
+        // Add 5 transactions each with a LARGE nonce gap so they are all queued
+        for i in 0..5usize {
+            let sender = Address::from_word(B256::from(U256::from(i)));
+            let tx = TxBuilder::aa(sender)
+                .nonce_key(U256::from(i))
+                .nonce(1000)
+                .build();
+            let result = pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                0,
+                TempoHardfork::T1,
+            );
+            assert!(result.is_ok(), "Transaction {i} should be added");
+        }
+
+        let (pending, queued) = pool.pending_and_queued_txn_count();
+        assert_eq!(
+            pending + queued,
+            2,
+            "Pool should be capped at max_txs=2, but has {pending} pending + {queued} queued",
+        );
+
+        pool.assert_invariants();
+    }
+
+    /// Verifies queued transactions respect their own limit independently
+    #[test]
+    fn test_queued_limit_enforced_separately() {
+        let config = AA2dPoolConfig {
+            price_bump_config: PriceBumpConfig::default(),
+            pending_limit: SubPoolLimit {
+                max_txs: 10,
+                max_size: usize::MAX,
+            },
+            queued_limit: SubPoolLimit {
+                max_txs: 3,
+                max_size: usize::MAX,
+            },
+        };
+        let mut pool = AA2dPool::new(config);
+
+        // Add 5 queued transactions (far-future nonces)
+        for i in 0..5usize {
+            let sender = Address::from_word(B256::from(U256::from(i)));
+            let tx = TxBuilder::aa(sender)
+                .nonce_key(U256::from(i))
+                .nonce(1000)
+                .build();
+            let _ = pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                0,
+                TempoHardfork::T1,
+            );
+        }
+
+        let (pending, queued) = pool.pending_and_queued_txn_count();
+        assert_eq!(queued, 3, "Queued should be capped at 3");
+        assert_eq!(pending, 0, "No pending transactions");
+        pool.assert_invariants();
+    }
+
+    /// Verifies pending transactions respect their own limit independently
+    #[test]
+    fn test_pending_limit_enforced_separately() {
+        let config = AA2dPoolConfig {
+            price_bump_config: PriceBumpConfig::default(),
+            pending_limit: SubPoolLimit {
+                max_txs: 3,
+                max_size: usize::MAX,
+            },
+            queued_limit: SubPoolLimit {
+                max_txs: 10,
+                max_size: usize::MAX,
+            },
+        };
+        let mut pool = AA2dPool::new(config);
+
+        // Add 5 pending transactions (nonce=0, different senders)
+        for i in 0..5usize {
+            let sender = Address::from_word(B256::from(U256::from(i)));
+            let tx = TxBuilder::aa(sender).nonce_key(U256::from(i)).build();
+            let _ = pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                0,
+                TempoHardfork::T1,
+            );
+        }
+
+        let (pending, queued) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending, 3, "Pending should be capped at 3");
+        assert_eq!(queued, 0, "No queued transactions");
+        pool.assert_invariants();
+    }
+
+    /// Verifies queued spam cannot evict pending transactions
+    #[test]
+    fn test_queued_eviction_does_not_affect_pending() {
+        let config = AA2dPoolConfig {
+            price_bump_config: PriceBumpConfig::default(),
+            pending_limit: SubPoolLimit {
+                max_txs: 5,
+                max_size: usize::MAX,
+            },
+            queued_limit: SubPoolLimit {
+                max_txs: 2,
+                max_size: usize::MAX,
+            },
+        };
+        let mut pool = AA2dPool::new(config);
+
+        // First add 3 pending transactions
+        let mut pending_hashes = Vec::new();
+        for i in 0..3usize {
+            let sender = Address::from_word(B256::from(U256::from(i)));
+            let tx = TxBuilder::aa(sender).nonce_key(U256::from(i)).build();
+            let hash = *tx.hash();
+            pending_hashes.push(hash);
+            let _ = pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                0,
+                TempoHardfork::T1,
+            );
+        }
+
+        // Now flood with 10 queued transactions
+        for i in 100..110usize {
+            let sender = Address::from_word(B256::from(U256::from(i)));
+            let tx = TxBuilder::aa(sender)
+                .nonce_key(U256::from(i))
+                .nonce(1000)
+                .build();
+            let _ = pool.add_transaction(
+                Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
+                0,
+                TempoHardfork::T1,
+            );
+        }
+
+        // All pending should still be there
+        for hash in &pending_hashes {
+            assert!(
+                pool.contains(hash),
+                "Pending tx should not be evicted by queued spam"
+            );
+        }
+
+        let (pending, queued) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending, 3, "All 3 pending should remain");
+        assert_eq!(queued, 2, "Queued capped at 2");
         pool.assert_invariants();
     }
 
@@ -3131,12 +3841,24 @@ mod tests {
         let tx1_0_hash = *tx1_0.hash();
         let tx2_0_hash = *tx2_0.hash();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1_0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1_1, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx2_0, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1_0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1_1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2_0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let mut best = pool.best_transactions();
 
@@ -3191,11 +3913,13 @@ mod tests {
         pool.add_transaction(
             Arc::new(wrap_valid_tx(low_priority, TransactionOrigin::Local)),
             0,
+            TempoHardfork::T1,
         )
         .unwrap();
         pool.add_transaction(
             Arc::new(wrap_valid_tx(high_priority, TransactionOrigin::Local)),
             0,
+            TempoHardfork::T1,
         )
         .unwrap();
 
@@ -3228,12 +3952,24 @@ mod tests {
         let tx1 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(1).build();
         let tx2 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(2).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx2, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let (pending, queued) = pool.pending_and_queued_txn_count();
         assert_eq!(pending, 3);
@@ -3278,12 +4014,24 @@ mod tests {
         let tx1 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(1).build();
         let tx3 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(3).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx3, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx3, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let (pending, queued) = pool.pending_and_queued_txn_count();
         assert_eq!(pending, 2);
@@ -3326,10 +4074,15 @@ mod tests {
         pool.add_transaction(
             Arc::new(wrap_valid_tx(tx2.clone(), TransactionOrigin::Local)),
             0,
+            TempoHardfork::T1,
         )
         .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx3, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx3, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let (pending, queued) = pool.pending_and_queued_txn_count();
         assert_eq!(pending, 0);
@@ -3372,16 +4125,36 @@ mod tests {
         let tx_b2 = TxBuilder::aa(sender).nonce_key(key_b).nonce(2).build();
         let tx_b1 = TxBuilder::aa(sender).nonce_key(key_b).nonce(1).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx_a0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx_b0, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx_a1, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx_b2, TransactionOrigin::Local)), 0)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx_b1, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_a0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_b0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_a1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_b2, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_b1, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let (pending, queued) = pool.pending_and_queued_txn_count();
         assert_eq!(pending, 5, "All transactions should be pending");
@@ -3407,16 +4180,203 @@ mod tests {
         let tx_a5 = TxBuilder::aa(sender).nonce_key(key_a).nonce(5).build();
         let tx_b0 = TxBuilder::aa(sender).nonce_key(key_b).build();
 
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx_a5, TransactionOrigin::Local)), 5)
-            .unwrap();
-        pool.add_transaction(Arc::new(wrap_valid_tx(tx_b0, TransactionOrigin::Local)), 0)
-            .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_a5, TransactionOrigin::Local)),
+            5,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx_b0, TransactionOrigin::Local)),
+            0,
+            TempoHardfork::T1,
+        )
+        .unwrap();
 
         let (pending, queued) = pool.pending_and_queued_txn_count();
         assert_eq!(pending, 2);
         assert_eq!(queued, 0);
 
         assert_eq!(pool.independent_transactions.len(), 2);
+
+        pool.assert_invariants();
+    }
+
+    /// Test reorg handling when on-chain nonce decreases.
+    ///
+    /// When a reorg occurs, the canonical nonce can decrease. If no transaction
+    /// exists at the new on-chain nonce, `independent_transactions` must be cleared.
+    #[test_case::test_case(U256::ZERO)]
+    #[test_case::test_case(U256::random())]
+    fn reorg_nonce_decrease_clears_stale_independent_transaction(nonce_key: U256) {
+        let mut pool = AA2dPool::default();
+        let sender = Address::random();
+        let seq_id = AASequenceId::new(sender, nonce_key);
+
+        // Step 1: Add txs with nonces [3, 4, 5], starting with on_chain_nonce=3
+        let tx3 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(3).build();
+        let tx4 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(4).build();
+        let tx5 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(5).build();
+        let tx5_hash = *tx5.hash();
+
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx3, TransactionOrigin::Local)),
+            3,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx4, TransactionOrigin::Local)),
+            3,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx5, TransactionOrigin::Local)),
+            3,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+
+        // Verify initial state: all 3 txs pending, tx3 is independent
+        let (pending, queued) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending, 3, "All transactions should be pending");
+        assert_eq!(queued, 0);
+        assert_eq!(pool.independent_transactions.len(), 1);
+        assert_eq!(
+            pool.independent_transactions
+                .get(&seq_id)
+                .unwrap()
+                .transaction
+                .nonce(),
+            3,
+            "tx3 should be independent initially"
+        );
+        pool.assert_invariants();
+
+        // Step 2: Simulate mining of tx3 and tx4, on_chain_nonce becomes 5
+        let mut on_chain_ids = HashMap::default();
+        on_chain_ids.insert(seq_id, 5u64);
+        let (promoted, mined) = pool.on_nonce_changes(on_chain_ids);
+
+        assert_eq!(mined.len(), 2, "tx3 and tx4 should be mined");
+        assert!(promoted.is_empty(), "No promotions expected");
+
+        // Now tx5 should be the only tx in pool and be independent
+        let (pending, queued) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending, 1, "Only tx5 should remain pending");
+        assert_eq!(queued, 0);
+        assert_eq!(pool.independent_transactions.len(), 1);
+        assert_eq!(
+            pool.independent_transactions
+                .get(&seq_id)
+                .unwrap()
+                .transaction
+                .hash(),
+            &tx5_hash,
+            "tx5 should be independent after mining"
+        );
+        pool.assert_invariants();
+
+        // Step 3: Simulate reorg - nonce decreases back to 3
+        let mut on_chain_ids = HashMap::default();
+        on_chain_ids.insert(seq_id, 3u64);
+        let (promoted, mined) = pool.on_nonce_changes(on_chain_ids);
+
+        // No transactions should be mined (tx5.nonce=5 >= on_chain_nonce=3)
+        assert!(mined.is_empty(), "No transactions should be mined");
+        // No promotions expected
+        assert!(promoted.is_empty(), "No promotions expected");
+
+        // tx5 should still be in the pool but is now QUEUED (gap at nonces 3, 4)
+        let (pending, queued) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending, 0, "tx5 should not be pending (nonce gap)");
+        assert_eq!(queued, 1, "tx5 should be queued");
+
+        // No tx at on_chain_nonce=3, so independent_transactions should be cleared
+        assert!(
+            !pool.independent_transactions.contains_key(&seq_id),
+            "independent_transactions should not contain stale entry after reorg"
+        );
+
+        pool.assert_invariants();
+    }
+
+    /// Test that gap demotion marks ALL subsequent transactions as non-pending.
+    ///
+    /// When a transaction is removed creating a gap, all transactions after the gap
+    /// should be marked as queued (is_pending=false), not just the first one.
+    #[test_case::test_case(U256::ZERO)]
+    #[test_case::test_case(U256::random())]
+    fn gap_demotion_marks_all_subsequent_transactions_as_queued(nonce_key: U256) {
+        let mut pool = AA2dPool::default();
+        let sender = Address::random();
+        let seq_id = AASequenceId::new(sender, nonce_key);
+
+        // Step 1: Add txs with nonces [5, 6, 7, 8], on_chain_nonce=5
+        let tx5 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(5).build();
+        let tx6 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(6).build();
+        let tx7 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(7).build();
+        let tx8 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(8).build();
+        let tx6_hash = *tx6.hash();
+
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx5, TransactionOrigin::Local)),
+            5,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx6, TransactionOrigin::Local)),
+            5,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx7, TransactionOrigin::Local)),
+            5,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+        pool.add_transaction(
+            Arc::new(wrap_valid_tx(tx8, TransactionOrigin::Local)),
+            5,
+            TempoHardfork::T1,
+        )
+        .unwrap();
+
+        // Verify initial state: all 4 txs pending
+        let (pending, queued) = pool.pending_and_queued_txn_count();
+        assert_eq!(pending, 4, "All transactions should be pending initially");
+        assert_eq!(queued, 0);
+        assert_eq!(pool.independent_transactions.len(), 1);
+        pool.assert_invariants();
+
+        // Step 2: Remove tx6 to create a gap at nonce 6
+        // Pool now has: [5, _, 7, 8] where _ is the gap
+        let removed = pool.remove_transactions(std::iter::once(&tx6_hash));
+        assert_eq!(removed.len(), 1, "Should remove exactly tx6");
+
+        // Step 3: Trigger nonce change processing to re-evaluate pending status
+        // The on-chain nonce is still 5
+        let mut on_chain_ids = HashMap::default();
+        on_chain_ids.insert(seq_id, 5u64);
+        let (promoted, mined) = pool.on_nonce_changes(on_chain_ids);
+
+        assert!(mined.is_empty(), "No transactions should be mined");
+        assert!(promoted.is_empty(), "No promotions expected");
+
+        // Step 4: Verify that tx7 AND tx8 are both queued (not pending)
+        // BUG: Current code only marks tx7 as non-pending, tx8 incorrectly stays pending
+        let (pending, queued) = pool.pending_and_queued_txn_count();
+        assert_eq!(
+            pending, 1,
+            "Only tx5 should be pending (tx7 and tx8 are after the gap)"
+        );
+        assert_eq!(
+            queued, 2,
+            "tx7 and tx8 should both be queued due to gap at nonce 6"
+        );
 
         pool.assert_invariants();
     }

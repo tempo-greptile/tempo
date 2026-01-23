@@ -141,6 +141,14 @@ impl AccountKeychain {
             return Err(AccountKeychainError::zero_public_key().into());
         }
 
+        // T0+: Expiry must be in the future (also catches expiry == 0 which means "key doesn't exist")
+        if self.storage.spec().is_t0() {
+            let current_timestamp = self.storage.timestamp().saturating_to::<u64>();
+            if call.expiry <= current_timestamp {
+                return Err(AccountKeychainError::expiry_in_past().into());
+            }
+        }
+
         // Check if key already exists (key exists if expiry > 0)
         let existing_key = self.keys[msg_sender][call.keyId].read()?;
         if existing_key.expiry > 0 {
@@ -363,20 +371,36 @@ impl AccountKeychain {
         Ok(key)
     }
 
-    /// Validate keychain authorization (existence, revocation, and expiry)
+    /// Validate keychain authorization (existence, revocation, expiry, and signature type)
     ///
     /// This consolidates all validation checks into one method.
     /// Returns Ok(()) if the key is valid and authorized, Err otherwise.
+    ///
+    /// # Arguments
+    /// * `account` - The account that owns the key
+    /// * `key_id` - The key identifier to validate
+    /// * `current_timestamp` - Current block timestamp for expiry check
+    /// * `expected_sig_type` - The signature type from the actual signature (0=Secp256k1, 1=P256, 2=WebAuthn)
     pub fn validate_keychain_authorization(
         &self,
         account: Address,
         key_id: Address,
         current_timestamp: u64,
+        expected_sig_type: u8,
     ) -> Result<()> {
         let key = self.load_active_key(account, key_id)?;
 
         if current_timestamp >= key.expiry {
             return Err(AccountKeychainError::key_expired().into());
+        }
+
+        // Validate that the signature type matches the key type stored in the keychain
+        if key.signature_type != expected_sig_type {
+            return Err(AccountKeychainError::signature_type_mismatch(
+                key.signature_type,
+                expected_sig_type,
+            )
+            .into());
         }
 
         Ok(())
@@ -512,6 +536,7 @@ mod tests {
         storage::{StorageCtx, hashmap::HashMapStorageProvider},
     };
     use alloy::primitives::{Address, U256};
+    use tempo_chainspec::hardfork::TempoHardfork;
     use tempo_contracts::precompiles::IAccountKeychain::SignatureType;
 
     // Helper function to assert unauthorized error
@@ -705,6 +730,67 @@ mod tests {
     }
 
     #[test]
+    fn test_authorize_key_rejects_expiry_in_past() -> eyre::Result<()> {
+        // Must use T0 hardfork for expiry validation to be enforced
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T0);
+        let account = Address::random();
+        let key_id = Address::random();
+        StorageCtx::enter(&mut storage, || {
+            let mut keychain = AccountKeychain::new();
+            keychain.initialize()?;
+
+            // Use main key for the operation
+            keychain.set_transaction_key(Address::ZERO)?;
+
+            // Try to authorize with expiry = 0 (in the past)
+            let auth_call = authorizeKeyCall {
+                keyId: key_id,
+                signatureType: SignatureType::Secp256k1,
+                expiry: 0, // Zero expiry is in the past - should fail
+                enforceLimits: false,
+                limits: vec![],
+            };
+            let result = keychain.authorize_key(account, auth_call);
+            assert!(
+                result.is_err(),
+                "Authorizing with expiry in past should fail"
+            );
+
+            // Verify it's the correct error
+            match result.unwrap_err() {
+                TempoPrecompileError::AccountKeychainError(e) => {
+                    assert!(
+                        matches!(e, AccountKeychainError::ExpiryInPast(_)),
+                        "Expected ExpiryInPast error, got: {e:?}"
+                    );
+                }
+                e => panic!("Expected AccountKeychainError, got: {e:?}"),
+            }
+
+            // Also test with a non-zero but past expiry
+            let auth_call_past = authorizeKeyCall {
+                keyId: key_id,
+                signatureType: SignatureType::Secp256k1,
+                expiry: 1, // Very old timestamp - should fail
+                enforceLimits: false,
+                limits: vec![],
+            };
+            let result_past = keychain.authorize_key(account, auth_call_past);
+            assert!(
+                matches!(
+                    result_past,
+                    Err(TempoPrecompileError::AccountKeychainError(
+                        AccountKeychainError::ExpiryInPast(_)
+                    ))
+                ),
+                "Expected ExpiryInPast error for past expiry, got: {result_past:?}"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
     fn test_different_key_id_can_be_authorized_after_revocation() -> eyre::Result<()> {
         let mut storage = HashMapStorageProvider::new(1);
         let account = Address::random();
@@ -734,7 +820,7 @@ mod tests {
             let auth_call_2 = authorizeKeyCall {
                 keyId: key_id_2,
                 signatureType: SignatureType::P256,
-                expiry: 1000,
+                expiry: u64::MAX,
                 enforceLimits: true,
                 limits: vec![],
             };
@@ -745,7 +831,7 @@ mod tests {
                 account,
                 keyId: key_id_2,
             })?;
-            assert_eq!(key_info.expiry, 1000);
+            assert_eq!(key_info.expiry, u64::MAX);
             assert!(!key_info.isRevoked);
 
             Ok(())
@@ -999,5 +1085,61 @@ mod tests {
         let encoded = revoked.encode_to_slot();
         let decoded = AuthorizedKey::decode_from_slot(encoded);
         assert_eq!(decoded, revoked);
+    }
+
+    #[test]
+    fn test_validate_keychain_authorization_checks_signature_type() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let account = Address::random();
+        let key_id = Address::random();
+        StorageCtx::enter(&mut storage, || {
+            let mut keychain = AccountKeychain::new();
+            keychain.initialize()?;
+
+            // Use main key for authorization
+            keychain.set_transaction_key(Address::ZERO)?;
+
+            // Authorize a P256 key
+            let auth_call = authorizeKeyCall {
+                keyId: key_id,
+                signatureType: SignatureType::P256,
+                expiry: u64::MAX,
+                enforceLimits: false,
+                limits: vec![],
+            };
+            keychain.authorize_key(account, auth_call)?;
+
+            // Test 1: Validation should succeed with matching signature type (P256 = 1)
+            let result = keychain.validate_keychain_authorization(account, key_id, 0, 1);
+            assert!(
+                result.is_ok(),
+                "Validation should succeed with matching signature type"
+            );
+
+            // Test 2: Validation should fail with mismatched signature type (Secp256k1 = 0)
+            let mismatch_result = keychain.validate_keychain_authorization(account, key_id, 0, 0);
+            assert!(
+                mismatch_result.is_err(),
+                "Validation should fail with mismatched signature type"
+            );
+            match mismatch_result.unwrap_err() {
+                TempoPrecompileError::AccountKeychainError(e) => {
+                    assert!(
+                        matches!(e, AccountKeychainError::SignatureTypeMismatch(_)),
+                        "Expected SignatureTypeMismatch error, got: {e:?}"
+                    );
+                }
+                e => panic!("Expected AccountKeychainError, got: {e:?}"),
+            }
+
+            // Test 3: Validation should fail with WebAuthn (2) when key is P256 (1)
+            let webauthn_mismatch = keychain.validate_keychain_authorization(account, key_id, 0, 2);
+            assert!(
+                webauthn_mismatch.is_err(),
+                "Validation should fail with WebAuthn when key is P256"
+            );
+
+            Ok(())
+        })
     }
 }
