@@ -1,16 +1,16 @@
 # Token Bridge Application Specification
 
-This document specifies the Token Bridge - an application built on top of the base messaging layer that enables cross-chain token transfers.
+This document specifies the Token Bridge - an application built on top of the base messaging layer.
 
 ## Overview
 
-The Token Bridge is an **application layer** contract that:
-- Uses the base `MessageBridge` for cross-chain message passing
+The Token Bridge:
+- Uses the base `MessageBridge` for cross-chain message verification
 - Implements lock/mint and burn/unlock token transfer logic
-- Encodes token transfer data into 32-byte message hashes
-- Manages token mappings between chains
+- Encodes transfer data into message hashes
+- Checks `receivedAt > 0` to verify messages before releasing tokens
 
-The Token Bridge demonstrates the separation of concerns: **it has no knowledge of BLS signatures, validators, or attestations**. It simply sends message hashes through the base layer and reacts to received messages.
+The Token Bridge has **no knowledge of BLS signatures or validators** - it simply checks if the base layer has received a message.
 
 ## Architecture
 
@@ -19,203 +19,128 @@ The Token Bridge demonstrates the separation of concerns: **it has no knowledge 
 │                           Token Bridge Architecture                              │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                  │
-│                        ┌───────────────────────────┐                            │
-│                        │       TokenBridge         │                            │
-│                        │                           │                            │
-│                        │  • bridgeTokens()         │                            │
-│                        │  • claimTokens()          │                            │
-│                        │  • registerAsset()        │                            │
-│                        └─────────────┬─────────────┘                            │
-│                                      │                                          │
-│                                      │ sendMessage() / getMessage()             │
-│                                      ▼                                          │
-│                        ┌───────────────────────────┐                            │
-│                        │      MessageBridge        │                            │
-│                        │    (Base Layer)           │                            │
-│                        │                           │                            │
-│                        │  • 32-byte hash passing   │                            │
-│                        │  • BLS verification       │                            │
-│                        │  • Replay protection      │                            │
-│                        └───────────────────────────┘                            │
+│   USER                                                                           │
+│     │                                                                            │
+│     │ bridgeTokens(token, amount, recipient)                                    │
+│     ▼                                                                            │
+│   ┌───────────────────────────────────────────────────────────────┐             │
+│   │                      TokenBridge                              │             │
+│   │                                                               │             │
+│   │  1. Lock/burn tokens                                          │             │
+│   │  2. Compute: hash = keccak256(token, amount, recipient)       │             │
+│   │  3. Call: messageBridge.send(hash, destChainId)               │             │
+│   └───────────────────────────────────────────────────────────────┘             │
+│                              │                                                   │
+│                              ▼                                                   │
+│   ┌───────────────────────────────────────────────────────────────┐             │
+│   │                      MessageBridge                            │             │
+│   │               (Base Messaging Layer)                          │             │
+│   └───────────────────────────────────────────────────────────────┘             │
+│                                                                                  │
+│   ═══════════════════════════════════════════════════════════════════           │
+│                         Validators sign & relay                                  │
+│   ═══════════════════════════════════════════════════════════════════           │
+│                                                                                  │
+│   ┌───────────────────────────────────────────────────────────────┐             │
+│   │                      MessageBridge                            │             │
+│   │           received[origin][sender][hash] = timestamp          │             │
+│   └───────────────────────────────────────────────────────────────┘             │
+│                              │                                                   │
+│                              ▼                                                   │
+│   ┌───────────────────────────────────────────────────────────────┐             │
+│   │                      TokenBridge                              │             │
+│   │                                                               │             │
+│   │  claimTokens(token, amount, recipient, originalSender):       │             │
+│   │  1. Compute: hash = keccak256(token, amount, recipient)       │             │
+│   │  2. Check: messageBridge.receivedAt(origin, sender, hash) > 0 │             │
+│   │  3. Mint/unlock tokens to recipient                           │             │
+│   └───────────────────────────────────────────────────────────────┘             │
+│                              │                                                   │
+│     ▲                        ▼                                                   │
+│   USER                  TOKENS RECEIVED                                          │
 │                                                                                  │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Data Structures
-
-### Asset Configuration
-
-```solidity
-struct AssetConfig {
-    uint64 homeChainId;       // Chain where canonical token lives
-    address homeToken;        // Token address on home chain
-    address remoteToken;      // Wrapped token on remote chain
-    bool active;              // Whether bridging is enabled
-}
-```
-
-### Transfer Payload
-
-The Token Bridge encodes transfer data into a payload, then hashes it to 32 bytes:
-
-```solidity
-struct TransferPayload {
-    bytes32 assetId;          // Asset identifier (e.g., keccak256("WETH"))
-    address recipient;        // Recipient on destination chain
-    uint256 amount;           // Amount being transferred
-    uint64 srcNonce;          // Nonce from source TokenBridge
-}
-```
-
-### Message Hash Computation
-
-```solidity
-messageHash = keccak256(abi.encodePacked(
-    "TOKEN_BRIDGE_V1",        // Application domain
-    assetId,                  // bytes32
-    recipient,                // address
-    amount,                   // uint256
-    srcNonce                  // uint64
-))
-```
-
-## Interface Definition
+## Interface
 
 ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {IMessageBridge} from "./IMessageBridge.sol";
-
-/// @title ITokenBridge
-/// @notice Token bridge application built on base messaging layer
 interface ITokenBridge {
-    //=============================================================
-    //                          TYPES
-    //=============================================================
-    
-    struct AssetConfig {
-        uint64 homeChainId;
-        address homeToken;
-        address remoteToken;
-        bool active;
-    }
-    
     //=============================================================
     //                          ERRORS
     //=============================================================
     
-    error Unauthorized();
-    error ContractPaused();
-    error AssetNotRegistered(bytes32 assetId);
-    error AssetNotActive(bytes32 assetId);
-    error InvalidRecipient();
-    error ZeroAmount();
-    error MessageNotReceived(bytes32 messageHash);
-    error TransferAlreadyClaimed(bytes32 messageHash);
-    error InvalidTransferData();
+    error MessageNotReceived();
+    error AlreadyClaimed();
+    error InvalidAmount();
+    error AssetNotRegistered();
     
     //=============================================================
     //                          EVENTS
     //=============================================================
     
-    /// @notice Emitted when tokens are locked/burned for bridging
     event TokensBridged(
-        bytes32 indexed assetId,
         bytes32 indexed messageHash,
+        address indexed token,
         address indexed sender,
         address recipient,
         uint256 amount,
-        uint64 nonce
+        uint64 destinationChainId
     );
     
-    /// @notice Emitted when tokens are minted/unlocked from bridge
     event TokensClaimed(
-        bytes32 indexed assetId,
         bytes32 indexed messageHash,
+        address indexed token,
         address indexed recipient,
         uint256 amount
-    );
-    
-    /// @notice Emitted when an asset is registered
-    event AssetRegistered(
-        bytes32 indexed assetId,
-        uint64 homeChainId,
-        address homeToken,
-        address remoteToken
     );
     
     //=============================================================
     //                      BRIDGE FUNCTIONS
     //=============================================================
     
-    /// @notice Bridge tokens to the remote chain
-    /// @param assetId The asset identifier
-    /// @param recipient The recipient address on the remote chain
+    /// @notice Bridge tokens to another chain
+    /// @param token The token to bridge
     /// @param amount The amount to bridge
-    /// @return messageHash The message hash sent to base layer
+    /// @param recipient The recipient on the destination chain
+    /// @param destinationChainId The destination chain
     function bridgeTokens(
-        bytes32 assetId,
-        address recipient,
-        uint256 amount
-    ) external returns (bytes32 messageHash);
-    
-    /// @notice Claim tokens that were bridged from the remote chain
-    /// @param assetId The asset identifier
-    /// @param recipient The recipient address (must match what was bridged)
-    /// @param amount The amount to claim
-    /// @param srcNonce The nonce from the source chain
-    function claimTokens(
-        bytes32 assetId,
-        address recipient,
+        address token,
         uint256 amount,
-        uint64 srcNonce
+        address recipient,
+        uint64 destinationChainId
+    ) external;
+    
+    /// @notice Claim bridged tokens
+    /// @param token The token to claim
+    /// @param amount The amount to claim
+    /// @param recipient The recipient (must match what was bridged)
+    /// @param originalSender The sender on the origin chain
+    /// @param originChainId The origin chain
+    function claimTokens(
+        address token,
+        uint256 amount,
+        address recipient,
+        address originalSender,
+        uint64 originChainId
     ) external;
     
     //=============================================================
     //                      VIEW FUNCTIONS
     //=============================================================
     
-    /// @notice Get asset configuration
-    function getAsset(bytes32 assetId) external view returns (AssetConfig memory);
+    /// @notice Compute the message hash for a transfer
+    function computeMessageHash(
+        address token,
+        uint256 amount,
+        address recipient
+    ) external pure returns (bytes32);
     
     /// @notice Check if a transfer has been claimed
     function isClaimed(bytes32 messageHash) external view returns (bool);
-    
-    /// @notice Compute the message hash for a transfer
-    function computeMessageHash(
-        bytes32 assetId,
-        address recipient,
-        uint256 amount,
-        uint64 srcNonce
-    ) external pure returns (bytes32);
-    
-    /// @notice Get the base message bridge
-    function messageBridge() external view returns (IMessageBridge);
-    
-    /// @notice Get current nonce
-    function nonce() external view returns (uint64);
-    
-    //=============================================================
-    //                      ADMIN FUNCTIONS
-    //=============================================================
-    
-    /// @notice Register an asset for bridging
-    function registerAsset(
-        bytes32 assetId,
-        uint64 homeChainId,
-        address homeToken,
-        address remoteToken
-    ) external;
-    
-    /// @notice Set asset active status
-    function setAssetActive(bytes32 assetId, bool active) external;
-    
-    /// @notice Pause the contract
-    function pause() external;
-    
-    /// @notice Unpause the contract
-    function unpause() external;
 }
 ```
 
@@ -230,70 +155,35 @@ import {IMessageBridge} from "./interfaces/IMessageBridge.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-/// @title TokenBridge
-/// @notice Token bridge application using base messaging layer
 contract TokenBridge is ITokenBridge {
     using SafeERC20 for IERC20;
-    
-    //=============================================================
-    //                          CONSTANTS
-    //=============================================================
-    
-    bytes public constant DOMAIN = "TOKEN_BRIDGE_V1";
     
     //=============================================================
     //                          STORAGE
     //=============================================================
     
-    address public owner;
-    bool public paused;
-    
     /// @notice The base message bridge
     IMessageBridge public immutable messageBridge;
     
-    /// @notice Remote token bridge address
-    address public remoteTokenBridge;
+    /// @notice This chain's ID
+    uint64 public immutable chainId;
     
-    /// @notice Remote chain ID
-    uint64 public remoteChainId;
+    /// @notice Token mappings: originToken => localToken (for wrapped tokens)
+    mapping(address => address) public tokenMappings;
     
-    /// @notice Asset configurations
-    mapping(bytes32 => AssetConfig) public assets;
+    /// @notice Home chain for each token
+    mapping(address => uint64) public homeChain;
     
-    /// @notice Claimed transfers
+    /// @notice Claimed message hashes
     mapping(bytes32 => bool) public claimed;
-    
-    /// @notice Outbound nonce
-    uint64 public nonce;
-    
-    //=============================================================
-    //                        MODIFIERS
-    //=============================================================
-    
-    modifier onlyOwner() {
-        if (msg.sender != owner) revert Unauthorized();
-        _;
-    }
-    
-    modifier whenNotPaused() {
-        if (paused) revert ContractPaused();
-        _;
-    }
     
     //=============================================================
     //                       CONSTRUCTOR
     //=============================================================
     
-    constructor(
-        address _owner,
-        address _messageBridge,
-        address _remoteTokenBridge,
-        uint64 _remoteChainId
-    ) {
-        owner = _owner;
+    constructor(address _messageBridge) {
         messageBridge = IMessageBridge(_messageBridge);
-        remoteTokenBridge = _remoteTokenBridge;
-        remoteChainId = _remoteChainId;
+        chainId = uint64(block.chainid);
     }
     
     //=============================================================
@@ -302,92 +192,73 @@ contract TokenBridge is ITokenBridge {
     
     /// @inheritdoc ITokenBridge
     function bridgeTokens(
-        bytes32 assetId,
+        address token,
+        uint256 amount,
         address recipient,
-        uint256 amount
-    ) external whenNotPaused returns (bytes32 messageHash) {
-        if (recipient == address(0)) revert InvalidRecipient();
-        if (amount == 0) revert ZeroAmount();
+        uint64 destinationChainId
+    ) external {
+        if (amount == 0) revert InvalidAmount();
         
-        AssetConfig memory asset = assets[assetId];
-        if (asset.homeToken == address(0)) revert AssetNotRegistered(assetId);
-        if (!asset.active) revert AssetNotActive(assetId);
-        
-        // Determine if we lock or burn based on home chain
-        address localToken = _getLocalToken(asset);
-        bool isHomeChain = asset.homeChainId == uint64(block.chainid);
+        bool isHomeChain = homeChain[token] == chainId;
         
         if (isHomeChain) {
-            // Home chain: lock tokens in this contract
-            IERC20(localToken).safeTransferFrom(msg.sender, address(this), amount);
+            // Home chain: lock tokens
+            IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         } else {
             // Remote chain: burn wrapped tokens
-            IBurnable(localToken).burnFrom(msg.sender, amount);
+            IBurnable(token).burnFrom(msg.sender, amount);
         }
         
         // Compute message hash
-        uint64 currentNonce = nonce++;
-        messageHash = _computeMessageHash(assetId, recipient, amount, currentNonce);
+        bytes32 messageHash = computeMessageHash(token, amount, recipient);
         
-        // Send through base messaging layer
-        messageBridge.sendMessage(messageHash, remoteTokenBridge);
+        // Send through base layer
+        messageBridge.send(messageHash, destinationChainId);
         
         emit TokensBridged(
-            assetId,
             messageHash,
+            token,
             msg.sender,
             recipient,
             amount,
-            currentNonce
+            destinationChainId
         );
     }
     
     /// @inheritdoc ITokenBridge
     function claimTokens(
-        bytes32 assetId,
-        address recipient,
+        address token,
         uint256 amount,
-        uint64 srcNonce
-    ) external whenNotPaused {
+        address recipient,
+        address originalSender,
+        uint64 originChainId
+    ) external {
         // Compute expected message hash
-        bytes32 messageHash = _computeMessageHash(assetId, recipient, amount, srcNonce);
+        bytes32 messageHash = computeMessageHash(token, amount, recipient);
         
-        // Verify message was received by base layer
-        if (!messageBridge.hasMessage(messageHash)) {
-            revert MessageNotReceived(messageHash);
-        }
+        // Check message was received by base layer
+        uint256 receivedAt = messageBridge.receivedAt(originChainId, originalSender, messageHash);
+        if (receivedAt == 0) revert MessageNotReceived();
         
-        // Verify not already claimed
-        if (claimed[messageHash]) {
-            revert TransferAlreadyClaimed(messageHash);
-        }
-        
-        // Verify message came from remote token bridge
-        IMessageBridge.Message memory msg_ = messageBridge.getMessage(messageHash);
-        if (msg_.sender != remoteTokenBridge) {
-            revert InvalidTransferData();
-        }
-        
-        // Mark as claimed
+        // Check not already claimed
+        if (claimed[messageHash]) revert AlreadyClaimed();
         claimed[messageHash] = true;
         
-        // Get asset config
-        AssetConfig memory asset = assets[assetId];
-        if (asset.homeToken == address(0)) revert AssetNotRegistered(assetId);
+        // Get local token (may be wrapped version)
+        address localToken = tokenMappings[token];
+        if (localToken == address(0)) localToken = token;
         
-        // Determine if we unlock or mint based on home chain
-        address localToken = _getLocalToken(asset);
-        bool isHomeChain = asset.homeChainId == uint64(block.chainid);
+        bool isHomeChain = homeChain[localToken] == chainId;
         
         if (isHomeChain) {
-            // Home chain: unlock from escrow
+            // Home chain: unlock tokens
             IERC20(localToken).safeTransfer(recipient, amount);
         } else {
             // Remote chain: mint wrapped tokens
             IMintable(localToken).mint(recipient, amount);
         }
         
-        emit TokensClaimed(assetId, messageHash, recipient, amount);
+        emit TokensClaimed(messageHash, localToken, recipient, amount);
     }
     
     //=============================================================
@@ -395,8 +266,12 @@ contract TokenBridge is ITokenBridge {
     //=============================================================
     
     /// @inheritdoc ITokenBridge
-    function getAsset(bytes32 assetId) external view returns (AssetConfig memory) {
-        return assets[assetId];
+    function computeMessageHash(
+        address token,
+        uint256 amount,
+        address recipient
+    ) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(token, amount, recipient));
     }
     
     /// @inheritdoc ITokenBridge
@@ -404,76 +279,18 @@ contract TokenBridge is ITokenBridge {
         return claimed[messageHash];
     }
     
-    /// @inheritdoc ITokenBridge
-    function computeMessageHash(
-        bytes32 assetId,
-        address recipient,
-        uint256 amount,
-        uint64 srcNonce
-    ) external pure returns (bytes32) {
-        return _computeMessageHash(assetId, recipient, amount, srcNonce);
-    }
-    
     //=============================================================
     //                      ADMIN FUNCTIONS
     //=============================================================
     
-    /// @inheritdoc ITokenBridge
-    function registerAsset(
-        bytes32 assetId,
-        uint64 homeChainId,
-        address homeToken,
-        address remoteToken
-    ) external onlyOwner {
-        assets[assetId] = AssetConfig({
-            homeChainId: homeChainId,
-            homeToken: homeToken,
-            remoteToken: remoteToken,
-            active: true
-        });
-        
-        emit AssetRegistered(assetId, homeChainId, homeToken, remoteToken);
-    }
-    
-    /// @inheritdoc ITokenBridge
-    function setAssetActive(bytes32 assetId, bool active) external onlyOwner {
-        assets[assetId].active = active;
-    }
-    
-    /// @inheritdoc ITokenBridge
-    function pause() external onlyOwner {
-        paused = true;
-    }
-    
-    /// @inheritdoc ITokenBridge
-    function unpause() external onlyOwner {
-        paused = false;
-    }
-    
-    //=============================================================
-    //                      INTERNAL FUNCTIONS
-    //=============================================================
-    
-    function _computeMessageHash(
-        bytes32 assetId,
-        address recipient,
-        uint256 amount,
-        uint64 srcNonce
-    ) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(
-            "TOKEN_BRIDGE_V1",
-            assetId,
-            recipient,
-            amount,
-            srcNonce
-        ));
-    }
-    
-    function _getLocalToken(AssetConfig memory asset) internal view returns (address) {
-        if (asset.homeChainId == uint64(block.chainid)) {
-            return asset.homeToken;
-        }
-        return asset.remoteToken;
+    /// @notice Register a token mapping
+    function registerToken(
+        address originToken,
+        address localToken,
+        uint64 tokenHomeChain
+    ) external {
+        tokenMappings[originToken] = localToken;
+        homeChain[localToken] = tokenHomeChain;
     }
 }
 
@@ -486,129 +303,82 @@ interface IBurnable {
 }
 ```
 
-## Token Transfer Flow
+## Transfer Flow
 
-### Ethereum → Tempo (ETH-native token)
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                        ETH → Tempo Transfer Flow                              │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                               │
-│  ETHEREUM                                        TEMPO                        │
-│                                                                               │
-│  1. User calls tokenBridge.bridgeTokens()                                    │
-│     └─► WETH locked in TokenBridge escrow                                    │
-│     └─► messageHash = hash(assetId, recipient, amount, nonce)                │
-│     └─► messageBridge.sendMessage(messageHash, remoteTokenBridge)            │
-│     └─► Emits MessageSent + TokensBridged                                    │
-│                                                                               │
-│  2. Validators observe MessageSent event                                     │
-│     └─► Wait for finality (~15 min)                                          │
-│     └─► Sign attestation with BLS key shares                                 │
-│     └─► Aggregate threshold signature                                        │
-│                                                                               │
-│  3. Aggregator calls messageBridge.receiveMessage()     ──────────────────►  │
-│     └─► BLS signature verified                                               │
-│     └─► Message stored in MessageBridge                                      │
-│     └─► Emits MessageReceived                                                │
-│                                                                               │
-│  4. Anyone calls tokenBridge.claimTokens()              on Tempo             │
-│     └─► Verifies message exists in MessageBridge                             │
-│     └─► Verifies sender was Ethereum TokenBridge                             │
-│     └─► Mints wrapped WETH to recipient                                      │
-│     └─► Emits TokensClaimed                                                  │
-│                                                                               │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Tempo → Ethereum (Tempo-native token)
+### Ethereum → Tempo
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                        Tempo → ETH Transfer Flow                              │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                               │
-│  TEMPO                                           ETHEREUM                     │
-│                                                                               │
-│  1. User calls tokenBridge.bridgeTokens()                                    │
-│     └─► PATH locked in TokenBridge escrow (Tempo is home)                    │
-│     └─► messageHash = hash(assetId, recipient, amount, nonce)                │
-│     └─► messageBridge.sendMessage(messageHash, remoteTokenBridge)            │
-│     └─► Emits MessageSent + TokensBridged                                    │
-│                                                                               │
-│  2. Validators observe MessageSent event                                     │
-│     └─► Tempo has instant finality                                           │
-│     └─► Sign attestation with BLS key shares                                 │
-│     └─► Aggregate threshold signature                                        │
-│                                                                               │
-│  3. Aggregator calls messageBridge.receiveMessage()     ──────────────────►  │
-│     └─► BLS signature verified                                               │
-│     └─► Message stored in MessageBridge                                      │
-│     └─► Emits MessageReceived                                                │
-│                                                                               │
-│  4. Anyone calls tokenBridge.claimTokens()              on Ethereum          │
-│     └─► Verifies message exists in MessageBridge                             │
-│     └─► Verifies sender was Tempo TokenBridge                                │
-│     └─► Mints wrapped PATH to recipient                                      │
-│     └─► Emits TokensClaimed                                                  │
-│                                                                               │
-└──────────────────────────────────────────────────────────────────────────────┘
+ETHEREUM                                    TEMPO
+────────                                    ─────
+
+1. User calls tokenBridge.bridgeTokens(WETH, 1e18, recipient, TEMPO_CHAIN_ID)
+   └─► WETH locked in TokenBridge
+   └─► hash = keccak256(WETH, 1e18, recipient)
+   └─► messageBridge.send(hash, TEMPO_CHAIN_ID)
+   └─► Emits MessageSent(tokenBridge, hash, TEMPO_CHAIN_ID)
+
+2. Validators observe MessageSent
+   └─► Wait for Ethereum finality (~15 min)
+   └─► Sign attestation: (tokenBridge, hash, ETH_CHAIN_ID, TEMPO_CHAIN_ID)
+   └─► Aggregate threshold signature
+
+3. Aggregator calls messageBridge.write(tokenBridge, hash, ETH_CHAIN_ID, sig)
+   └─► BLS signature verified                       ◄──────────────────
+   └─► received[ETH_CHAIN_ID][tokenBridge][hash] = timestamp
+   └─► Emits MessageReceived
+
+4. Anyone calls tokenBridge.claimTokens(WETH, 1e18, recipient, tokenBridge, ETH_CHAIN_ID)
+   └─► hash = keccak256(WETH, 1e18, recipient)
+   └─► Check: messageBridge.receivedAt(...) > 0 ✓
+   └─► Mint wrapped WETH to recipient
+   └─► Emits TokensClaimed
 ```
 
-## Asset Registration
+### Tempo → Ethereum
 
-### Example: Register WETH (Home: Ethereum)
+```
+TEMPO                                       ETHEREUM
+─────                                       ────────
 
-**On Ethereum:**
+1. User calls tokenBridge.bridgeTokens(PATH, 1e18, recipient, ETH_CHAIN_ID)
+   └─► PATH locked in TokenBridge (Tempo is home)
+   └─► hash = keccak256(PATH, 1e18, recipient)
+   └─► messageBridge.send(hash, ETH_CHAIN_ID)
+   └─► Emits MessageSent(tokenBridge, hash, ETH_CHAIN_ID)
+
+2. Validators observe MessageSent
+   └─► Tempo has instant finality
+   └─► Sign attestation: (tokenBridge, hash, TEMPO_CHAIN_ID, ETH_CHAIN_ID)
+   └─► Aggregate threshold signature
+
+3. Aggregator calls messageBridge.write(tokenBridge, hash, TEMPO_CHAIN_ID, sig)
+   └─► BLS signature verified                       ◄──────────────────
+   └─► received[TEMPO_CHAIN_ID][tokenBridge][hash] = timestamp
+   └─► Emits MessageReceived
+
+4. Anyone calls tokenBridge.claimTokens(PATH, 1e18, recipient, tokenBridge, TEMPO_CHAIN_ID)
+   └─► hash = keccak256(PATH, 1e18, recipient)
+   └─► Check: messageBridge.receivedAt(...) > 0 ✓
+   └─► Mint wrapped PATH to recipient
+   └─► Emits TokensClaimed
+```
+
+## Message Hash Design
+
+The message hash encodes the transfer intent:
+
 ```solidity
-tokenBridge.registerAsset(
-    keccak256("WETH"),                              // assetId
-    1,                                              // homeChainId (Ethereum)
-    0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2,    // homeToken (WETH)
-    address(0)                                      // remoteToken (set later)
-);
+messageHash = keccak256(abi.encodePacked(
+    token,      // 20 bytes - which token
+    amount,     // 32 bytes - how much
+    recipient   // 20 bytes - to whom
+))
 ```
 
-**On Tempo:**
-```solidity
-// First create wrapped token
-address wrappedWETH = TIP20Factory.createToken("Wrapped Ether", "wWETH", 18, 0, tokenBridge);
-
-// Register with bridge
-tokenBridge.registerAsset(
-    keccak256("WETH"),                              // assetId
-    1,                                              // homeChainId (Ethereum)
-    0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2,    // homeToken (WETH)
-    wrappedWETH                                     // remoteToken
-);
-```
-
-### Example: Register PATH (Home: Tempo)
-
-**On Tempo:**
-```solidity
-tokenBridge.registerAsset(
-    keccak256("PATH"),
-    TEMPO_CHAIN_ID,                                 // homeChainId (Tempo)
-    PATH_ADDRESS,                                   // homeToken
-    address(0)                                      // remoteToken (set later)
-);
-```
-
-**On Ethereum:**
-```solidity
-// Deploy wrapped token
-WrappedToken wrappedPATH = new WrappedToken("Wrapped PATH", "wPATH", 18, tokenBridge);
-
-// Register with bridge
-tokenBridge.registerAsset(
-    keccak256("PATH"),
-    TEMPO_CHAIN_ID,                                 // homeChainId (Tempo)
-    PATH_ADDRESS,                                   // homeToken
-    address(wrappedPATH)                           // remoteToken
-);
-```
+This is simple but sufficient because:
+- **Uniqueness**: Ensured by MessageBridge's `sent[sender][hash]` check
+- **Sender binding**: MessageBridge records sender, TokenBridge verifies it matches
+- **Chain binding**: MessageBridge records origin chain
 
 ## Wrapped Token Template
 
@@ -616,32 +386,18 @@ tokenBridge.registerAsset(
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {ERC20Burnable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
+import {ERC20, ERC20Burnable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 
-/// @title WrappedToken
-/// @notice Wrapped token for cross-chain bridging
 contract WrappedToken is ERC20, ERC20Burnable {
     address public immutable bridge;
-    uint8 private immutable _decimals;
     
     modifier onlyBridge() {
         require(msg.sender == bridge, "Only bridge");
         _;
     }
     
-    constructor(
-        string memory name,
-        string memory symbol,
-        uint8 decimals_,
-        address bridge_
-    ) ERC20(name, symbol) {
-        _decimals = decimals_;
-        bridge = bridge_;
-    }
-    
-    function decimals() public view override returns (uint8) {
-        return _decimals;
+    constructor(string memory name, string memory symbol, address _bridge) ERC20(name, symbol) {
+        bridge = _bridge;
     }
     
     function mint(address to, uint256 amount) external onlyBridge {
@@ -652,44 +408,39 @@ contract WrappedToken is ERC20, ERC20Burnable {
 
 ## Gas Estimates
 
-| Function | Estimated Gas |
-|----------|---------------|
-| `bridgeTokens` (lock) | ~80,000 |
-| `bridgeTokens` (burn) | ~60,000 |
-| `claimTokens` (mint) | ~70,000 |
-| `claimTokens` (unlock) | ~50,000 |
-| `registerAsset` | ~45,000 |
+| Function | Gas |
+|----------|-----|
+| `bridgeTokens` (lock) | ~75,000 |
+| `bridgeTokens` (burn) | ~55,000 |
+| `claimTokens` (mint) | ~65,000 |
+| `claimTokens` (unlock) | ~45,000 |
 
 ## Invariants
 
-1. **Token Conservation**: Locked amount on home chain == minted amount on remote chain
-2. **Single Claim**: Each `messageHash` can only be claimed once
-3. **Sender Verification**: Claims only valid if original sender was remote TokenBridge
-4. **Message Dependency**: Claims require message to exist in base MessageBridge
-5. **Nonce Uniqueness**: Each outbound transfer has unique nonce
+1. **Token Conservation**: Locked on home chain = minted on remote chain
+2. **Single Claim**: Each message hash can only be claimed once
+3. **Message Dependency**: Claims require `receivedAt > 0` in base layer
+4. **Sender Matching**: Claims verify the original sender was the TokenBridge
 
-## Composability
+## Extensibility
 
-The Token Bridge demonstrates that **any application** can be built on the base messaging layer:
+Other applications follow the same pattern:
 
 | Application | Message Hash Contains |
 |-------------|----------------------|
-| Token Bridge | assetId, recipient, amount, nonce |
-| NFT Bridge | collectionId, tokenId, recipient, nonce |
-| Governance | proposalId, voteData, voter, nonce |
-| Oracle | queryId, answer, timestamp |
+| Token Bridge | `keccak256(token, amount, recipient)` |
+| NFT Bridge | `keccak256(collection, tokenId, recipient)` |
+| Governance | `keccak256(proposalId, vote, voter)` |
 
 Each application:
-1. Encodes its data into bytes
-2. Hashes to 32 bytes
-3. Sends through `messageBridge.sendMessage()`
-4. Decodes and executes on destination after receiving
+1. Computes a message hash from its data
+2. Sends via `messageBridge.send(hash, destChain)`
+3. Checks `receivedAt > 0` before executing on destination
 
 ## File Locations
 
 | Component | Path |
 |-----------|------|
-| Token Bridge | `contracts/bridge/src/apps/TokenBridge.sol` |
+| TokenBridge | `contracts/bridge/src/apps/TokenBridge.sol` |
 | Interface | `contracts/bridge/src/interfaces/ITokenBridge.sol` |
-| Wrapped Token | `contracts/bridge/src/tokens/WrappedToken.sol` |
-| Deploy Script | `contracts/bridge/script/DeployTokenBridge.s.sol` |
+| WrappedToken | `contracts/bridge/src/tokens/WrappedToken.sol` |

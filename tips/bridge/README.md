@@ -1,14 +1,14 @@
 # Tempo Native Bridge Specification
 
-This directory contains the complete specification for the Tempo ↔ External Chain messaging bridge.
+This directory contains the complete specification for the Tempo cross-chain messaging bridge.
 
 ## Overview
 
-The Tempo Native Bridge is a **generic cross-chain messaging layer** that enables arbitrary 32-byte message hash passing between Tempo and other EVM chains. It uses a **BLS threshold signature model** where validators collectively sign attestations using their BLS12-381 key shares from the consensus DKG.
+The Tempo Native Bridge is a **minimal cross-chain messaging layer** that enables arbitrary 32-byte message hash passing between any chains. It uses a **BLS threshold signature model** where Tempo validators collectively sign attestations using their BLS12-381 key shares from the consensus DKG.
 
 The bridge follows a **layered architecture**:
 
-1. **Base Messaging Layer** - Generic 32-byte message hash passing with sender/chain metadata
+1. **Base Messaging Layer** - Minimal 32-byte message hash passing
 2. **Application Layer** - Token bridges, NFT bridges, and other apps built on top
 
 ```
@@ -21,6 +21,7 @@ The bridge follows a **layered architecture**:
 │          │                   │                   │                              │
 │          └───────────────────┼───────────────────┘                              │
 │                              ▼                                                   │
+│                    read receivedAt > 0?                                         │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │                          BASE MESSAGING LAYER                                    │
 │                                                                                  │
@@ -28,149 +29,127 @@ The bridge follows a **layered architecture**:
 │   │   Any Chain     │                           │      Tempo      │             │
 │   │                 │                           │                 │             │
 │   │  ┌───────────┐  │                           │  ┌───────────┐  │             │
-│   │  │  Message  │◄─┼───── BLS Attestation ─────┼──►│  Message  │  │             │
-│   │  │  Bridge   │  │                           │  │  Bridge   │  │             │
+│   │  │  Message  │  │                           │  │  Message  │  │             │
+│   │  │  Bridge   │◄─┼───── BLS Attestation ─────┼──►│  Bridge   │  │             │
 │   │  └───────────┘  │                           │  └───────────┘  │             │
-│   │        ▲        │                           │        ▲        │             │
 │   │        │        │                           │        │        │             │
-│   │  sendMessage()  │                           │  sendMessage()  │             │
-│   │  receiveMessage │                           │  receiveMessage │             │
+│   │   send(hash,    │                           │   send(hash,    │             │
+│   │    destChain)   │                           │    destChain)   │             │
 │   │        │        │                           │        │        │             │
-│   │   ┌────┴────┐   │                           │   ┌────┴────┐   │             │
-│   │   │   App   │   │                           │   │   App   │   │             │
-│   │   └─────────┘   │                           │   └─────────┘   │             │
-│   │                 │                           │                 │             │
 │   └─────────────────┘                           └─────────────────┘             │
 │                                                                                  │
-│                        ┌───────────────────────┐                                │
-│                        │   Validator Sidecar   │                                │
-│                        │  (watches both chains │                                │
-│                        │   signs with BLS key) │                                │
-│                        └───────────────────────┘                                │
-│                                    │                                            │
-│                        ┌───────────┴───────────┐                                │
-│                        │      Aggregator       │                                │
-│                        │  (collects partials,  │                                │
-│                        │   submits threshold)  │                                │
-│                        └───────────────────────┘                                │
+│   Storage on receiving chain:                                                   │
+│   mapping(originChainId => sender => messageHash => receivedAtTimestamp)        │
 │                                                                                  │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Key Design Principles
+## Core Design
 
-### 1. Payload Agnostic Base Layer
+### Send (Origin Chain)
 
-The base messaging contract knows nothing about tokens, amounts, or application logic. It only:
-- Stores received 32-byte message hashes
-- Records the source chain ID and sender address
-- Emits events for message sending/receiving
-- Verifies BLS threshold signatures
+```solidity
+function send(bytes32 messageHash, uint64 destinationChainId) external;
 
-### 2. Applications Encode Their Own Payloads
+// Emits:
+event MessageSent(address indexed sender, bytes32 indexed messageHash, uint64 indexed destinationChainId);
+```
 
-Token bridges, NFT bridges, and other applications:
-- Encode their business logic into arbitrary bytes
-- Compute a 32-byte hash of the payload
-- Send the hash through the base layer
-- Decode and execute on the destination
+- Sender is `msg.sender`
+- Each `(sender, messageHash)` pair can only be sent once (replay protection)
+- No recipient specified - applications handle routing
 
-### 3. Single Universal Contract
+### Write (Destination Chain)
 
-The **same contract code** is deployed on all chains (Ethereum, Tempo, other L2s). Configuration differences:
-- `remoteChainId` - The chain ID of the counterpart
-- `remoteBridge` - Address of the bridge on the remote chain
-- `groupPublicKey` - Current BLS group public key from Tempo's DKG
+```solidity
+function write(address sender, bytes32 messageHash, uint64 originChainId, bytes calldata blsSignature) external;
+```
+
+- Validators sign: `(sender, messageHash, originChainId, destinationChainId)`
+- Stores in: `received[originChainId][sender][messageHash] = block.timestamp`
+
+### Read (Any Application)
+
+```solidity
+function receivedAt(uint64 originChainId, address sender, bytes32 messageHash) external view returns (uint256);
+```
+
+- Returns timestamp when message was received (0 if not received)
+- Applications check `receivedAt > 0` to verify message existence
 
 ## Documents
 
 | Document | Description |
 |----------|-------------|
 | [01-message-bridge.md](./01-message-bridge.md) | Base messaging bridge contract specification |
-| [02-message-format.md](./02-message-format.md) | Message hash computation and BLS signing conventions |
-| [03-sidecar.md](./03-sidecar.md) | Validator sidecar and aggregator specification |
+| [02-message-format.md](./02-message-format.md) | Message format and BLS signing conventions |
+| [03-sidecar.md](./03-sidecar.md) | Validator sidecar specification |
 | [04-token-bridge.md](./04-token-bridge.md) | Token bridge application built on base layer |
 
 ## Quick Start
 
-### Base Layer: Send a Message
+### Send a Message
 
 ```solidity
-// On Source Chain - any application can send a message hash
-bytes32 messageHash = keccak256(abi.encode(myAppData));
+// Application computes its payload hash
+bytes32 messageHash = keccak256(abi.encode(token, amount, recipient));
 
-bridge.sendMessage(
-    messageHash,      // 32-byte payload hash
-    recipientApp      // Application address on destination
-);
-// → Emits MessageSent event with (messageHash, sender, chainId, nonce)
+// Send through bridge
+bridge.send(messageHash, TEMPO_CHAIN_ID);
+
+// Event emitted: MessageSent(msg.sender, messageHash, TEMPO_CHAIN_ID)
 ```
 
-### Base Layer: Receive a Message
+### Check if Message Received
 
 ```solidity
-// After validator attestation on Destination Chain
-bridge.receiveMessage(
-    messageData,      // Encoded message metadata
-    blsSignature      // Aggregated threshold signature (96 bytes)
-);
-// → Stores message, emits MessageReceived
-// → Application can now query and process
+// On destination chain, check if message arrived
+uint256 timestamp = bridge.receivedAt(ETH_CHAIN_ID, originalSender, messageHash);
 
-// Application queries received messages
-Message memory msg = bridge.getMessage(messageHash);
-// Returns: (srcChainId, sender, recipient, nonce, timestamp)
+if (timestamp > 0) {
+    // Message was received at `timestamp`
+    // Application can now process it
+}
 ```
 
-### Application Layer: Token Bridge Example
+### Token Bridge Example
 
 ```solidity
-// Token Bridge built on top of base messaging
+// On Ethereum: lock tokens and send message
+function bridgeTokens(address token, uint256 amount, address recipient) external {
+    IERC20(token).transferFrom(msg.sender, address(this), amount);
+    
+    bytes32 messageHash = keccak256(abi.encode(token, amount, recipient));
+    messageBridge.send(messageHash, TEMPO_CHAIN_ID);
+}
 
-// Step 1: Lock tokens and send message
-tokenBridge.bridgeTokens(
-    tokenAddress,     // Token to bridge
-    amount,           // Amount to lock
-    destChainId,      // Destination chain
-    recipient         // Recipient on destination
-);
-// → Locks tokens in escrow
-// → Computes: messageHash = keccak256(token, amount, recipient, nonce)
-// → Calls: bridge.sendMessage(messageHash, remoteTokenBridge)
-
-// Step 2: On destination, after message is received
-tokenBridge.claimTokens(
-    token,            // Token address on this chain
-    amount,           // Amount to mint/unlock
-    originalSender,   // Sender from source chain
-    nonce             // Original nonce
-);
-// → Verifies message exists in base bridge
-// → Mints/unlocks tokens to recipient
+// On Tempo: check message and mint
+function claimTokens(address token, uint256 amount, address recipient, address originalSender) external {
+    bytes32 messageHash = keccak256(abi.encode(token, amount, recipient));
+    
+    require(messageBridge.receivedAt(ETH_CHAIN_ID, originalSender, messageHash) > 0, "not received");
+    require(!claimed[messageHash], "already claimed");
+    
+    claimed[messageHash] = true;
+    IMintable(wrappedToken).mint(recipient, amount);
+}
 ```
 
-## Implementation Status
+## Why This Design?
 
-| Component | Status | Location |
-|-----------|--------|----------|
-| Message Bridge Contract | 📋 Spec | `contracts/bridge/` |
-| Message Format | 📋 Spec | This directory |
-| Sidecar Binary | 📋 Spec | `crates/bridge-sidecar/` |
-| Token Bridge (App) | 📋 Spec | `contracts/bridge/apps/` |
+### Minimal Base Layer
 
-## Why This Architecture?
-
-### Separation of Concerns
-
-| Layer | Responsibility |
-|-------|----------------|
-| **Base Messaging** | Hash verification, BLS signatures, replay protection, sequencing |
-| **Applications** | Token logic, NFT logic, custom business rules, payload encoding |
+| Aspect | Design |
+|--------|--------|
+| Send interface | `send(hash, destChain)` - 2 parameters |
+| Storage | Single nested mapping with timestamp |
+| Verification | Check `receivedAt > 0` |
+| Replay protection | Origin chain prevents duplicate sends |
 
 ### Benefits
 
-1. **Composability** - Any application can use the base layer
-2. **Upgradability** - Applications can evolve without changing base layer
-3. **Simplicity** - Base layer is minimal and auditable
-4. **Extensibility** - New apps (governance, oracles, etc.) use same infrastructure
-5. **Security** - Single point of verification for all cross-chain messages
+1. **Simplicity** - Minimal interface, easy to audit
+2. **Flexibility** - Applications define their own message encoding
+3. **Composability** - Any app can use the same bridge
+4. **Efficiency** - No redundant data storage
+5. **Extensibility** - New apps don't require bridge changes
