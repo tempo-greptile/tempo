@@ -5,6 +5,7 @@
 //! 2. Starts a Tempo node (in-process via TestNodeBuilder)
 //! 3. Deploys the REAL MessageBridge contract to both
 //! 4. Sends messages and verifies event subscription works
+//! 5. Full flow test: Ethereum → sign → aggregate → submit to Tempo
 
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
@@ -17,12 +18,23 @@ use alloy::signers::local::MnemonicBuilder;
 use alloy::sol;
 use alloy::sol_types::SolEvent;
 use alloy_primitives::B256;
+use commonware_codec::Encode;
+use commonware_cryptography::bls12381::{dkg, primitives::sharing::Mode};
+use commonware_utils::{NZU32, N3f1};
 use futures::StreamExt;
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 use reth_ethereum::tasks::TaskManager;
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_node_core::args::RpcServerArgs;
 use reth_rpc_builder::RpcModuleSelection;
 use tempo_chainspec::spec::TempoChainSpec;
+use tempo_native_bridge::{
+    eip2537::g2_to_eip2537,
+    message::{Message, G2_COMPRESSED_LEN},
+    sidecar::aggregator::Aggregator,
+    signer::BLSSigner,
+};
 use tempo_node::node::TempoNode;
 use tokio::time::timeout;
 
@@ -39,7 +51,26 @@ sol! {
     );
 
     #[derive(Debug)]
+    event MessageReceived(
+        uint64 indexed originChainId,
+        address indexed sender,
+        bytes32 indexed messageHash,
+        uint256 receivedAt
+    );
+
+    #[derive(Debug)]
     function send(bytes32 messageHash, uint64 destinationChainId) external;
+
+    #[derive(Debug)]
+    function write(
+        address sender,
+        bytes32 messageHash,
+        uint64 originChainId,
+        bytes signature
+    ) external;
+
+    #[derive(Debug)]
+    function receivedAt(uint64 originChainId, address sender, bytes32 messageHash) external view returns (uint256);
 }
 
 /// Encode MessageBridge constructor arguments.
@@ -132,10 +163,24 @@ impl Drop for AnvilInstance {
 /// From: crates/native-bridge/contracts/out/MessageBridge.sol/MessageBridge.json
 const MESSAGE_BRIDGE_BYTECODE: &str = include_str!("../contracts/out/MessageBridge.sol/MessageBridge.bytecode.hex");
 
-/// G1 generator point (uncompressed, 128 bytes) for test deployment.
-/// This is a valid BLS12-381 G1 point that can be used as the initial public key.
-/// Format: 64 bytes x-coordinate + 64 bytes y-coordinate (each with 16 bytes zero padding)
-const G1_GENERATOR: &str = "0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1";
+/// G2 generator point (uncompressed, 256 bytes EIP-2537 format) for test deployment.
+/// This is a valid BLS12-381 G2 point that can be used as the initial public key.
+/// The MessageBridge uses MinSig variant: G2 public keys (256 bytes), G1 signatures (128 bytes).
+/// Format: 4 × 64-byte Fp elements (each with 16 bytes zero padding + 48 bytes value)
+const G2_GENERATOR_EIP2537: &str = concat!(
+    // x.c1 (64 bytes: 16 zero padding + 48 bytes)
+    "00000000000000000000000000000000",
+    "13e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e",
+    // x.c0 (64 bytes)
+    "00000000000000000000000000000000",
+    "024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8",
+    // y.c1 (64 bytes)
+    "00000000000000000000000000000000",
+    "0606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be",
+    // y.c0 (64 bytes)
+    "00000000000000000000000000000000",
+    "0ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801"
+);
 
 /// Deploy the real MessageBridge contract (for Anvil with Prague hardfork).
 async fn deploy_message_bridge_anvil(rpc_url: &str) -> eyre::Result<Address> {
@@ -157,9 +202,9 @@ async fn deploy_message_bridge_anvil(rpc_url: &str) -> eyre::Result<Address> {
     // Contract bytecode
     let bytecode = hex::decode(MESSAGE_BRIDGE_BYTECODE.trim())?;
 
-    // Constructor arguments: owner, initial epoch, initial public key (G1 generator)
+    // Constructor arguments: owner, initial epoch, initial public key (G2 generator)
     let initial_epoch = 1u64;
-    let initial_public_key = hex::decode(G1_GENERATOR)?;
+    let initial_public_key = hex::decode(G2_GENERATOR_EIP2537)?;
 
     // Encode constructor args and append to bytecode
     let constructor_args = encode_message_bridge_constructor(owner, initial_epoch, &initial_public_key);
@@ -195,9 +240,9 @@ async fn deploy_message_bridge_tempo(rpc_url: &str) -> eyre::Result<Address> {
     // Contract bytecode
     let bytecode = hex::decode(MESSAGE_BRIDGE_BYTECODE.trim())?;
 
-    // Constructor arguments: owner, initial epoch, initial public key (G1 generator)
+    // Constructor arguments: owner, initial epoch, initial public key (G2 generator)
     let initial_epoch = 1u64;
-    let initial_public_key = hex::decode(G1_GENERATOR)?;
+    let initial_public_key = hex::decode(G2_GENERATOR_EIP2537)?;
 
     // Encode constructor args and append to bytecode
     let constructor_args = encode_message_bridge_constructor(owner, initial_epoch, &initial_public_key);
@@ -560,5 +605,290 @@ async fn test_tempo_polling_fallback() -> eyre::Result<()> {
     assert_eq!(received_hash, message_hash);
 
     tracing::info!("Tempo polling test passed!");
+    Ok(())
+}
+
+/// Generate DKG keys for testing (5 shares, threshold 3).
+/// Returns (sharing, shares, group_public_key_eip2537)
+fn generate_test_dkg_keys() -> (
+    commonware_cryptography::bls12381::primitives::sharing::Sharing<
+        commonware_cryptography::bls12381::primitives::variant::MinSig,
+    >,
+    Vec<commonware_cryptography::bls12381::primitives::group::Share>,
+    [u8; 256], // G2 public key in EIP-2537 format
+) {
+    use commonware_cryptography::bls12381::primitives::variant::MinSig;
+
+    let mut rng = StdRng::seed_from_u64(42);
+    let n = NZU32!(5);
+
+    let (sharing, shares) = dkg::deal_anonymous::<MinSig, N3f1>(&mut rng, Mode::default(), n);
+
+    // Get group public key (G2) and convert to EIP-2537 format
+    let group_public = sharing.public();
+    let compressed = group_public.encode();
+    let compressed_array: [u8; G2_COMPRESSED_LEN] = compressed.as_ref().try_into().unwrap();
+    let eip2537_pubkey = g2_to_eip2537(&compressed_array).unwrap();
+
+    (sharing, shares, eip2537_pubkey)
+}
+
+/// Deploy MessageBridge with a specific G2 public key (for Anvil).
+async fn deploy_bridge_with_pubkey_anvil(
+    rpc_url: &str,
+    public_key: &[u8; 256],
+) -> eyre::Result<Address> {
+    use alloy::network::TransactionBuilder;
+    use alloy::providers::ProviderBuilder;
+    use alloy::signers::local::PrivateKeySigner;
+
+    let signer: PrivateKeySigner =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            .parse()
+            .unwrap();
+    let owner = signer.address();
+
+    let provider = ProviderBuilder::new()
+        .wallet(alloy::network::EthereumWallet::from(signer))
+        .connect_http(rpc_url.parse()?);
+
+    let bytecode = hex::decode(MESSAGE_BRIDGE_BYTECODE.trim())?;
+    let constructor_args = encode_message_bridge_constructor(owner, 1, public_key);
+    let deploy_code: Vec<u8> = bytecode.into_iter().chain(constructor_args).collect();
+
+    let tx = alloy::rpc::types::TransactionRequest::default()
+        .with_deploy_code(Bytes::from(deploy_code));
+
+    let pending = provider.send_transaction(tx).await?;
+    let receipt = pending.get_receipt().await?;
+
+    let address = receipt
+        .contract_address
+        .ok_or_else(|| eyre::eyre!("no contract address in receipt"))?;
+
+    tracing::info!(%address, "deployed MessageBridge with G2 pubkey on Anvil");
+    Ok(address)
+}
+
+/// Deploy MessageBridge with a specific G2 public key (for Tempo).
+async fn deploy_bridge_with_pubkey_tempo(
+    rpc_url: &str,
+    public_key: &[u8; 256],
+) -> eyre::Result<Address> {
+    use alloy::network::TransactionBuilder;
+    use alloy::providers::ProviderBuilder;
+
+    let wallet = MnemonicBuilder::from_phrase(TEST_MNEMONIC).build()?;
+    let owner = wallet.address();
+
+    let provider = ProviderBuilder::new()
+        .wallet(alloy::network::EthereumWallet::from(wallet))
+        .connect_http(rpc_url.parse()?);
+
+    let bytecode = hex::decode(MESSAGE_BRIDGE_BYTECODE.trim())?;
+    let constructor_args = encode_message_bridge_constructor(owner, 1, public_key);
+    let deploy_code: Vec<u8> = bytecode.into_iter().chain(constructor_args).collect();
+
+    let tx = alloy::rpc::types::TransactionRequest::default()
+        .with_deploy_code(Bytes::from(deploy_code));
+
+    let pending = provider.send_transaction(tx).await?;
+    let receipt = pending.get_receipt().await?;
+
+    let address = receipt
+        .contract_address
+        .ok_or_else(|| eyre::eyre!("no contract address in receipt"))?;
+
+    tracing::info!(%address, "deployed MessageBridge with G2 pubkey on Tempo");
+    Ok(address)
+}
+
+/// Full end-to-end test: Ethereum → Tempo cross-chain message flow.
+///
+/// This test:
+/// 1. Generates real DKG keys (5 shares, threshold 3)
+/// 2. Deploys MessageBridge on both Anvil (Ethereum) and Tempo with the same G2 public key
+/// 3. Sends a message from Ethereum (calls `send()`)
+/// 4. Signs the attestation with 3 signers
+/// 5. Aggregates the threshold signature
+/// 6. Submits to Tempo (calls `write()`)
+/// 7. Verifies the message was received
+#[tokio::test]
+async fn test_full_bridge_flow_ethereum_to_tempo() -> eyre::Result<()> {
+    use alloy::sol_types::SolCall;
+    use tempo_native_bridge::eip2537::g1_to_eip2537;
+
+    tracing_subscriber::fmt()
+        .with_env_filter("bridge_e2e=debug,tempo_native_bridge=debug")
+        .try_init()
+        .ok();
+
+    // ========================================
+    // Step 1: Generate DKG keys
+    // ========================================
+    let (sharing, shares, group_pubkey) = generate_test_dkg_keys();
+    let threshold = sharing.required::<N3f1>();
+    tracing::info!(
+        threshold, 
+        n = shares.len(), 
+        pubkey_len = group_pubkey.len(),
+        "generated DKG keys"
+    );
+
+    // ========================================
+    // Step 2: Start nodes and deploy contracts
+    // ========================================
+    let anvil = AnvilInstance::start().await?;
+    let (tempo_http, _tempo_ws, _tasks) = start_tempo_node().await?;
+
+    // Get chain IDs
+    let anvil_provider = ProviderBuilder::new().connect_http(anvil.rpc_url.parse()?);
+    let tempo_provider = ProviderBuilder::new().connect_http(tempo_http.parse()?);
+    let ethereum_chain_id = anvil_provider.get_chain_id().await?;
+    let tempo_chain_id = tempo_provider.get_chain_id().await?;
+    tracing::info!(ethereum_chain_id, tempo_chain_id, "chain IDs");
+
+    // Deploy MessageBridge on both chains with same public key
+    let eth_bridge = deploy_bridge_with_pubkey_anvil(&anvil.rpc_url, &group_pubkey).await?;
+    let tempo_bridge = deploy_bridge_with_pubkey_tempo(&tempo_http, &group_pubkey).await?;
+
+    // ========================================
+    // Step 3: Send message from Ethereum
+    // ========================================
+    let signer: alloy::signers::local::PrivateKeySigner =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            .parse()
+            .unwrap();
+    let sender = signer.address();
+
+    let eth_provider = ProviderBuilder::new()
+        .wallet(alloy::network::EthereumWallet::from(signer))
+        .connect_http(anvil.rpc_url.parse()?);
+
+    let message_hash = B256::repeat_byte(0xAB);
+
+    let send_call = sendCall {
+        messageHash: message_hash,
+        destinationChainId: tempo_chain_id,
+    };
+
+    let tx = alloy::rpc::types::TransactionRequest::default()
+        .to(eth_bridge)
+        .input(send_call.abi_encode().into());
+
+    let pending = eth_provider.send_transaction(tx).await?;
+    let receipt = pending.get_receipt().await?;
+    tracing::info!(
+        tx_hash = %receipt.transaction_hash,
+        sender = %sender,
+        message_hash = %message_hash,
+        "sent message from Ethereum"
+    );
+
+    // ========================================
+    // Step 4: Create Message and sign with threshold signers
+    // ========================================
+    let message = Message::new(sender, message_hash, ethereum_chain_id, tempo_chain_id);
+    let attestation_hash = message.attestation_hash();
+    tracing::info!(attestation_hash = %attestation_hash, "computed attestation hash");
+
+    // Create aggregator
+    let mut aggregator = Aggregator::new(sharing.clone(), 1);
+
+    // Sign with threshold number of signers
+    let mut aggregated_result = None;
+    for (i, share) in shares.iter().take(threshold as usize).enumerate() {
+        let signer = BLSSigner::new(share.clone());
+        let partial = signer.sign_partial(attestation_hash)?;
+        tracing::debug!(index = partial.index, "signer {} produced partial", i);
+
+        if let Some(result) = aggregator.add_partial(attestation_hash, partial, &message) {
+            aggregated_result = Some(result);
+        }
+    }
+
+    let (agg_sig, _) = aggregated_result.expect("threshold should be reached");
+    tracing::info!(
+        epoch = agg_sig.epoch,
+        sig_len = agg_sig.signature.len(),
+        "threshold signature recovered"
+    );
+
+    // ========================================
+    // Step 5: Convert signature and submit to Tempo
+    // ========================================
+    // Convert G1 signature to EIP-2537 format (128 bytes)
+    let eip2537_sig = g1_to_eip2537(&agg_sig.signature)?;
+    tracing::info!(sig_len = eip2537_sig.len(), "converted to EIP-2537 format");
+
+    let tempo_wallet = MnemonicBuilder::from_phrase(TEST_MNEMONIC).build()?;
+    let tempo_tx_provider = ProviderBuilder::new()
+        .wallet(alloy::network::EthereumWallet::from(tempo_wallet))
+        .connect_http(tempo_http.parse()?);
+
+    let write_call = writeCall {
+        sender,
+        messageHash: message_hash,
+        originChainId: ethereum_chain_id,
+        signature: Bytes::from(eip2537_sig.to_vec()),
+    };
+
+    let write_tx = alloy::rpc::types::TransactionRequest::default()
+        .to(tempo_bridge)
+        .input(write_call.abi_encode().into());
+
+    let write_pending = tempo_tx_provider.send_transaction(write_tx).await?;
+    let write_receipt = write_pending.get_receipt().await?;
+
+    assert!(
+        write_receipt.status(),
+        "write transaction should succeed"
+    );
+
+    tracing::info!(
+        tx_hash = %write_receipt.transaction_hash,
+        block = ?write_receipt.block_number,
+        "submitted attestation to Tempo"
+    );
+
+    // ========================================
+    // Step 6: Verify message was received
+    // ========================================
+    // Check MessageReceived event
+    let logs = write_receipt.inner.logs();
+    assert!(!logs.is_empty(), "should have emitted MessageReceived event");
+
+    let event_topic = logs[0].topics()[0];
+    assert_eq!(
+        event_topic,
+        MessageReceived::SIGNATURE_HASH,
+        "should be MessageReceived event"
+    );
+
+    // Call receivedAt to verify timestamp is set
+    let received_at_call = receivedAtCall {
+        originChainId: ethereum_chain_id,
+        sender,
+        messageHash: message_hash,
+    };
+
+    let call_result = tempo_provider
+        .call(
+            alloy::rpc::types::TransactionRequest::default()
+                .to(tempo_bridge)
+                .input(received_at_call.abi_encode().into()),
+        )
+        .await?;
+
+    // Decode the uint256 result
+    let timestamp = alloy_primitives::U256::from_be_slice(&call_result);
+    assert!(timestamp > alloy_primitives::U256::ZERO, "receivedAt should be non-zero");
+
+    tracing::info!(
+        timestamp = %timestamp,
+        "message successfully received on Tempo"
+    );
+
+    tracing::info!("🎉 Full bridge flow test passed: Ethereum → Tempo");
     Ok(())
 }
