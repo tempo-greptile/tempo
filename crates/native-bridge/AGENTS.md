@@ -28,3 +28,54 @@
 - E2E tests should use real contracts, not mocks - the MessageBridge bytecode is at `contracts/out/MessageBridge.sol/MessageBridge.bytecode.hex`
 - Run `forge build` in `contracts/` to regenerate bytecode after Solidity changes
 - Calls from contracts to TIP-20 precompiles require high gas limits (~5M) - 500k will cause silent reverts with no error data
+
+## Devnet Setup
+
+- **Use the `devnet-generate` ClusterWorkflowTemplate** to generate genesis for new devnets - it handles genesis generation, validator config initialization, and R2 upload automatically
+- **Genesis URL convention**: `https://devnet-assets.tempoxyz.dev/{devnet-name}.json` - the workflow uploads to this path
+- **Trigger genesis generation workflow**:
+  ```bash
+  kubectl create -f - <<EOF
+  apiVersion: argoproj.io/v1alpha1
+  kind: Workflow
+  metadata:
+    generateName: {devnet-name}-generate-
+    namespace: argo-workflows
+  spec:
+    workflowTemplateRef:
+      name: devnet-generate
+      clusterScope: true
+    arguments:
+      parameters:
+        - name: accounts
+          value: "100"
+        - name: branch
+          value: "main"
+        - name: chain-id
+          value: "{chain-id}"
+        - name: epoch-length
+          value: "1000"
+        - name: gas-limit
+          value: "500000000"
+        - name: name
+          value: "{devnet-name}"
+        - name: validators
+          value: "{ip1}:30302,{ip2}:30302,..."
+  EOF
+  ```
+- **After changing genesis**: Must delete PVCs and restart pods - genesis hash mismatch causes `CrashLoopBackOff`
+- **Use `--seed 0`**: Ensures deterministic validator keys matching `values.yaml` defaults
+
+## Common Pitfalls
+
+- **ValidatorConfig precompile missing**: If genesis is generated incorrectly (e.g., manually without proper xtask), `0xCCCCCCCC00000000000000000000000000000000` will have no storage - consensus won't progress
+- **Consensus P2P port**: Helm chart uses port `30302` for consensus P2P - genesis must use matching port in `--validators` argument
+- **Validator IPs must match**: The `validatorIps` in ArgoCD app must match the IPs used in `--validators` during genesis generation
+- **Bridge config in integrated mode**: `signer` and `threshold.sharing_file` are optional - the share comes from `--consensus.signing-share` and sharing polynomial is extracted from genesis `extraData`
+
+## Debugging Steps
+
+- Check consensus logs for `nullify` spam → usually means validators can't reach each other or ValidatorConfig is misconfigured
+- Verify ValidatorConfig precompile: `cast call 0xCCCCCCCC00000000000000000000000000000000 "validatorCount()(uint256)" --rpc-url <rpc>` - should return validator count
+- Verify genesis has ValidatorConfig: `curl -s <genesis-url> | jq '.alloc | keys | map(select(. | test("cccc"; "i")))'`
+- Check service IPs match genesis: `kubectl get svc -n {namespace} -l app.tempo.xyz/nodetype=validator,app.tempo.xyz/service-type=p2p`
