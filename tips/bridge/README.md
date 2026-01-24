@@ -91,8 +91,8 @@ function receivedAt(uint64 originChainId, address sender, bytes32 messageHash) e
 ### Send a Message
 
 ```solidity
-// Application computes its payload hash
-bytes32 messageHash = keccak256(abi.encode(token, amount, recipient));
+// Application computes its payload hash (include a nonce for uniqueness!)
+bytes32 messageHash = keccak256(abi.encode(DOMAIN, data, nonce++));
 
 // Send through bridge
 bridge.send(messageHash, TEMPO_CHAIN_ID);
@@ -104,7 +104,8 @@ bridge.send(messageHash, TEMPO_CHAIN_ID);
 
 ```solidity
 // On destination chain, check if message arrived
-uint256 timestamp = bridge.receivedAt(ETH_CHAIN_ID, originalSender, messageHash);
+// Note: sender is the APPLICATION CONTRACT, not the user
+uint256 timestamp = bridge.receivedAt(ETH_CHAIN_ID, trustedRemoteApp, messageHash);
 
 if (timestamp > 0) {
     // Message was received at `timestamp`
@@ -115,23 +116,53 @@ if (timestamp > 0) {
 ### Token Bridge Example
 
 ```solidity
+// Key design points:
+// 1. Include NONCE for uniqueness (prevents hash collisions)
+// 2. Use CANONICAL ASSET ID (homeChainId + homeToken)
+// 3. Verify sender is TRUSTED REMOTE BRIDGE
+// 4. Scope claimed by ORIGIN CHAIN
+
 // On Ethereum: lock tokens and send message
-function bridgeTokens(address token, uint256 amount, address recipient) external {
-    IERC20(token).transferFrom(msg.sender, address(this), amount);
+function bridgeTokens(bytes32 assetId, address recipient, uint256 amount, uint64 destChain) external {
+    Asset memory asset = assets[assetId];
+    IERC20(asset.localToken).transferFrom(msg.sender, address(this), amount);
     
-    bytes32 messageHash = keccak256(abi.encode(token, amount, recipient));
-    messageBridge.send(messageHash, TEMPO_CHAIN_ID);
+    uint256 transferNonce = nonce++;
+    bytes32 messageHash = keccak256(abi.encode(
+        "TOKEN_BRIDGE_V1",
+        block.chainid,        // originChainId
+        destChain,            // destinationChainId
+        asset.homeChainId,    // canonical asset identity
+        asset.homeToken,      // canonical asset identity
+        recipient,
+        amount,
+        transferNonce
+    ));
+    
+    messageBridge.send(messageHash, destChain);
 }
 
 // On Tempo: check message and mint
-function claimTokens(address token, uint256 amount, address recipient, address originalSender) external {
-    bytes32 messageHash = keccak256(abi.encode(token, amount, recipient));
+function claimTokens(bytes32 assetId, address recipient, uint256 amount, uint256 transferNonce, uint64 originChain) external {
+    address trustedBridge = remoteBridge[originChain];  // NOT user-provided!
+    Asset memory asset = assets[assetId];
     
-    require(messageBridge.receivedAt(ETH_CHAIN_ID, originalSender, messageHash) > 0, "not received");
-    require(!claimed[messageHash], "already claimed");
+    bytes32 messageHash = keccak256(abi.encode(
+        "TOKEN_BRIDGE_V1",
+        originChain,
+        block.chainid,
+        asset.homeChainId,
+        asset.homeToken,
+        recipient,
+        amount,
+        transferNonce
+    ));
     
-    claimed[messageHash] = true;
-    IMintable(wrappedToken).mint(recipient, amount);
+    require(messageBridge.receivedAt(originChain, trustedBridge, messageHash) > 0, "not received");
+    require(!claimed[originChain][messageHash], "already claimed");  // Scoped by origin!
+    
+    claimed[originChain][messageHash] = true;
+    IMintable(asset.localToken).mint(recipient, amount);
 }
 ```
 
