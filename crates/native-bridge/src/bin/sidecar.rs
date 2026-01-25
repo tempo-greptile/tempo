@@ -4,8 +4,7 @@ use clap::Parser;
 use eyre::Result;
 use std::path::PathBuf;
 
-use tempo_native_bridge::config::Config;
-use tempo_native_bridge::sidecar::BridgeSidecar;
+use tempo_native_bridge::{config::Config, sidecar::BridgeSidecar};
 
 #[derive(Parser, Debug)]
 #[command(name = "bridge-sidecar")]

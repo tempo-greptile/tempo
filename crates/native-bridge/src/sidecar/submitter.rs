@@ -1,17 +1,21 @@
 //! Transaction submitter - calls write() on destination bridge.
 
-use alloy::primitives::{Address, Bytes};
-use alloy::providers::{Provider, ProviderBuilder, WalletProvider};
-use alloy::rpc::types::TransactionRequest;
-use alloy::signers::local::PrivateKeySigner;
-use alloy::sol;
-use alloy::sol_types::SolCall;
+use alloy::{
+    primitives::{Address, Bytes},
+    providers::{Provider, ProviderBuilder, WalletProvider},
+    rpc::types::TransactionRequest,
+    signers::local::PrivateKeySigner,
+    sol,
+    sol_types::SolCall,
+};
 
-use crate::attestation::AggregatedSignature;
-use crate::config::ChainConfig;
-use crate::eip2537::g1_to_eip2537;
-use crate::error::{BridgeError, Result};
-use crate::message::Message;
+use crate::{
+    attestation::AggregatedSignature,
+    config::ChainConfig,
+    eip2537::g1_to_eip2537,
+    error::{BridgeError, Result},
+    message::Message,
+};
 
 sol! {
     #[derive(Debug)]

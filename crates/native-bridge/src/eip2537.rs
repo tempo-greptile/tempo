@@ -12,9 +12,9 @@
 //! - Signatures are G1 (48 bytes compressed → 128 bytes EIP-2537)
 //! - Public keys are G2 (96 bytes compressed → 256 bytes EIP-2537)
 
-use crate::error::{BridgeError, Result};
-use crate::message::{
-    G1_COMPRESSED_LEN, G1_UNCOMPRESSED_LEN, G2_COMPRESSED_LEN, G2_UNCOMPRESSED_LEN,
+use crate::{
+    error::{BridgeError, Result},
+    message::{G1_COMPRESSED_LEN, G1_UNCOMPRESSED_LEN, G2_COMPRESSED_LEN, G2_UNCOMPRESSED_LEN},
 };
 
 use blst::{
@@ -107,8 +107,7 @@ mod tests {
         primitives::{group::G1, ops::sign, sharing::Mode, variant::MinSig},
     };
     use commonware_utils::{N3f1, NZU32};
-    use rand::SeedableRng;
-    use rand::rngs::StdRng;
+    use rand::{SeedableRng, rngs::StdRng};
 
     #[test]
     fn test_g1_to_eip2537_produces_128_bytes() {

@@ -12,9 +12,11 @@ use commonware_cryptography::bls12381::primitives::{
 };
 use commonware_utils::Participant;
 
-use crate::attestation::PartialSignature;
-use crate::error::{BridgeError, Result};
-use crate::message::{BLS_DST, G1_COMPRESSED_LEN};
+use crate::{
+    attestation::PartialSignature,
+    error::{BridgeError, Result},
+    message::{BLS_DST, G1_COMPRESSED_LEN},
+};
 
 /// BLS threshold signer using a validator's key share.
 ///
@@ -128,8 +130,7 @@ mod tests {
         primitives::{ops::verify, sharing::Mode},
     };
     use commonware_utils::{N3f1, NZU32};
-    use rand::SeedableRng;
-    use rand::rngs::StdRng;
+    use rand::{SeedableRng, rngs::StdRng};
 
     /// Create test shares using DKG (MinSig variant, same as consensus).
     fn test_shares() -> Vec<Share> {

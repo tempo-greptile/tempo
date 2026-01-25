@@ -10,3 +10,6 @@
 [submodule "crates/native-bridge/contracts/lib/bls-solidity"]
 	path = crates/native-bridge/contracts/lib/bls-solidity
 	url = https://github.com/randa-mu/bls-solidity
+[submodule "crates/native-bridge/contracts/lib/solidity-merkle-trees"]
+	path = crates/native-bridge/contracts/lib/solidity-merkle-trees
+	url = https://github.com/polytope-labs/solidity-merkle-trees

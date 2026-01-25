@@ -4,21 +4,20 @@ pub mod aggregator;
 pub mod submitter;
 pub mod watcher;
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use commonware_codec::Read as CwRead;
 use commonware_cryptography::bls12381::primitives::{sharing::Sharing, variant::MinSig};
 use tokio::sync::{Mutex, mpsc};
 
-use crate::config::Config;
-use crate::error::{BridgeError, Result};
-use crate::message::Message;
-use crate::signer::BLSSigner;
+use crate::{
+    config::Config,
+    error::{BridgeError, Result},
+    message::Message,
+    signer::BLSSigner,
+};
 
-use self::aggregator::Aggregator;
-use self::submitter::Submitter;
-use self::watcher::ChainWatcher;
+use self::{aggregator::Aggregator, submitter::Submitter, watcher::ChainWatcher};
 
 /// The bridge sidecar orchestrates watching, signing, aggregating, and submitting.
 pub struct BridgeSidecar {

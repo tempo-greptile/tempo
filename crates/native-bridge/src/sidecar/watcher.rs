@@ -1,17 +1,21 @@
 //! Chain watcher - subscribes to MessageSent events via websocket.
 
-use alloy::primitives::Address;
-use alloy::providers::{Provider, ProviderBuilder};
-use alloy::rpc::types::Filter;
-use alloy::sol;
-use alloy::sol_types::SolEvent;
+use alloy::{
+    primitives::Address,
+    providers::{Provider, ProviderBuilder},
+    rpc::types::Filter,
+    sol,
+    sol_types::SolEvent,
+};
 use alloy_primitives::B256;
 use futures::StreamExt;
 use tokio::sync::mpsc;
 
-use crate::config::ChainConfig;
-use crate::error::{BridgeError, Result};
-use crate::message::Message;
+use crate::{
+    config::ChainConfig,
+    error::{BridgeError, Result},
+    message::Message,
+};
 
 sol! {
     #[derive(Debug)]

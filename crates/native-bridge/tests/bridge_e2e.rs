@@ -7,23 +7,26 @@
 //! 4. Sends messages and verifies event subscription works
 //! 5. Full flow test: Ethereum → sign → aggregate → submit to Tempo
 
-use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{
+    process::{Child, Command, Stdio},
+    sync::Arc,
+    time::Duration,
+};
 
-use alloy::primitives::{Address, Bytes, U256};
-use alloy::providers::{Provider, ProviderBuilder};
-use alloy::rpc::types::Filter;
-use alloy::signers::local::MnemonicBuilder;
-use alloy::sol;
-use alloy::sol_types::SolEvent;
+use alloy::{
+    primitives::{Address, Bytes, U256},
+    providers::{Provider, ProviderBuilder},
+    rpc::types::Filter,
+    signers::local::MnemonicBuilder,
+    sol,
+    sol_types::SolEvent,
+};
 use alloy_primitives::B256;
 use commonware_codec::Encode;
 use commonware_cryptography::bls12381::{dkg, primitives::sharing::Mode};
 use commonware_utils::{N3f1, NZU32};
 use futures::StreamExt;
-use rand::SeedableRng;
-use rand::rngs::StdRng;
+use rand::{SeedableRng, rngs::StdRng};
 use reth_ethereum::tasks::TaskManager;
 use reth_node_builder::{NodeBuilder, NodeConfig};
 use reth_node_core::args::RpcServerArgs;
@@ -196,9 +199,9 @@ const G2_GENERATOR_EIP2537: &str = concat!(
 
 /// Deploy the real MessageBridge contract (for Anvil with Prague hardfork).
 async fn deploy_message_bridge_anvil(rpc_url: &str) -> eyre::Result<Address> {
-    use alloy::network::TransactionBuilder;
-    use alloy::providers::ProviderBuilder;
-    use alloy::signers::local::PrivateKeySigner;
+    use alloy::{
+        network::TransactionBuilder, providers::ProviderBuilder, signers::local::PrivateKeySigner,
+    };
 
     // Anvil's default funded account
     let signer: PrivateKeySigner =
@@ -239,8 +242,7 @@ async fn deploy_message_bridge_anvil(rpc_url: &str) -> eyre::Result<Address> {
 
 /// Deploy the real MessageBridge contract on Tempo.
 async fn deploy_message_bridge_tempo(rpc_url: &str) -> eyre::Result<Address> {
-    use alloy::network::TransactionBuilder;
-    use alloy::providers::ProviderBuilder;
+    use alloy::{network::TransactionBuilder, providers::ProviderBuilder};
 
     // Use the funded mnemonic wallet
     let wallet = MnemonicBuilder::from_phrase(TEST_MNEMONIC).build()?;
@@ -652,9 +654,9 @@ async fn deploy_bridge_with_pubkey_anvil(
     rpc_url: &str,
     public_key: &[u8; 256],
 ) -> eyre::Result<Address> {
-    use alloy::network::TransactionBuilder;
-    use alloy::providers::ProviderBuilder;
-    use alloy::signers::local::PrivateKeySigner;
+    use alloy::{
+        network::TransactionBuilder, providers::ProviderBuilder, signers::local::PrivateKeySigner,
+    };
 
     let signer: PrivateKeySigner =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
@@ -689,8 +691,7 @@ async fn deploy_bridge_with_pubkey_tempo(
     rpc_url: &str,
     public_key: &[u8; 256],
 ) -> eyre::Result<Address> {
-    use alloy::network::TransactionBuilder;
-    use alloy::providers::ProviderBuilder;
+    use alloy::{network::TransactionBuilder, providers::ProviderBuilder};
 
     let wallet = MnemonicBuilder::from_phrase(TEST_MNEMONIC).build()?;
     let owner = wallet.address();
@@ -1060,8 +1061,7 @@ async fn deploy_mock_erc20_anvil(
     symbol: &str,
     decimals: u8,
 ) -> eyre::Result<Address> {
-    use alloy::network::TransactionBuilder;
-    use alloy::signers::local::PrivateKeySigner;
+    use alloy::{network::TransactionBuilder, signers::local::PrivateKeySigner};
 
     let signer: PrivateKeySigner =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
@@ -1196,8 +1196,7 @@ async fn deploy_token_bridge_anvil(
     rpc_url: &str,
     message_bridge: Address,
 ) -> eyre::Result<Address> {
-    use alloy::network::TransactionBuilder;
-    use alloy::signers::local::PrivateKeySigner;
+    use alloy::{network::TransactionBuilder, signers::local::PrivateKeySigner};
 
     let signer: PrivateKeySigner =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"

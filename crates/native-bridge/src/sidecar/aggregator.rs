@@ -16,10 +16,12 @@ use commonware_cryptography::bls12381::primitives::{
 use commonware_parallel::Sequential;
 use commonware_utils::{Faults, N3f1, Participant};
 
-use crate::attestation::{AggregatedSignature, PartialSignature, PendingAttestation};
-use crate::error::{BridgeError, Result};
-use crate::message::{G1_COMPRESSED_LEN, Message};
-use crate::signer::deserialize_g1;
+use crate::{
+    attestation::{AggregatedSignature, PartialSignature, PendingAttestation},
+    error::{BridgeError, Result},
+    message::{G1_COMPRESSED_LEN, Message},
+    signer::deserialize_g1,
+};
 
 /// Aggregates partial signatures into threshold signatures.
 ///
@@ -178,13 +180,13 @@ fn serialize_g1(point: &G1) -> Result<[u8; G1_COMPRESSED_LEN]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::BLS_DST;
-    use crate::signer::BLSSigner;
-    use commonware_cryptography::bls12381::primitives::sharing::Mode;
-    use commonware_cryptography::bls12381::{dkg, primitives::ops::verify};
+    use crate::{message::BLS_DST, signer::BLSSigner};
+    use commonware_cryptography::bls12381::{
+        dkg,
+        primitives::{ops::verify, sharing::Mode},
+    };
     use commonware_utils::NZU32;
-    use rand::SeedableRng;
-    use rand::rngs::StdRng;
+    use rand::{SeedableRng, rngs::StdRng};
 
     #[test]
     fn test_aggregate_partials_threshold_3_of_5() {

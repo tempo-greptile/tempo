@@ -3,22 +3,21 @@
 //! Unlike the standalone BridgeSidecar which loads config from files,
 //! BridgeService accepts injected dependencies for use within the validator.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use commonware_cryptography::bls12381::primitives::{
     group::Share, sharing::Sharing, variant::MinSig,
 };
 use tokio::sync::{Mutex, mpsc};
 
-use crate::config::ChainConfig;
-use crate::error::Result;
-use crate::gossip::{BridgeGossip, BridgeGossipMessage, MessageContext, NoOpGossip};
-use crate::message::Message;
-use crate::sidecar::aggregator::Aggregator;
-use crate::sidecar::submitter::Submitter;
-use crate::sidecar::watcher::ChainWatcher;
-use crate::signer::BLSSigner;
+use crate::{
+    config::ChainConfig,
+    error::Result,
+    gossip::{BridgeGossip, BridgeGossipMessage, MessageContext, NoOpGossip},
+    message::Message,
+    sidecar::{aggregator::Aggregator, submitter::Submitter, watcher::ChainWatcher},
+    signer::BLSSigner,
+};
 
 /// Configuration for the bridge service.
 #[derive(Debug, Clone)]
