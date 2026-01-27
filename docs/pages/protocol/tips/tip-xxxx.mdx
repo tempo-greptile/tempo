@@ -351,16 +351,16 @@ This ensures historical queries always return consistent results.
 
 | Slot | Field | Description |
 |------|-------|-------------|
-| 0 (bits 0-159) | `owner` | Owner address (160 bits) |
-| 0 (bit 255) | `initialized` | Whether V2 has been initialized from V1 (1 bit) |
+| 0 (bit 0) | `initialized` | Whether V2 has been initialized from V1 (1 bit) |
+| 0 (bits 96-255) | `owner` | Owner address (160 bits) |
 | 1 | `validatorsArray.length` | Count of validators ever added |
 | keccak256(1) + i | `validatorsArray[i]` | Validator address at index i |
 | keccak256(addr, 2) | `validators[addr]` | Validator struct for address |
 | keccak256(pubkey, 3) | `pubkeyToIndex[pubkey]` | Index for public key lookup |
 | 4 | `nextDkgCeremony` | Next full DKG ceremony epoch |
 
-The `initialized` bit occupies the highest bit of slot 0, which is unused by the
-`owner` address (addresses are 160 bits, leaving 96 bits available).
+The `initialized` bit occupies the lowest bit of slot 0 (Solidity uses big-endian
+bit ordering). The `owner` address occupies the upper 160 bits.
 
 ## Differences from V1
 
@@ -415,7 +415,7 @@ The following invariants must always hold:
 10. **Owner authorization**: Only the owner can call `addValidator`,
     `deleteValidator`, `changeOwner`, and `setNextFullDkgCeremony`.
 
-11. **Initialized once**: The `initialized` bit (bit 255 of slot 0) can only
+11. **Initialized once**: The `initialized` bit (bit 0 of slot 0) can only
     transition from 0 to 1, never back to 0.
 
 ---
@@ -430,8 +430,8 @@ The migration uses a two-pronged approach:
 
 1. **New hardfork ("Allegro")**: Timestamp-based activation that switches
    consensus from reading V1 to V2
-2. **Lazy initialization**: On first read, V2 automatically populates itself
-   from V1 state
+2. **Lazy initialization**: On first access (read or write), V2 automatically
+   populates itself from V1 state
 
 ## Hardfork-Based Switching
 
@@ -451,12 +451,12 @@ This ensures all nodes switch deterministically at the same point.
 ## Lazy Initialization
 
 V2 uses lazy initialization to automatically populate from V1 on first access.
-The `initialized` bit (bit 255 of slot 0) tracks whether initialization has
+The `initialized` bit (bit 0 of slot 0) tracks whether initialization has
 occurred.
 
 ### Triggering Functions
 
-The following view functions trigger initialization if `initialized == false`:
+The following functions trigger initialization if `initialized == false`:
 
 - `getValidators()`
 - `getActiveValidators()`
@@ -464,6 +464,7 @@ The following view functions trigger initialization if `initialized == false`:
 - `validatorByIndex(uint256 index)`
 - `validatorByAddress(address validatorAddress)`
 - `validatorByPublicKey(bytes32 publicKey)`
+- `addValidator(...)` (write operation)
 
 ### Initialization Procedure
 
@@ -482,9 +483,11 @@ When any triggering function is called and `initialized == false`:
      - `deletedAtHeight`: set to 0 (active)
    - Add to `validatorsArray`
    - Populate lookup maps (`validators[addr]`, `pubkeyToIndex[pubkey]`)
-3. Copy `owner` from V1 to V2
-4. Copy `nextDkgCeremony` from V1 to V2
-5. Set `initialized = true` (bit 255 of slot 0)
+3. Copy `nextDkgCeremony` from V1 to V2
+4. Set `initialized = true` (bit 0 of slot 0)
+
+Note: The `owner` is NOT copied from V1. V2's owner must be set separately
+(typically at genesis or via a privileged initialization call).
 
 ```solidity
 // V1 interface used during initialization
@@ -499,7 +502,6 @@ interface IValidatorConfigV1 {
     }
 
     function getValidators() external view returns (Validator[] memory);
-    function owner() external view returns (address);
     function getNextFullDkgCeremony() external view returns (uint64);
 }
 ```
@@ -600,14 +602,15 @@ The test suite must cover:
 
 22. **First read triggers init**: Calling `getValidators()` on uninitialized V2
     populates from V1
-23. **All triggering functions**: Each of `getValidators`, `getActiveValidators`,
+23. **First write triggers init**: Calling `addValidator()` on uninitialized V2
+    populates from V1 before adding the new validator
+24. **All triggering functions**: Each of `getValidators`, `getActiveValidators`,
     `validatorCount`, `validatorByIndex`, `validatorByAddress`,
-    `validatorByPublicKey` triggers initialization
-24. **Initialization is idempotent**: Subsequent reads do not re-initialize
-25. **Active validators only**: V1 validators with `active == false` are not
+    `validatorByPublicKey`, `addValidator` triggers initialization
+25. **Initialization is idempotent**: Subsequent accesses do not re-initialize
+26. **Active validators only**: V1 validators with `active == false` are not
     imported
-26. **Owner copied**: V2 `owner()` returns the same value as V1 `owner()`
 27. **DKG ceremony copied**: V2 `getNextFullDkgCeremony()` matches V1
 28. **addedAtHeight set correctly**: Imported validators have
     `addedAtHeight == block.number` at initialization time
-29. **Initialized bit set**: After initialization, bit 255 of slot 0 is set
+29. **Initialized bit set**: After initialization, bit 0 of slot 0 is set
