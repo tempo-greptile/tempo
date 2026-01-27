@@ -612,22 +612,14 @@ The test suite must cover:
 
 ### Lazy Initialization
 
-22. **First read triggers init**: Calling `getValidators()` on uninitialized V2
-    populates from V1
-23. **First write triggers init**: Calling `addValidator()` on uninitialized V2
-    populates from V1 before adding the new validator
-24. **All triggering functions**: Each of `getValidators`, `getActiveValidators`,
+22. **Triggering functions**: `getValidators`, `getActiveValidators`,
     `validatorCount`, `validatorByIndex`, `validatorByAddress`,
-    `validatorByPublicKey`, `addValidator`, `initialize` triggers initialization
-25. **Explicit initialize()**: Calling `initialize()` populates from V1
-26. **initialize() is idempotent**: Calling `initialize()` when already
-    initialized is a no-op
-27. **Initialization is idempotent**: Subsequent accesses do not re-initialize
-28. **Active validators only**: V1 validators with `active == false` are not
+    `validatorByPublicKey`, `addValidator`, `initialize` all trigger
+    initialization on first access; subsequent accesses are no-ops
+23. **Active validators only**: V1 validators with `active == false` are not
     imported
-29. **DKG ceremony copied**: V2 `getNextFullDkgCeremony()` matches V1
-30. **addedAtHeight set correctly**: Imported validators have
+24. **DKG ceremony copied**: V2 `getNextFullDkgCeremony()` matches V1
+25. **addedAtHeight set correctly**: Imported validators have
     `addedAtHeight == block.number` at initialization time
-31. **Initialized bit set**: After initialization, bit 0 of slot 0 is set
-32. **V1 read failure**: If V1 read fails, initialization sets bit without
+26. **V1 read failure**: If V1 read fails, initialization sets bit without
     importing validators
