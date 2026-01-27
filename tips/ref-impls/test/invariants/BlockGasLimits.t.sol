@@ -31,13 +31,13 @@ contract BlockGasLimitsInvariantTest is Test {
     uint256 public constant PAYMENT_LANE_MIN_GAS = BLOCK_GAS_LIMIT - GENERAL_GAS_LIMIT;
 
     /// @dev Maximum contract size (24KB = 24576 bytes, from EIP-170)
-    uint256 public constant MAX_CONTRACT_SIZE = 24576;
+    uint256 public constant MAX_CONTRACT_SIZE = 24_576;
 
     /// @dev Estimated gas per byte for contract deployment (~200 gas/byte)
     uint256 public constant GAS_PER_DEPLOYMENT_BYTE = 200;
 
     /// @dev Base intrinsic gas for contract creation (53000 for CREATE)
-    uint256 public constant CONTRACT_CREATION_BASE_GAS = 53000;
+    uint256 public constant CONTRACT_CREATION_BASE_GAS = 53_000;
 
     /*//////////////////////////////////////////////////////////////
                            GHOST VARIABLES
@@ -93,7 +93,7 @@ contract BlockGasLimitsInvariantTest is Test {
     /// @notice Handler: Simulate adding a general lane (T1+) transaction to the block
     /// @param gasUsed Gas used by this transaction (bounded to valid range)
     function handler_addGeneralTx(uint256 gasUsed) external {
-        gasUsed = bound(gasUsed, 21000, TX_GAS_CAP);
+        gasUsed = bound(gasUsed, 21_000, TX_GAS_CAP);
 
         // Check if transaction would exceed limits
         if (gasUsed > TX_GAS_CAP) {
@@ -124,7 +124,7 @@ contract BlockGasLimitsInvariantTest is Test {
     /// @notice Handler: Simulate adding a payment lane (T0) transaction to the block
     /// @param gasUsed Gas used by this transaction
     function handler_addPaymentTx(uint256 gasUsed) external {
-        gasUsed = bound(gasUsed, 21000, TX_GAS_CAP);
+        gasUsed = bound(gasUsed, 21_000, TX_GAS_CAP);
 
         // Check if transaction would exceed limits
         if (gasUsed > TX_GAS_CAP) {
@@ -160,7 +160,8 @@ contract BlockGasLimitsInvariantTest is Test {
         contractSize = bound(contractSize, 1, MAX_CONTRACT_SIZE);
 
         // Calculate deployment gas: base + (size * gas_per_byte)
-        uint256 deploymentGas = CONTRACT_CREATION_BASE_GAS + (contractSize * GAS_PER_DEPLOYMENT_BYTE);
+        uint256 deploymentGas =
+            CONTRACT_CREATION_BASE_GAS + (contractSize * GAS_PER_DEPLOYMENT_BYTE);
 
         // Track max deployment gas seen
         if (deploymentGas > ghost_maxDeploymentGas) {
@@ -253,8 +254,7 @@ contract BlockGasLimitsInvariantTest is Test {
     /// @notice TEMPO-BLOCK1: Block total gas never exceeds 500,000,000
     function _assertBlockTotalGasLimit() internal view {
         assertTrue(
-            ghost_blockGasUsed <= BLOCK_GAS_LIMIT,
-            "TEMPO-BLOCK1: Block gas exceeds 500M limit"
+            ghost_blockGasUsed <= BLOCK_GAS_LIMIT, "TEMPO-BLOCK1: Block gas exceeds 500M limit"
         );
     }
 
@@ -269,8 +269,7 @@ contract BlockGasLimitsInvariantTest is Test {
     /// @notice TEMPO-BLOCK3: Transaction gas limit never exceeds 30,000,000
     function _assertTxGasCap() internal view {
         assertTrue(
-            ghost_maxTxGasUsed <= TX_GAS_CAP,
-            "TEMPO-BLOCK3: Transaction gas exceeds 30M cap"
+            ghost_maxTxGasUsed <= TX_GAS_CAP, "TEMPO-BLOCK3: Transaction gas exceeds 30M cap"
         );
     }
 
@@ -301,10 +300,10 @@ contract BlockGasLimitsInvariantTest is Test {
 
     /// @notice TEMPO-BLOCK6: Max contract deployment (24KB) fits within tx gas cap
     function _assertContractDeploymentFits() internal view {
-        uint256 maxDeployGas = CONTRACT_CREATION_BASE_GAS + (MAX_CONTRACT_SIZE * GAS_PER_DEPLOYMENT_BYTE);
+        uint256 maxDeployGas =
+            CONTRACT_CREATION_BASE_GAS + (MAX_CONTRACT_SIZE * GAS_PER_DEPLOYMENT_BYTE);
         assertTrue(
-            maxDeployGas <= TX_GAS_CAP,
-            "TEMPO-BLOCK6: Max contract deployment exceeds tx gas cap"
+            maxDeployGas <= TX_GAS_CAP, "TEMPO-BLOCK6: Max contract deployment exceeds tx gas cap"
         );
 
         // Verify any deployment we've seen fits
@@ -319,8 +318,7 @@ contract BlockGasLimitsInvariantTest is Test {
     function _assertBlockValidity() internal view {
         // Block is valid if all limits are respected
         bool blockValid = ghost_blockGasUsed <= BLOCK_GAS_LIMIT
-            && ghost_generalLaneGasUsed <= GENERAL_GAS_LIMIT
-            && ghost_maxTxGasUsed <= TX_GAS_CAP;
+            && ghost_generalLaneGasUsed <= GENERAL_GAS_LIMIT && ghost_maxTxGasUsed <= TX_GAS_CAP;
 
         assertTrue(blockValid, "TEMPO-BLOCK7: Block in invalid state");
 
@@ -399,7 +397,8 @@ contract BlockGasLimitsInvariantTest is Test {
 
     /// @notice Standalone test for TEMPO-BLOCK6
     function test_TEMPO_BLOCK6_MaxContractDeploymentFits() public pure {
-        uint256 maxDeployGas = CONTRACT_CREATION_BASE_GAS + (MAX_CONTRACT_SIZE * GAS_PER_DEPLOYMENT_BYTE);
+        uint256 maxDeployGas =
+            CONTRACT_CREATION_BASE_GAS + (MAX_CONTRACT_SIZE * GAS_PER_DEPLOYMENT_BYTE);
         // 53000 + (24576 * 200) = 53000 + 4915200 = 4968200 gas
         assertTrue(maxDeployGas < TX_GAS_CAP, "Max deployment should fit in tx gas cap");
         assertEq(maxDeployGas, 4_968_200, "Max deployment gas calculation");
@@ -413,24 +412,20 @@ contract BlockGasLimitsInvariantTest is Test {
 
         // Attempting to add more to general lane should be rejected
         uint256 beforeReject = ghost_rejectedTxCount;
-        this.handler_addGeneralTx(21000);
+        this.handler_addGeneralTx(21_000);
         assertEq(
-            ghost_rejectedTxCount,
-            beforeReject + 1,
-            "Should reject tx when general lane is full"
+            ghost_rejectedTxCount, beforeReject + 1, "Should reject tx when general lane is full"
         );
 
         // Reset and test block limit
         _resetBlock();
-        ghost_paymentLaneGasUsed = BLOCK_GAS_LIMIT - 10000;
-        ghost_blockGasUsed = BLOCK_GAS_LIMIT - 10000;
+        ghost_paymentLaneGasUsed = BLOCK_GAS_LIMIT - 10_000;
+        ghost_blockGasUsed = BLOCK_GAS_LIMIT - 10_000;
 
         beforeReject = ghost_rejectedTxCount;
-        this.handler_addPaymentTx(21000);
+        this.handler_addPaymentTx(21_000);
         assertEq(
-            ghost_rejectedTxCount,
-            beforeReject + 1,
-            "Should reject tx when block is nearly full"
+            ghost_rejectedTxCount, beforeReject + 1, "Should reject tx when block is nearly full"
         );
     }
 

@@ -4,8 +4,8 @@ pragma solidity >=0.8.13 <0.9.0;
 import { Test, console } from "forge-std/Test.sol";
 
 import { ITIP20 } from "../../src/interfaces/ITIP20.sol";
-import { Counter, InitcodeHelper, SimpleStorage } from "../helpers/TestContracts.sol";
 import { InvariantBase } from "../helpers/InvariantBase.sol";
+import { Counter, InitcodeHelper, SimpleStorage } from "../helpers/TestContracts.sol";
 import { TxBuilder } from "../helpers/TxBuilder.sol";
 
 import { VmExecuteTransaction, VmRlp } from "tempo-std/StdVm.sol";
@@ -169,19 +169,58 @@ contract GasPricingInvariantTest is InvariantBase {
         _log("================================================================================");
         _log("                              FINAL SUMMARY");
         _log("================================================================================");
-        _log(string.concat("Total gas threshold tests: ", vm.toString(ghost_totalGasThresholdTests)));
-        _log(string.concat("SSTORE new slot - below threshold failed: ", vm.toString(ghost_sstoreNewSlotBelowThresholdFailed)));
-        _log(string.concat("SSTORE new slot - above threshold succeeded: ", vm.toString(ghost_sstoreNewSlotAboveThresholdSucceeded)));
-        _log(string.concat("Account creation - below threshold failed: ", vm.toString(ghost_accountCreationBelowThresholdFailed)));
-        _log(string.concat("Account creation - above threshold succeeded: ", vm.toString(ghost_accountCreationAboveThresholdSucceeded)));
-        _log(string.concat("CREATE - below threshold failed: ", vm.toString(ghost_createBelowThresholdFailed)));
-        _log(string.concat("CREATE - above threshold succeeded: ", vm.toString(ghost_createAboveThresholdSucceeded)));
+        _log(
+            string.concat("Total gas threshold tests: ", vm.toString(ghost_totalGasThresholdTests))
+        );
+        _log(
+            string.concat(
+                "SSTORE new slot - below threshold failed: ",
+                vm.toString(ghost_sstoreNewSlotBelowThresholdFailed)
+            )
+        );
+        _log(
+            string.concat(
+                "SSTORE new slot - above threshold succeeded: ",
+                vm.toString(ghost_sstoreNewSlotAboveThresholdSucceeded)
+            )
+        );
+        _log(
+            string.concat(
+                "Account creation - below threshold failed: ",
+                vm.toString(ghost_accountCreationBelowThresholdFailed)
+            )
+        );
+        _log(
+            string.concat(
+                "Account creation - above threshold succeeded: ",
+                vm.toString(ghost_accountCreationAboveThresholdSucceeded)
+            )
+        );
+        _log(
+            string.concat(
+                "CREATE - below threshold failed: ", vm.toString(ghost_createBelowThresholdFailed)
+            )
+        );
+        _log(
+            string.concat(
+                "CREATE - above threshold succeeded: ",
+                vm.toString(ghost_createAboveThresholdSucceeded)
+            )
+        );
         _log(string.concat("Tx over cap rejected: ", vm.toString(ghost_txOverCapRejected)));
         _log(string.concat("Tx at cap succeeded: ", vm.toString(ghost_txAtCapSucceeded)));
 
         // Verify no violations occurred
-        assertEq(ghost_sstoreNewSlotBelowThresholdAllowed, 0, "TEMPO-GAS1 violation: SSTORE new slot succeeded with insufficient gas");
-        assertEq(ghost_createBelowThresholdAllowed, 0, "TEMPO-GAS3 violation: CREATE succeeded with insufficient gas");
+        assertEq(
+            ghost_sstoreNewSlotBelowThresholdAllowed,
+            0,
+            "TEMPO-GAS1 violation: SSTORE new slot succeeded with insufficient gas"
+        );
+        assertEq(
+            ghost_createBelowThresholdAllowed,
+            0,
+            "TEMPO-GAS3 violation: CREATE succeeded with insufficient gas"
+        );
         // NOTE: The following are enforced at protocol level (tempo-revm), not EVM level:
         // - TEMPO-GAS2 (account creation): tested in crates/revm/src/handler.rs
         // - TEMPO-GAS6 (tx gas cap): tested in crates/transaction-pool/src/validator.rs
@@ -200,7 +239,8 @@ contract GasPricingInvariantTest is InvariantBase {
         address sender = actors[senderIdx];
         uint256 privateKey = actorKeys[senderIdx];
 
-        bytes32 slot = keccak256(abi.encode(slotSeed, block.timestamp, ghost_totalGasThresholdTests));
+        bytes32 slot =
+            keccak256(abi.encode(slotSeed, block.timestamp, ghost_totalGasThresholdTests));
         bytes memory callData = abi.encodeCall(GasTestStorage.storeValue, (slot, 1));
 
         uint64 currentNonce = uint64(vm.getNonce(sender));
@@ -228,11 +268,23 @@ contract GasPricingInvariantTest is InvariantBase {
             ghost_sstoreNewSlotBelowThresholdAllowed++;
             ghost_protocolNonce[sender]++;
             ghost_totalProtocolNonceTxs++;
-            _log(string.concat("VIOLATION: SSTORE new slot succeeded with only ", vm.toString(insufficientGas), " gas"));
+            _log(
+                string.concat(
+                    "VIOLATION: SSTORE new slot succeeded with only ",
+                    vm.toString(insufficientGas),
+                    " gas"
+                )
+            );
         } catch {
             // Expected: transaction failed due to insufficient gas
             ghost_sstoreNewSlotBelowThresholdFailed++;
-            _log(string.concat("OK: SSTORE new slot correctly failed with ", vm.toString(insufficientGas), " gas"));
+            _log(
+                string.concat(
+                    "OK: SSTORE new slot correctly failed with ",
+                    vm.toString(insufficientGas),
+                    " gas"
+                )
+            );
         }
 
         // Test 2: Gas above threshold should succeed
@@ -243,13 +295,7 @@ contract GasPricingInvariantTest is InvariantBase {
         currentNonce = uint64(vm.getNonce(sender));
 
         bytes memory signedTxHigh = TxBuilder.buildLegacyCallWithGas(
-            vmRlp,
-            vm,
-            address(_storageContract),
-            callData,
-            currentNonce,
-            sufficientGas,
-            privateKey
+            vmRlp, vm, address(_storageContract), callData, currentNonce, sufficientGas, privateKey
         );
 
         ghost_totalGasThresholdTests++;
@@ -260,11 +306,21 @@ contract GasPricingInvariantTest is InvariantBase {
             ghost_totalProtocolNonceTxs++;
             ghost_totalTxExecuted++;
             ghost_totalCallsExecuted++;
-            _log(string.concat("OK: SSTORE new slot succeeded with ", vm.toString(sufficientGas), " gas"));
+            _log(
+                string.concat(
+                    "OK: SSTORE new slot succeeded with ", vm.toString(sufficientGas), " gas"
+                )
+            );
         } catch {
             // This might fail for other reasons (e.g., if slot was already written)
             ghost_totalTxReverted++;
-            _log(string.concat("INFO: SSTORE new slot failed with ", vm.toString(sufficientGas), " gas (may be expected)"));
+            _log(
+                string.concat(
+                    "INFO: SSTORE new slot failed with ",
+                    vm.toString(sufficientGas),
+                    " gas (may be expected)"
+                )
+            );
         }
     }
 
@@ -274,7 +330,14 @@ contract GasPricingInvariantTest is InvariantBase {
     /// @param recipientSeed Seed for selecting recipient
     function handler_accountCreationThreshold(uint256 actorSeed, uint256 recipientSeed) external {
         // Create a fresh account that has never sent a transaction
-        string memory label = string(abi.encodePacked("fresh_account_", vm.toString(actorSeed), "_", vm.toString(ghost_totalGasThresholdTests)));
+        string memory label = string(
+            abi.encodePacked(
+                "fresh_account_",
+                vm.toString(actorSeed),
+                "_",
+                vm.toString(ghost_totalGasThresholdTests)
+            )
+        );
         (address freshAccount, uint256 freshKey) = makeAddrAndKey(label);
 
         // Fund the fresh account with fee tokens
@@ -306,16 +369,35 @@ contract GasPricingInvariantTest is InvariantBase {
         try vmExec.executeTransaction(signedTxLow) {
             // Transaction succeeded with insufficient gas - violation!
             ghost_accountCreationBelowThresholdAllowed++;
-            _log(string.concat("VIOLATION: Account creation succeeded with only ", vm.toString(insufficientGas), " gas"));
+            _log(
+                string.concat(
+                    "VIOLATION: Account creation succeeded with only ",
+                    vm.toString(insufficientGas),
+                    " gas"
+                )
+            );
         } catch {
             // Expected: transaction failed
             ghost_accountCreationBelowThresholdFailed++;
-            _log(string.concat("OK: Account creation correctly failed with ", vm.toString(insufficientGas), " gas"));
+            _log(
+                string.concat(
+                    "OK: Account creation correctly failed with ",
+                    vm.toString(insufficientGas),
+                    " gas"
+                )
+            );
         }
 
         // Test 2: Gas above threshold should succeed
         // Create another fresh account for clean test
-        string memory label2 = string(abi.encodePacked("fresh_account2_", vm.toString(actorSeed), "_", vm.toString(ghost_totalGasThresholdTests)));
+        string memory label2 = string(
+            abi.encodePacked(
+                "fresh_account2_",
+                vm.toString(actorSeed),
+                "_",
+                vm.toString(ghost_totalGasThresholdTests)
+            )
+        );
         (address freshAccount2, uint256 freshKey2) = makeAddrAndKey(label2);
 
         vm.prank(admin);
@@ -324,13 +406,7 @@ contract GasPricingInvariantTest is InvariantBase {
         uint64 sufficientGas = uint64(FIRST_TX_MIN_GAS + 100_000); // 371k gas
 
         bytes memory signedTxHigh = TxBuilder.buildLegacyCallWithGas(
-            vmRlp,
-            vm,
-            address(feeToken),
-            callData,
-            0,
-            sufficientGas,
-            freshKey2
+            vmRlp, vm, address(feeToken), callData, 0, sufficientGas, freshKey2
         );
 
         ghost_totalGasThresholdTests++;
@@ -339,10 +415,20 @@ contract GasPricingInvariantTest is InvariantBase {
             ghost_accountCreationAboveThresholdSucceeded++;
             ghost_totalTxExecuted++;
             ghost_totalCallsExecuted++;
-            _log(string.concat("OK: Account creation succeeded with ", vm.toString(sufficientGas), " gas"));
+            _log(
+                string.concat(
+                    "OK: Account creation succeeded with ", vm.toString(sufficientGas), " gas"
+                )
+            );
         } catch {
             ghost_totalTxReverted++;
-            _log(string.concat("INFO: Account creation failed with ", vm.toString(sufficientGas), " gas (unexpected)"));
+            _log(
+                string.concat(
+                    "INFO: Account creation failed with ",
+                    vm.toString(sufficientGas),
+                    " gas (unexpected)"
+                )
+            );
         }
     }
 
@@ -364,12 +450,7 @@ contract GasPricingInvariantTest is InvariantBase {
         uint64 insufficientGas = uint64(BASE_TX_GAS + 100_000); // Only ~121k, way below 500k+ needed
 
         bytes memory signedTxLow = TxBuilder.buildLegacyCreateWithGas(
-            vmRlp,
-            vm,
-            initcode,
-            currentNonce,
-            insufficientGas,
-            privateKey
+            vmRlp, vm, initcode, currentNonce, insufficientGas, privateKey
         );
 
         vm.coinbase(validator);
@@ -381,14 +462,24 @@ contract GasPricingInvariantTest is InvariantBase {
             if (expectedAddr.code.length > 0) {
                 // CREATE succeeded with insufficient gas - violation!
                 ghost_createBelowThresholdAllowed++;
-                _log(string.concat("VIOLATION: CREATE succeeded with only ", vm.toString(insufficientGas), " gas"));
+                _log(
+                    string.concat(
+                        "VIOLATION: CREATE succeeded with only ",
+                        vm.toString(insufficientGas),
+                        " gas"
+                    )
+                );
             }
             ghost_protocolNonce[sender]++;
             ghost_totalProtocolNonceTxs++;
         } catch {
             // Expected: transaction failed
             ghost_createBelowThresholdFailed++;
-            _log(string.concat("OK: CREATE correctly failed with ", vm.toString(insufficientGas), " gas"));
+            _log(
+                string.concat(
+                    "OK: CREATE correctly failed with ", vm.toString(insufficientGas), " gas"
+                )
+            );
         }
 
         // Test 2: Gas above threshold should succeed
@@ -396,12 +487,7 @@ contract GasPricingInvariantTest is InvariantBase {
         uint64 sufficientGas = uint64(BASE_TX_GAS + CREATE_BASE_GAS + codeDepositCost + 100_000);
 
         bytes memory signedTxHigh = TxBuilder.buildLegacyCreateWithGas(
-            vmRlp,
-            vm,
-            initcode,
-            currentNonce,
-            sufficientGas,
-            privateKey
+            vmRlp, vm, initcode, currentNonce, sufficientGas, privateKey
         );
 
         ghost_totalGasThresholdTests++;
@@ -410,7 +496,9 @@ contract GasPricingInvariantTest is InvariantBase {
             address expectedAddr = TxBuilder.computeCreateAddress(sender, currentNonce);
             if (expectedAddr.code.length > 0) {
                 ghost_createAboveThresholdSucceeded++;
-                _log(string.concat("OK: CREATE succeeded with ", vm.toString(sufficientGas), " gas"));
+                _log(
+                    string.concat("OK: CREATE succeeded with ", vm.toString(sufficientGas), " gas")
+                );
             }
             ghost_protocolNonce[sender]++;
             ghost_totalProtocolNonceTxs++;
@@ -418,7 +506,11 @@ contract GasPricingInvariantTest is InvariantBase {
             ghost_totalCreatesExecuted++;
         } catch {
             ghost_totalTxReverted++;
-            _log(string.concat("INFO: CREATE failed with ", vm.toString(sufficientGas), " gas (unexpected)"));
+            _log(
+                string.concat(
+                    "INFO: CREATE failed with ", vm.toString(sufficientGas), " gas (unexpected)"
+                )
+            );
         }
     }
 
@@ -444,13 +536,7 @@ contract GasPricingInvariantTest is InvariantBase {
         uint64 atCapGas = uint64(TX_GAS_LIMIT_CAP);
 
         bytes memory signedTxAtCap = TxBuilder.buildLegacyCallWithGas(
-            vmRlp,
-            vm,
-            address(feeToken),
-            callData,
-            currentNonce,
-            atCapGas,
-            privateKey
+            vmRlp, vm, address(feeToken), callData, currentNonce, atCapGas, privateKey
         );
 
         vm.coinbase(validator);
@@ -462,10 +548,14 @@ contract GasPricingInvariantTest is InvariantBase {
             ghost_totalProtocolNonceTxs++;
             ghost_totalTxExecuted++;
             ghost_totalCallsExecuted++;
-            _log(string.concat("OK: Transaction at cap (", vm.toString(atCapGas), " gas) succeeded"));
+            _log(
+                string.concat("OK: Transaction at cap (", vm.toString(atCapGas), " gas) succeeded")
+            );
         } catch {
             ghost_totalTxReverted++;
-            _log(string.concat("INFO: Transaction at cap failed (may be expected for other reasons)"));
+            _log(
+                string.concat("INFO: Transaction at cap failed (may be expected for other reasons)")
+            );
         }
 
         // Test 2: Transaction over cap should be rejected
@@ -473,13 +563,7 @@ contract GasPricingInvariantTest is InvariantBase {
         uint64 overCapGas = uint64(TX_GAS_LIMIT_CAP + 1);
 
         bytes memory signedTxOverCap = TxBuilder.buildLegacyCallWithGas(
-            vmRlp,
-            vm,
-            address(feeToken),
-            callData,
-            currentNonce,
-            overCapGas,
-            privateKey
+            vmRlp, vm, address(feeToken), callData, currentNonce, overCapGas, privateKey
         );
 
         ghost_totalGasThresholdTests++;
@@ -489,11 +573,23 @@ contract GasPricingInvariantTest is InvariantBase {
             ghost_txOverCapAllowed++;
             ghost_protocolNonce[sender]++;
             ghost_totalProtocolNonceTxs++;
-            _log(string.concat("VIOLATION: Transaction over cap (", vm.toString(overCapGas), " gas) was allowed"));
+            _log(
+                string.concat(
+                    "VIOLATION: Transaction over cap (",
+                    vm.toString(overCapGas),
+                    " gas) was allowed"
+                )
+            );
         } catch {
             // Expected: transaction rejected
             ghost_txOverCapRejected++;
-            _log(string.concat("OK: Transaction over cap (", vm.toString(overCapGas), " gas) correctly rejected"));
+            _log(
+                string.concat(
+                    "OK: Transaction over cap (",
+                    vm.toString(overCapGas),
+                    " gas) correctly rejected"
+                )
+            );
         }
     }
 
@@ -511,7 +607,8 @@ contract GasPricingInvariantTest is InvariantBase {
         // Generate unique slots
         bytes32[] memory slots = new bytes32[](numSlots);
         for (uint256 i = 0; i < numSlots; i++) {
-            slots[i] = keccak256(abi.encode(actorSeed, i, block.timestamp, ghost_totalGasThresholdTests));
+            slots[i] =
+                keccak256(abi.encode(actorSeed, i, block.timestamp, ghost_totalGasThresholdTests));
         }
 
         bytes memory callData = abi.encodeCall(GasTestStorage.storeMultiple, (slots));
@@ -541,9 +638,23 @@ contract GasPricingInvariantTest is InvariantBase {
                 // May succeed partially or revert - either is acceptable
                 ghost_protocolNonce[sender]++;
                 ghost_totalProtocolNonceTxs++;
-                _log(string.concat("INFO: Multi-slot with ", vm.toString(insufficientGas), " gas for ", vm.toString(numSlots), " slots"));
+                _log(
+                    string.concat(
+                        "INFO: Multi-slot with ",
+                        vm.toString(insufficientGas),
+                        " gas for ",
+                        vm.toString(numSlots),
+                        " slots"
+                    )
+                );
             } catch {
-                _log(string.concat("OK: Multi-slot correctly failed with insufficient gas for ", vm.toString(numSlots), " slots"));
+                _log(
+                    string.concat(
+                        "OK: Multi-slot correctly failed with insufficient gas for ",
+                        vm.toString(numSlots),
+                        " slots"
+                    )
+                );
             }
 
             currentNonce = uint64(vm.getNonce(sender));
@@ -556,13 +667,7 @@ contract GasPricingInvariantTest is InvariantBase {
         }
 
         bytes memory signedTxHigh = TxBuilder.buildLegacyCallWithGas(
-            vmRlp,
-            vm,
-            address(_storageContract),
-            callData,
-            currentNonce,
-            sufficientGas,
-            privateKey
+            vmRlp, vm, address(_storageContract), callData, currentNonce, sufficientGas, privateKey
         );
 
         ghost_totalGasThresholdTests++;
@@ -572,7 +677,15 @@ contract GasPricingInvariantTest is InvariantBase {
             ghost_totalProtocolNonceTxs++;
             ghost_totalTxExecuted++;
             ghost_totalCallsExecuted++;
-            _log(string.concat("OK: Multi-slot (", vm.toString(numSlots), " slots) succeeded with ", vm.toString(sufficientGas), " gas"));
+            _log(
+                string.concat(
+                    "OK: Multi-slot (",
+                    vm.toString(numSlots),
+                    " slots) succeeded with ",
+                    vm.toString(sufficientGas),
+                    " gas"
+                )
+            );
         } catch {
             ghost_totalTxReverted++;
             _log(string.concat("INFO: Multi-slot failed with ", vm.toString(sufficientGas), " gas"));
@@ -620,11 +733,7 @@ contract GasPricingInvariantTest is InvariantBase {
 
     /// @notice TEMPO-GAS6: Transaction gas limit capped at 30,000,000
     function _invariantTxGasCap() internal view {
-        assertEq(
-            ghost_txOverCapAllowed,
-            0,
-            "TEMPO-GAS6: Transaction over gas cap was allowed"
-        );
+        assertEq(ghost_txOverCapAllowed, 0, "TEMPO-GAS6: Transaction over gas cap was allowed");
     }
 
     /*//////////////////////////////////////////////////////////////
