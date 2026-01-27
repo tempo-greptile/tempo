@@ -238,6 +238,32 @@ pub enum TempoPoolTransactionError {
         max_allowed: usize,
     },
 
+    /// Thrown when an AA transaction has too many accounts in its access list.
+    #[error("Too many access list accounts: {count} exceeds maximum allowed {max_allowed}")]
+    TooManyAccessListAccounts { count: usize, max_allowed: usize },
+
+    /// Thrown when an access list entry has too many storage keys.
+    #[error(
+        "Too many storage keys in access list entry {account_index}: {count} exceeds maximum allowed {max_allowed}"
+    )]
+    TooManyStorageKeysPerAccount {
+        account_index: usize,
+        count: usize,
+        max_allowed: usize,
+    },
+
+    /// Thrown when the total number of storage keys across all access list entries is too large.
+    #[error(
+        "Too many total storage keys in access list: {count} exceeds maximum allowed {max_allowed}"
+    )]
+    TooManyTotalStorageKeys { count: usize, max_allowed: usize },
+
+    /// Thrown when a key authorization has too many token limits.
+    #[error(
+        "Too many token limits in key authorization: {count} exceeds maximum allowed {max_allowed}"
+    )]
+    TooManyTokenLimits { count: usize, max_allowed: usize },
+
     /// Thrown when an expiring nonce transaction's valid_before is too far in the future.
     #[error(
         "Expiring nonce 'valid_before' {valid_before} exceeds max allowed {max_allowed} (must be within 30s)"
@@ -255,6 +281,14 @@ pub enum TempoPoolTransactionError {
     /// Thrown when an expiring nonce transaction has a non-zero nonce.
     #[error("Expiring nonce transactions must have nonce == 0")]
     ExpiringNonceNonceNotZero,
+
+    /// Thrown when an access key has expired.
+    #[error("Access key expired: expiry {expiry} <= current time {current_time}")]
+    AccessKeyExpired { expiry: u64, current_time: u64 },
+
+    /// Thrown when a KeyAuthorization has expired.
+    #[error("KeyAuthorization expired: expiry {expiry} <= current time {current_time}")]
+    KeyAuthorizationExpired { expiry: u64, current_time: u64 },
 }
 
 impl PoolTransactionError for TempoPoolTransactionError {
@@ -277,8 +311,14 @@ impl PoolTransactionError for TempoPoolTransactionError {
             | Self::TooManyAuthorizations { .. }
             | Self::TooManyCalls { .. }
             | Self::CallInputTooLarge { .. }
+            | Self::TooManyAccessListAccounts { .. }
+            | Self::TooManyStorageKeysPerAccount { .. }
+            | Self::TooManyTotalStorageKeys { .. }
+            | Self::TooManyTokenLimits { .. }
             | Self::ExpiringNonceMissingValidBefore
-            | Self::ExpiringNonceNonceNotZero => true,
+            | Self::ExpiringNonceNonceNotZero
+            | Self::AccessKeyExpired { .. }
+            | Self::KeyAuthorizationExpired { .. } => true,
         }
     }
 
