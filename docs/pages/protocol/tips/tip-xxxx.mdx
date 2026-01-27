@@ -357,16 +357,17 @@ This ensures historical queries always return consistent results.
 
 | Slot | Field | Description |
 |------|-------|-------------|
-| 0 (bit 0) | `initialized` | Whether V2 has been initialized from V1 (1 bit) |
-| 0 (bits 96-255) | `owner` | Owner address (160 bits) |
+| 0 (bits 0-7) | `initialized` | Whether V2 has been initialized from V1 (1 byte, only bit 0 used) |
+| 0 (bits 8-167) | `owner` | Owner address (160 bits) |
 | 1 | `validatorsArray.length` | Count of validators ever added |
 | keccak256(1) + i | `validatorsArray[i]` | Validator address at index i |
 | keccak256(addr, 2) | `validators[addr]` | Validator struct for address |
 | keccak256(pubkey, 3) | `pubkeyToIndex[pubkey]` | Index for public key lookup |
 | 4 | `nextDkgCeremony` | Next full DKG ceremony epoch |
 
-The `initialized` bit occupies the lowest bit of slot 0 (Solidity uses big-endian
-bit ordering). The `owner` address occupies the upper 160 bits.
+Solidity packs variables starting from the least significant byte. The
+`initialized` flag occupies the first byte (bits 0-7), and the `owner` address
+occupies the next 20 bytes (bits 8-167). Bits 168-255 are unused.
 
 ## Differences from V1
 
