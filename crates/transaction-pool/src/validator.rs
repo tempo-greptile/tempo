@@ -5,7 +5,7 @@ use crate::{
 use alloy_consensus::{BlockHeader as _, Transaction};
 
 use alloy_primitives::U256;
-use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
+use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::{
     GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
@@ -890,43 +890,17 @@ where
     }
 
     fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
-        // Update the fork tracker directly since the inner validator has a different Block type.
-        // This replicates what EthTransactionValidator::on_new_head_block does.
-        let header = new_tip_block.header();
-        let fork_tracker = self.inner.fork_tracker();
-        let chain_spec = self.inner.chain_spec();
-
-        if chain_spec.is_shanghai_active_at_timestamp(header.timestamp()) {
-            fork_tracker
-                .shanghai
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        if chain_spec.is_cancun_active_at_timestamp(header.timestamp()) {
-            fork_tracker
-                .cancun
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        if chain_spec.is_prague_active_at_timestamp(header.timestamp()) {
-            fork_tracker
-                .prague
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        if chain_spec.is_osaka_active_at_timestamp(header.timestamp()) {
-            fork_tracker
-                .osaka
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-
-        fork_tracker
-            .tip_timestamp
-            .store(header.timestamp(), std::sync::atomic::Ordering::Relaxed);
-
-        if let Some(blob_params) = chain_spec.blob_params_at_timestamp(header.timestamp()) {
-            fork_tracker.max_blob_count.store(
-                blob_params.max_blobs_per_tx,
-                std::sync::atomic::Ordering::Relaxed,
-            );
-        }
+        // Tempo is always post-Osaka, so all Ethereum forks are active from genesis.
+        // We only need to update the tip_timestamp which is used for AA transaction
+        // valid_before/valid_after checks.
+        //
+        // Note: Fork flags (shanghai, cancun, prague, osaka) are initialized to true
+        // by the EthTransactionValidatorBuilder when the chain is already past those forks.
+        // Blob params are not needed since Tempo doesn't support blob transactions.
+        self.inner.fork_tracker().tip_timestamp.store(
+            new_tip_block.header().timestamp(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
 }
 
