@@ -480,7 +480,7 @@ When any triggering function is called and `initialized == false`:
 
 1. Read all validators from ValidatorConfig V1 at
    `0xCCCCCCCC00000000000000000000000000000000`
-2. For each V1 validator where `active == true`:
+2. For each V1 validator (both active and inactive):
    - Create a V2 validator entry with:
      - `publicKey`: copied from V1
      - `validatorAddress`: copied from V1
@@ -488,7 +488,7 @@ When any triggering function is called and `initialized == false`:
      - `outboundAddress`: copied from V1
      - `index`: assigned sequentially (0, 1, 2, ...)
      - `addedAtHeight`: set to `block.number`
-     - `deletedAtHeight`: set to 0 (active)
+     - `deletedAtHeight`: if V1 `active == true`, set to 0; if V1 `active == false`, set to `block.number`
    - Add to `validatorsArray`
    - Populate lookup maps (`validators[addr]`, `pubkeyToIndex[pubkey]`)
 3. Copy `nextDkgCeremony` from V1 to V2 (if V1 read succeeds)
@@ -523,8 +523,8 @@ interface IValidatorConfigV1 {
 - **Transparent**: Callers do not need to know whether initialization occurred
 - **No signatures required**: V1 validators are imported without Ed25519 signatures
   (they were already validated in V1)
-- **Inactive validators skipped**: Only V1 validators with `active == true` are
-  imported
+- **All validators imported**: Both active and inactive V1 validators are
+    imported; inactive ones have `deletedAtHeight = block.number`
 
 ## Timeline
 
@@ -617,8 +617,8 @@ The test suite must cover:
     `validatorCount`, `validatorByIndex`, `validatorByAddress`,
     `validatorByPublicKey`, `addValidator`, `initialize` all trigger
     initialization on first access; subsequent accesses are no-ops
-23. **Active validators only**: V1 validators with `active == false` are not
-    imported
+23. **All validators imported**: Both V1 active and inactive validators are
+    imported; inactive ones have `deletedAtHeight = block.number`
 24. **DKG ceremony copied**: V2 `getNextFullDkgCeremony()` matches V1
 25. **addedAtHeight set correctly**: Imported validators have
     `addedAtHeight == block.number` at initialization time
