@@ -10,8 +10,8 @@ use alloy::{
 };
 use revm::precompile::{PrecompileError, PrecompileOutput, PrecompileResult};
 use tempo_contracts::precompiles::{
-    AccountKeychainError, FeeManagerError, MultiSigSignerError, NonceError, RecoveryGuardianError,
-    RolesAuthError, StablecoinDEXError, TIP20FactoryError, TIP403RegistryError, TIPFeeAMMError,
+    AccountKeychainError, FeeManagerError, NonceError, RecoveryGuardianError, RolesAuthError,
+    StablecoinDEXError, TIP20FactoryError, TIP403RegistryError, TIPFeeAMMError,
     UnknownFunctionSelector, ValidatorConfigError,
 };
 
@@ -63,10 +63,6 @@ pub enum TempoPrecompileError {
     #[error("Account keychain error: {0:?}")]
     AccountKeychainError(AccountKeychainError),
 
-    /// Error from multisig signer precompile
-    #[error("MultiSig signer error: {0:?}")]
-    MultiSigSignerError(MultiSigSignerError),
-
     /// Error from recovery guardian precompile
     #[error("Recovery guardian error: {0:?}")]
     RecoveryGuardianError(RecoveryGuardianError),
@@ -113,7 +109,6 @@ impl TempoPrecompileError {
             }
             Self::ValidatorConfigError(e) => e.abi_encode().into(),
             Self::AccountKeychainError(e) => e.abi_encode().into(),
-            Self::MultiSigSignerError(e) => e.abi_encode().into(),
             Self::RecoveryGuardianError(e) => e.abi_encode().into(),
             Self::OutOfGas => {
                 return Err(PrecompileError::OutOfGas);
@@ -177,7 +172,6 @@ pub fn error_decoder_registry() -> TempoPrecompileErrorRegistry {
     add_errors_to_registry(&mut registry, TempoPrecompileError::NonceError);
     add_errors_to_registry(&mut registry, TempoPrecompileError::ValidatorConfigError);
     add_errors_to_registry(&mut registry, TempoPrecompileError::AccountKeychainError);
-    add_errors_to_registry(&mut registry, TempoPrecompileError::MultiSigSignerError);
     add_errors_to_registry(&mut registry, TempoPrecompileError::RecoveryGuardianError);
 
     registry
