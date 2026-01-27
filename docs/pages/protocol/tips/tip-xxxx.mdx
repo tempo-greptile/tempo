@@ -208,6 +208,12 @@ interface IValidatorConfigV2 {
     /// @param epoch The epoch in which to run the fresh DKG ceremony.
     ///        Epoch N runs the ceremony, and epoch N+1 uses the new DKG polynomial.
     function setNextFullDkgCeremony(uint64 epoch) external;
+
+    /// @notice Initialize V2 from V1 state (callable by anyone)
+    /// @dev If already initialized, this is a no-op. Reads validators from V1 and
+    ///      populates V2 storage. If V1 read fails, sets initialized = true without
+    ///      importing any validators.
+    function initialize() external;
 }
 ```
 
@@ -464,7 +470,8 @@ The following functions trigger initialization if `initialized == false`:
 - `validatorByIndex(uint256 index)`
 - `validatorByAddress(address validatorAddress)`
 - `validatorByPublicKey(bytes32 publicKey)`
-- `addValidator(...)` (write operation)
+- `addValidator(...)`
+- `initialize()`
 
 ### Initialization Procedure
 
@@ -483,8 +490,10 @@ When any triggering function is called and `initialized == false`:
      - `deletedAtHeight`: set to 0 (active)
    - Add to `validatorsArray`
    - Populate lookup maps (`validators[addr]`, `pubkeyToIndex[pubkey]`)
-3. Copy `nextDkgCeremony` from V1 to V2
+3. Copy `nextDkgCeremony` from V1 to V2 (if V1 read succeeds)
 4. Set `initialized = true` (bit 0 of slot 0)
+
+If the V1 read fails at any point, skip steps 2-3 and proceed directly to step 4.
 
 Note: The `owner` is NOT copied from V1. V2's owner must be set separately
 (typically at genesis or via a privileged initialization call).
@@ -547,10 +556,13 @@ Before Fork                    First V2 Read                   After Initializat
 
 ## Safety Checks
 
+If V1 read fails during initialization (e.g., V1 contract not deployed, call
+reverts), the initialization procedure skips importing validators and sets
+`initialized = true`. This allows V2 to start fresh without V1 data.
+
 Nodes should fail fast if:
-- Allegro is active but V2 initialization fails (e.g., V1 read error)
-- V2 validator set is empty after initialization (indicates V1 had no active
-  validators)
+- V2 validator set is empty after initialization AND V1 had active validators
+  (indicates a bug in the initialization logic)
 
 ---
 
@@ -606,11 +618,16 @@ The test suite must cover:
     populates from V1 before adding the new validator
 24. **All triggering functions**: Each of `getValidators`, `getActiveValidators`,
     `validatorCount`, `validatorByIndex`, `validatorByAddress`,
-    `validatorByPublicKey`, `addValidator` triggers initialization
-25. **Initialization is idempotent**: Subsequent accesses do not re-initialize
-26. **Active validators only**: V1 validators with `active == false` are not
+    `validatorByPublicKey`, `addValidator`, `initialize` triggers initialization
+25. **Explicit initialize()**: Calling `initialize()` populates from V1
+26. **initialize() is idempotent**: Calling `initialize()` when already
+    initialized is a no-op
+27. **Initialization is idempotent**: Subsequent accesses do not re-initialize
+28. **Active validators only**: V1 validators with `active == false` are not
     imported
-27. **DKG ceremony copied**: V2 `getNextFullDkgCeremony()` matches V1
-28. **addedAtHeight set correctly**: Imported validators have
+29. **DKG ceremony copied**: V2 `getNextFullDkgCeremony()` matches V1
+30. **addedAtHeight set correctly**: Imported validators have
     `addedAtHeight == block.number` at initialization time
-29. **Initialized bit set**: After initialization, bit 0 of slot 0 is set
+31. **Initialized bit set**: After initialization, bit 0 of slot 0 is set
+32. **V1 read failure**: If V1 read fails, initialization sets bit without
+    importing validators
