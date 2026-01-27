@@ -357,17 +357,17 @@ This ensures historical queries always return consistent results.
 
 | Slot | Field | Description |
 |------|-------|-------------|
-| 0 (bits 0-7) | `initialized` | Whether V2 has been initialized from V1 (1 byte, only bit 0 used) |
-| 0 (bits 8-167) | `owner` | Owner address (160 bits) |
+| 0 (bits 0-159) | `owner` | Owner address (160 bits, right-aligned) |
+| 0 (bit 255) | `initialized` | Whether V2 has been initialized from V1 (1 bit) |
 | 1 | `validatorsArray.length` | Count of validators ever added |
 | keccak256(1) + i | `validatorsArray[i]` | Validator address at index i |
 | keccak256(addr, 2) | `validators[addr]` | Validator struct for address |
 | keccak256(pubkey, 3) | `pubkeyToIndex[pubkey]` | Index for public key lookup |
 | 4 | `nextDkgCeremony` | Next full DKG ceremony epoch |
 
-Solidity packs variables starting from the least significant byte. The
-`initialized` flag occupies the first byte (bits 0-7), and the `owner` address
-occupies the next 20 bytes (bits 8-167). Bits 168-255 are unused.
+The `owner` address is right-aligned (bits 0-159) following Solidity's standard
+packing. The `initialized` flag uses bit 255 (the highest bit), leaving bits
+160-254 unused.
 
 ## Differences from V1
 
@@ -422,7 +422,7 @@ The following invariants must always hold:
 10. **Owner authorization**: Only the owner can call `addValidator`,
     `deleteValidator`, `changeOwner`, and `setNextFullDkgCeremony`.
 
-11. **Initialized once**: The `initialized` bit (bit 0 of slot 0) can only
+11. **Initialized once**: The `initialized` bit (bit 255 of slot 0) can only
     transition from 0 to 1, never back to 0.
 
 ---
@@ -458,7 +458,7 @@ This ensures all nodes switch deterministically at the same point.
 ## Lazy Initialization
 
 V2 uses lazy initialization to automatically populate from V1 on first access.
-The `initialized` bit (bit 0 of slot 0) tracks whether initialization has
+The `initialized` bit (bit 255 of slot 0) tracks whether initialization has
 occurred.
 
 ### Triggering Functions
@@ -492,7 +492,7 @@ When any triggering function is called and `initialized == false`:
    - Add to `validatorsArray`
    - Populate lookup maps (`validators[addr]`, `pubkeyToIndex[pubkey]`)
 3. Copy `nextDkgCeremony` from V1 to V2 (if V1 read succeeds)
-4. Set `initialized = true` (bit 0 of slot 0)
+4. Set `initialized = true` (bit 255 of slot 0)
 
 If the V1 read fails at any point, skip steps 2-3 and proceed directly to step 4.
 
