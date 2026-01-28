@@ -400,14 +400,14 @@ impl AccountKeychain {
 
         // Validate that the signature type matches the key type stored in the keychain
         // Only check if expected_sig_type is provided (T1+ hardfork)
-        if let Some(sig_type) = expected_sig_type {
-            if key.signature_type != sig_type {
-                return Err(AccountKeychainError::signature_type_mismatch(
-                    key.signature_type,
-                    sig_type,
-                )
-                .into());
-            }
+        if let Some(sig_type) = expected_sig_type
+            && key.signature_type != sig_type
+        {
+            return Err(AccountKeychainError::signature_type_mismatch(
+                key.signature_type,
+                sig_type,
+            )
+            .into());
         }
 
         Ok(())
