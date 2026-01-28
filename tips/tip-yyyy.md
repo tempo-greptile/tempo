@@ -11,7 +11,7 @@ related: TIP-403
 
 ## Abstract
 
-This TIP proposes caching the TIP-403 policy type alongside the `transferPolicyId` in TIP-20 token storage. Since TIP-403 policy types are immutable after creation, caching the type eliminates one SLOAD (~2,100 gas) per `isAuthorized` call during transfer authorization. With two `isAuthorized` calls per transfer (for `from` and `to`), this saves ~4,200 gas per transfer.
+This TIP proposes caching the TIP-403 policy type alongside the `transferPolicyId` in TIP-20 token storage. Since TIP-403 policy types are immutable after creation, caching the type eliminates the `_policyData[policyId]` SLOAD during transfer authorization. With two `isAuthorized` calls per transfer (for `from` and `to`) sharing the same policy, this saves ~2,200 gas per transfer (one cold SLOAD eliminated, one warm SLOAD eliminated).
 
 ## Motivation
 
@@ -131,14 +131,25 @@ modifier transferAuthorized(address from, address to) {
 
 ## Gas Savings
 
-| Operation | Before | After | Savings |
-|-----------|--------|-------|---------|
-| `isAuthorized` (per call) | ~4,200 gas | ~2,100 gas | ~2,100 gas |
-| Transfer (2 calls) | ~8,400 gas | ~4,200 gas | ~4,200 gas |
+Since both `from` and `to` are checked against the **same** `transferPolicyId`, the `_policyData[policyId]` storage slot is only cold on the first access. Subsequent accesses to the same slot within a transaction cost only ~100 gas (warm) instead of ~2,100 gas (cold).
 
-The savings come from eliminating the `_policyData[policyId]` SLOAD in each `isAuthorized` call.
+**Before TIP-YYYY (current):**
+| Call | `_policyData` | `policySet` | Total |
+|------|---------------|-------------|-------|
+| `isAuthorized(policyId, from)` | ~2,100 (cold) | ~2,100 (cold) | ~4,200 |
+| `isAuthorized(policyId, to)` | ~100 (warm) | ~2,100 (cold) | ~2,200 |
+| **Transfer total** | | | **~6,400** |
 
-*Note: Gas costs assume cold SLOADs. If storage slots were accessed earlier in the same transaction, warm SLOADs cost only ~100 gas. For example, if `_policyData[policyId]` is already warm, the savings per call would be ~100 gas instead of ~2,100 gas. However, in the typical transfer flow, these are cold reads.*
+**After TIP-YYYY:**
+| Call | `_policyData` | `policySet` | Total |
+|------|---------------|-------------|-------|
+| `isAuthorizedWithType(policyId, type, from)` | — | ~2,100 (cold) | ~2,100 |
+| `isAuthorizedWithType(policyId, type, to)` | — | ~2,100 (cold) | ~2,100 |
+| **Transfer total** | | | **~4,200** |
+
+**Savings: ~2,200 gas per transfer**
+
+The savings come from eliminating the `_policyData[policyId]` SLOAD entirely — one cold read (~2,100 gas) on the first call, and one warm read (~100 gas) on the second call.
 
 ---
 
