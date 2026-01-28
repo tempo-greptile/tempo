@@ -71,8 +71,17 @@ const KEY_AUTH_PER_LIMIT_GAS: u64 = 22_000;
 /// Gas cost for using an existing 2D nonce key (cold SLOAD + warm SSTORE reset)
 pub const EXISTING_NONCE_KEY_GAS: u64 = COLD_SLOAD_COST + WARM_SSTORE_RESET;
 
-/// Gas cost for using a new 2D nonce key (cold SLOAD + SSTORE set for 0 -> non-zero)
+/// Gas cost for using a new 2D nonce key pre-TIP-1000 (cold SLOAD + SSTORE set for 0 -> non-zero)
 pub const NEW_NONCE_KEY_GAS: u64 = COLD_SLOAD_COST + SSTORE_SET;
+
+/// Computes the gas cost for using a new 2D nonce key for T1+ (TIP-1000).
+///
+/// For T1+, the state creation cost is 250,000 gas (from GasParams) instead of 20,000.
+/// For pre-T1, use the [`NEW_NONCE_KEY_GAS`] constant instead.
+#[inline]
+pub fn new_nonce_key_gas_t1(gas_params: &GasParams) -> u64 {
+    COLD_SLOAD_COST + gas_params.get(GasId::sstore_set_without_load_cost())
+}
 
 /// Gas cost for expiring nonce transactions (replay check + insert).
 ///
@@ -1392,12 +1401,20 @@ where
         if aa_env.nonce_key == TEMPO_EXPIRING_NONCE_KEY {
             // Calculate nonce gas based on nonce type:
             // - Expiring nonce (nonce_key == MAX, T1 active): ring buffer + seen mapping operations
-            // - 2D nonce (nonce_key != 0): SLOAD + SSTORE for nonce increment
-            // - Regular nonce (nonce_key == 0): no additional gas
             batch_gas.initial_gas += EXPIRING_NONCE_GAS;
+        } else if !aa_env.nonce_key.is_zero() {
+            // 2D nonce key gas
+            if tx.nonce == 0 {
+                // TIP-1000: New 2D nonce key creation charges state creation cost (250k)
+                // This is for the nonce key storage slot (0 -> non-zero)
+                batch_gas.initial_gas += new_nonce_key_gas_t1(gas_params);
+            } else {
+                // Existing 2D nonce key - cold SLOAD + warm SSTORE reset
+                batch_gas.initial_gas += EXISTING_NONCE_KEY_GAS;
+            }
         } else if tx.nonce == 0 {
-            // TIP-1000: Storage pricing updates for launch
-            // Tempo transactions with any `nonce_key` and `nonce == 0` require an additional 250,000 gas
+            // TIP-1000: Account creation (nonce 0 -> 1) requires 250,000 gas
+            // Regular nonce (nonce_key == 0) with first transaction
             batch_gas.initial_gas += gas_params.get(GasId::new_account_cost());
         }
     } else if let Some(aa_env) = &tx.tempo_tx_env
@@ -1405,6 +1422,7 @@ where
     {
         nonce_2d_gas = if tx.nonce() == 0 {
             // New key - cold SLOAD + SSTORE set (0 -> non-zero)
+            // Use constant for pre-T1 to preserve original gas calculation
             NEW_NONCE_KEY_GAS
         } else {
             // Existing key - cold SLOAD + warm SSTORE reset
@@ -2373,6 +2391,7 @@ mod tests {
             let mut evm: TempoEvm<_, ()> = TempoEvm::new(ctx, ());
             let handler: TempoEvmHandler<CacheDB<EmptyDB>, ()> = TempoEvmHandler::new();
             let gas = handler.validate_initial_tx_gas(&mut evm).unwrap();
+            // Pre-T1 uses NEW_NONCE_KEY_GAS constant
             assert_eq!(gas.initial_gas, BASE_INTRINSIC_GAS + NEW_NONCE_KEY_GAS);
         }
 
@@ -2418,7 +2437,7 @@ mod tests {
         const BASE_INTRINSIC_GAS: u64 = 21_000;
 
         // Test cases: (gas_limit, nonce, expected_result)
-        // With new 2D nonce key (tx_nonce == 0), need BASE + NEW_NONCE_KEY_GAS
+        // With new 2D nonce key (tx_nonce == 0), need BASE + NEW_NONCE_KEY_GAS (pre-T1)
         let cases = [
             (BASE_INTRINSIC_GAS + 10_000, 0, false), // Insufficient for new 2D nonce
             (BASE_INTRINSIC_GAS + NEW_NONCE_KEY_GAS, 0, true), // Exactly sufficient for new key
@@ -2997,8 +3016,8 @@ mod tests {
     fn test_nonce_gas_selection_logic() {
         use tempo_primitives::transaction::TEMPO_EXPIRING_NONCE_KEY;
 
-        // Helper to compute nonce gas based on the logic in validate_aa_initial_tx_gas
-        fn compute_nonce_gas(nonce_key: U256, tx_nonce: u64) -> u64 {
+        // Helper to compute nonce gas based on the logic in validate_aa_initial_tx_gas (pre-T1)
+        let compute_nonce_gas = |nonce_key: U256, tx_nonce: u64| -> u64 {
             if nonce_key == TEMPO_EXPIRING_NONCE_KEY {
                 EXPIRING_NONCE_GAS
             } else if !nonce_key.is_zero() {
@@ -3010,7 +3029,7 @@ mod tests {
             } else {
                 0
             }
-        }
+        };
 
         // Regular nonce (nonce_key == 0) should have no additional gas
         assert_eq!(compute_nonce_gas(U256::ZERO, 0), 0);
@@ -3031,6 +3050,38 @@ mod tests {
         assert_eq!(
             compute_nonce_gas(TEMPO_EXPIRING_NONCE_KEY, 0),
             EXPIRING_NONCE_GAS
+        );
+    }
+
+    #[test]
+    fn test_new_nonce_key_gas_tip1000() {
+        use crate::gas_params::tempo_gas_params;
+        use revm::interpreter::gas::COLD_SLOAD_COST;
+        use tempo_chainspec::hardfork::TempoHardfork;
+
+        // TIP-1000: New 2D nonce key should charge state creation cost (250k) not SSTORE_SET (20k)
+        let gas_params = tempo_gas_params(TempoHardfork::T1);
+
+        // new_nonce_key_gas_t1 should return COLD_SLOAD_COST + 250_000 for T1
+        let expected = COLD_SLOAD_COST + 250_000;
+        assert_eq!(
+            new_nonce_key_gas_t1(&gas_params),
+            expected,
+            "TIP-1000: new_nonce_key_gas_t1 should use 250k state creation cost, not 20k SSTORE_SET"
+        );
+
+        // Verify it's different from the pre-TIP-1000 constant
+        assert_ne!(
+            new_nonce_key_gas_t1(&gas_params),
+            NEW_NONCE_KEY_GAS,
+            "new_nonce_key_gas_t1 should differ from pre-TIP-1000 NEW_NONCE_KEY_GAS constant"
+        );
+
+        // Verify the constant is correct for pre-T1
+        assert_eq!(
+            NEW_NONCE_KEY_GAS,
+            COLD_SLOAD_COST + 20_000,
+            "NEW_NONCE_KEY_GAS should be COLD_SLOAD_COST + SSTORE_SET (20k)"
         );
     }
 }

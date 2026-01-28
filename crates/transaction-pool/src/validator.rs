@@ -35,7 +35,7 @@ use tempo_revm::{
     EXISTING_NONCE_KEY_GAS, NEW_NONCE_KEY_GAS, TempoBatchCallEnv, TempoStateAccess,
     calculate_aa_batch_intrinsic_gas,
     gas_params::{TempoGasParams, tempo_gas_params},
-    handler::EXPIRING_NONCE_GAS,
+    handler::{EXPIRING_NONCE_GAS, new_nonce_key_gas_t1},
 };
 
 // Reject AA txs where `valid_before` is too close to current time (or already expired) to prevent block invalidation.
@@ -390,15 +390,26 @@ where
             // Expiring nonce transactions
             if tx.nonce_key == TEMPO_EXPIRING_NONCE_KEY {
                 init_and_floor_gas.initial_gas += EXPIRING_NONCE_GAS;
+            } else if !tx.nonce_key.is_zero() {
+                // 2D nonce key gas
+                if tx.nonce == 0 {
+                    // TIP-1000: New 2D nonce key creation charges state creation cost (250k)
+                    // This is for the nonce key storage slot (0 -> non-zero)
+                    init_and_floor_gas.initial_gas += new_nonce_key_gas_t1(&gas_params);
+                } else {
+                    // Existing 2D nonce key - cold SLOAD + warm SSTORE reset
+                    init_and_floor_gas.initial_gas += EXISTING_NONCE_KEY_GAS;
+                }
             } else if tx.nonce == 0 {
-                // TIP-1000: Storage pricing updates for launch
-                // Tempo transactions with any `nonce_key` and `nonce == 0` require an additional 250,000 gas
+                // TIP-1000: Account creation (nonce 0 -> 1) requires 250,000 gas
+                // Regular nonce (nonce_key == 0) with first transaction
                 init_and_floor_gas.initial_gas += gas_params.get(GasId::new_account_cost());
             }
         } else if !tx.nonce_key.is_zero() {
             // Pre-T1: Add 2D nonce gas if nonce_key is non-zero
             if tx.nonce == 0 {
                 // New key - cold SLOAD + SSTORE set (0 -> non-zero)
+                // Use constant for pre-T1 to preserve original gas calculation
                 init_and_floor_gas.initial_gas += NEW_NONCE_KEY_GAS;
             } else {
                 // Existing key - cold SLOAD + warm SSTORE reset
