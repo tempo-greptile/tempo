@@ -12,7 +12,7 @@ protocolVersion: TBD
 
 ## Abstract
 
-State creation operations are priced dynamically based on recent usage measured via an exponentially decaying average with a 1-hour half-life. When no state is being created, prices are at pre-TIP-1000 levels (25,000 gas). As usage approaches the target rate of 10 billion state elements per year, prices increase exponentially to TIP-1000 levels (250,000 gas). This provides economic back-pressure against state growth while keeping costs low for normal usage.
+State creation operations are priced dynamically based on recent usage measured via an exponentially decaying average with a 1-hour half-life. When no state is being created, prices are at pre-TIP-1000 levels (25,000 gas). As usage approaches the target rate of 33 billion state elements per year, prices increase exponentially to TIP-1000 levels (250,000 gas). This provides economic back-pressure against state growth while keeping costs low for normal usage.
 
 ## Motivation
 
@@ -22,21 +22,6 @@ TIP-1000 set fixed high prices for state creation (250,000 gas per element) to p
 2. **No market signal**: Fixed pricing doesn't signal network capacity or provide economic feedback
 3. **Inefficient resource allocation**: Users pay high costs even when the network has plenty of state capacity
 
-Dynamic pricing solves this by:
-- Keeping costs low when state capacity is available
-- Automatically raising prices as usage approaches sustainability limits
-- Providing market signals about network state capacity
-- Efficiently allocating the scarce resource (persistent state)
-
-### Design Goals
-
-1. **Sustainability**: Cap long-term state growth at a sustainable rate (10B elements/year)
-2. **Responsiveness**: React to usage patterns within hours via exponential decay
-3. **Economic efficiency**: Price low when capacity available, high when scarce
-4. **Simplicity**: Single pricing formula applies to all state creation operations
-
----
-
 # Specification
 
 ## Target State Growth
@@ -44,13 +29,13 @@ Dynamic pricing solves this by:
 The protocol targets a maximum sustainable state growth rate:
 
 ```
-TARGET_ELEMENTS_PER_YEAR = 10,000,000,000  (10 billion elements)
-TARGET_RATE = 10B / 31,557,600 seconds ≈ 316.88 elements/second
+TARGET_ELEMENTS_PER_YEAR = 33,000,000,000  (33 billion elements)
+TARGET_RATE = 33B / 31,557,600 seconds ≈ 1,045.7 elements/second
 ```
 
 **Contract code conversion**: 1 byte of contract code = 1/100th of a state element
 - 100 bytes of contract code = 1 state element equivalent
-- At target rate: 31,688 bytes/second of contract code
+- At target rate: 104,570 bytes/second of contract code
 
 ## Exponentially Decaying Average
 
@@ -171,19 +156,19 @@ def update_state_creation_rate(block):
 - 24KB contract: ~6.2M gas
 
 ### Normal Usage (25% of target)
-- `current_rate = 79.22 elements/second`
+- `current_rate = 261.43 elements/second`
 - `price = 25,000 × 10^0.25 = 44,543 gas`
 - TIP-20 transfer to new account: ~65,543 gas total
 - 24KB contract: ~11M gas
 
 ### Target Usage (100%)
-- `current_rate = 316.88 elements/second`
+- `current_rate = 1,045.7 elements/second`
 - `price = 25,000 × 10^1 = 250,000 gas`
 - TIP-20 transfer to new account: ~271,000 gas total
 - 24KB contract: ~62M gas (same as TIP-1000)
 
 ### Overuse (200% of target)
-- `current_rate = 633.76 elements/second`
+- `current_rate = 2,091.4 elements/second`
 - `price = 25,000 × 10^2 = 2,500,000 gas`
 - TIP-20 transfer to new account: ~2,521,000 gas total
 - 24KB contract: ~619M gas (prevents spam)
@@ -206,14 +191,6 @@ def update_state_creation_rate(block):
 ---
 
 # Key Benefits
-
-1. **Low costs during low usage**: Prices drop to 25,000 gas when network is idle (10x cheaper than TIP-1000)
-2. **Automatic back-pressure**: Prices rise exponentially as usage approaches target, discouraging overuse
-3. **Market efficiency**: Scarce resource (persistent state) priced according to demand
-4. **Fast response**: 1-hour half-life means prices adjust within hours of usage changes
-5. **Attack resistance**: Sustained spam attacks face exponentially increasing costs (200% usage = 10x price)
-6. **Sustainable long-term**: Targets 10B elements/year, manageable state growth
-7. **No breaking changes**: Same transaction format, just dynamic pricing
 
 ## Economic Impact
 
@@ -292,7 +269,7 @@ Updating the EWMA and calculating dynamic price adds minimal overhead:
 **Mitigation**:
 - Exponential curve rises quickly (50% usage → 3.2x higher, 100% → 10x higher)
 - Creating enough state to matter requires paying exponentially increasing costs
-- Target of 10B elements/year provides sustainable long-term growth
+- Target of 33B elements/year provides sustainable long-term growth
 
 ## Calculation Precision
 
@@ -351,4 +328,4 @@ Could extend to track multiple resources independently:
 
 ## Adjustable Target
 
-The target rate (10B/year) could be made adjustable via governance as network capacity grows.
+The target rate (33B/year) could be made adjustable via governance as network capacity grows.
