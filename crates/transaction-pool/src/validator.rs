@@ -569,15 +569,22 @@ where
             );
         }
 
-        // Validate AA transaction intrinsic gas.
-        // This ensures the gas limit covers all AA-specific costs (per-call overhead,
-        // signature verification, etc.) to prevent mempool DoS attacks where transactions
-        // pass pool validation but fail at execution time.
-        if let Err(err) = self.ensure_aa_intrinsic_gas(&transaction, spec) {
-            return TransactionValidationOutcome::Invalid(
-                transaction,
-                InvalidPoolTransactionError::other(err),
-            );
+        if transaction.inner().is_aa() {
+            // Validate AA transaction intrinsic gas.
+            // This ensures the gas limit covers all AA-specific costs (per-call overhead,
+            // signature verification, etc.) to prevent mempool DoS attacks where transactions
+            // pass pool validation but fail at execution time.
+            if let Err(err) = self.ensure_aa_intrinsic_gas(&transaction, spec) {
+                return TransactionValidationOutcome::Invalid(
+                    transaction,
+                    InvalidPoolTransactionError::other(err),
+                );
+            }
+        } else {
+            // validate intrinsic gas with additional TIP-1000 and T1 checks
+            if let Err(err) = ensure_intrinsic_gas_tempo_tx(&transaction, spec) {
+                return TransactionValidationOutcome::Invalid(transaction, err);
+            }
         }
 
         // Validate AA transaction field limits (calls, access list, token limits).
@@ -696,11 +703,6 @@ where
             Err(err) => {
                 return TransactionValidationOutcome::Error(*transaction.hash(), Box::new(err));
             }
-        }
-
-        // validate intrinsic gas with additional TIP-1000 and T1 checks
-        if let Err(err) = ensure_intrinsic_gas_tempo_tx(&transaction, spec) {
-            return TransactionValidationOutcome::Error(*transaction.hash(), Box::new(err));
         }
 
         match self
@@ -2857,6 +2859,126 @@ mod tests {
             result.unwrap(),
             "Paused tokens should be detected as paused"
         );
+    }
+
+    /// Non-AA transaction with insufficient gas should be rejected with Invalid outcome
+    /// and IntrinsicGasTooLow error.
+    #[tokio::test]
+    async fn test_non_aa_intrinsic_gas_insufficient_rejected() {
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Create EIP-1559 transaction with very low gas limit (below intrinsic gas of ~21k)
+        let tx = TxBuilder::eip1559(Address::random())
+            .gas_limit(1_000) // Way below intrinsic gas
+            .build_eip1559();
+
+        let validator = setup_validator(&tx, current_time);
+        let outcome = validator
+            .validate_transaction(TransactionOrigin::External, tx)
+            .await;
+
+        match outcome {
+            TransactionValidationOutcome::Invalid(_, ref err) => {
+                assert!(
+                    matches!(err, InvalidPoolTransactionError::IntrinsicGasTooLow),
+                    "Expected IntrinsicGasTooLow error, got: {err:?}"
+                );
+            }
+            TransactionValidationOutcome::Error(_, _) => {
+                panic!("Expected Invalid outcome, got Error - this was the bug we fixed!")
+            }
+            _ => panic!("Expected Invalid outcome with IntrinsicGasTooLow, got: {outcome:?}"),
+        }
+    }
+
+    /// Non-AA transaction with sufficient gas should pass intrinsic gas validation.
+    #[tokio::test]
+    async fn test_non_aa_intrinsic_gas_sufficient_passes() {
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Create EIP-1559 transaction with plenty of gas
+        let tx = TxBuilder::eip1559(Address::random())
+            .gas_limit(100_000) // Well above intrinsic gas
+            .build_eip1559();
+
+        let validator = setup_validator(&tx, current_time);
+        let outcome = validator
+            .validate_transaction(TransactionOrigin::External, tx)
+            .await;
+
+        // Should NOT fail with InsufficientGasForIntrinsicCost
+        if let TransactionValidationOutcome::Invalid(_, ref err) = outcome {
+            assert!(
+                matches!(err, InvalidPoolTransactionError::IntrinsicGasTooLow),
+                "Non-AA tx with 100k gas should NOT fail intrinsic gas check, got: {err:?}"
+            );
+        }
+    }
+
+    /// Non-AA transaction should NOT trigger AA-specific intrinsic gas error.
+    /// This verifies the fix that gates AA intrinsic gas check to only AA transactions.
+    #[tokio::test]
+    async fn test_non_aa_tx_does_not_trigger_aa_intrinsic_gas_error() {
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Create EIP-1559 transaction with low gas
+        let tx = TxBuilder::eip1559(Address::random())
+            .gas_limit(1_000)
+            .build_eip1559();
+
+        let validator = setup_validator(&tx, current_time);
+        let outcome = validator
+            .validate_transaction(TransactionOrigin::External, tx)
+            .await;
+
+        // Should NOT get AA-specific error
+        if let TransactionValidationOutcome::Invalid(_, ref err) = outcome {
+            assert!(
+                !matches!(
+                    err.downcast_other_ref::<TempoPoolTransactionError>(),
+                    Some(TempoPoolTransactionError::InsufficientGasForAAIntrinsicCost { .. })
+                ),
+                "Non-AA transaction should NOT trigger AA-specific intrinsic gas error"
+            );
+        }
+    }
+
+    /// Verify intrinsic gas error is returned for insufficient gas.
+    #[tokio::test]
+    async fn test_intrinsic_gas_error_contains_gas_details() {
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let gas_limit = 5_000u64;
+        let tx = TxBuilder::eip1559(Address::random())
+            .gas_limit(gas_limit)
+            .build_eip1559();
+
+        let validator = setup_validator(&tx, current_time);
+        let outcome = validator
+            .validate_transaction(TransactionOrigin::External, tx)
+            .await;
+
+        match outcome {
+            TransactionValidationOutcome::Invalid(_, ref err) => {
+                assert!(
+                    matches!(err, InvalidPoolTransactionError::IntrinsicGasTooLow),
+                    "Expected IntrinsicGasTooLow error, got: {err:?}"
+                );
+            }
+            _ => panic!("Expected Invalid outcome, got: {outcome:?}"),
+        }
     }
 
     /// Paused validator tokens should be rejected even though they would bypass the liquidity check.
