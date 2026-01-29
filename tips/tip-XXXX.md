@@ -1,18 +1,18 @@
 ---
 id: TIP-XXXX
-title: Complex Transfer Policies
-description: Extends TIP-403 with complex policies that specify different authorization rules for senders and recipients.
+title: Compound Transfer Policies
+description: Extends TIP-403 with compound policies that specify different authorization rules for senders and recipients.
 authors: Dan Robinson @danrobinson
 status: Draft
 related: TIP-403, TIP-20
 protocolVersion: T2
 ---
 
-# TIP-XXXX: Complex Transfer Policies
+# TIP-XXXX: Compound Transfer Policies
 
 ## Abstract
 
-This TIP extends the TIP-403 policy registry to support **complex policies** that allow token issuers to specify different authorization rules for senders and recipients. A complex policy references three simple policies: one for sender authorization, one for recipient authorization, and one default policy for legacy `isAuthorized` calls. Complex policies are immutable once created.
+This TIP extends the TIP-403 policy registry to support **compound policies** that allow token issuers to specify different authorization rules for senders and recipients. A compound policy references three simple policies: one for sender authorization, one for recipient authorization, and one default policy for legacy `isAuthorized` calls. Compound policies are immutable once created.
 
 ## Motivation
 
@@ -21,8 +21,9 @@ The current TIP-403 system applies the same policy to both senders and recipient
 - **Sender restrictions**: An issuer may want to block sanctioned addresses from sending tokens, while allowing anyone to receive tokens (e.g., for refunds or seizure).
 - **Recipient restrictions**: An issuer may require recipients to be KYC-verified, while allowing any holder to send tokens out.
 - **Asymmetric compliance**: Different jurisdictions may have different requirements for inflows vs outflows.
+- **Vendor credits**: A business may issue credits that can be minted to anyone and spent by holders to a specific vendor, but cannot be transferred peer-to-peer. This requires allowing all addresses as recipients (for minting) while restricting senders to only transfer to the vendor's address.
 
-Complex policies enable these use cases while maintaining backward compatibility with existing simple policies.
+Compound policies enable these use cases while maintaining backward compatibility with existing simple policies.
 
 ---
 
@@ -36,23 +37,23 @@ TIP-403 currently supports two policy types: `WHITELIST` and `BLACKLIST`. This T
 enum PolicyType {
     WHITELIST,
     BLACKLIST,
-    COMPLEX
+    COMPOUND
 }
 ```
 
-## Complex Policy Structure
+## Compound Policy Structure
 
-A complex policy references three existing simple policies by their policy IDs:
+A compound policy references three existing simple policies by their policy IDs:
 
 ```solidity
-struct ComplexPolicyData {
+struct CompoundPolicyData {
     uint64 senderPolicyId;    // Policy checked for senders
     uint64 recipientPolicyId; // Policy checked for recipients
     uint64 defaultPolicyId;   // Policy used for legacy isAuthorized() calls
 }
 ```
 
-All three referenced policies MUST be simple policies (WHITELIST or BLACKLIST), not complex policies. This prevents circular references and unbounded recursion.
+All three referenced policies MUST be simple policies (WHITELIST or BLACKLIST), not compound policies. This prevents circular references and unbounded recursion.
 
 ## Interface Additions
 
@@ -63,18 +64,18 @@ interface ITIP403Registry {
     // ... existing interface ...
 
     // =========================================================================
-    //                      Complex Policy Creation
+    //                      Compound Policy Creation
     // =========================================================================
 
-    /// @notice Creates a new immutable complex policy
+    /// @notice Creates a new immutable compound policy
     /// @param senderPolicyId Policy ID to check for senders
     /// @param recipientPolicyId Policy ID to check for recipients
     /// @param defaultPolicyId Policy ID for legacy isAuthorized() calls
-    /// @return newPolicyId ID of the newly created complex policy
-    /// @dev All three policy IDs must reference existing simple policies (not complex).
-    /// Complex policies are immutable - they cannot be modified after creation.
-    /// Emits ComplexPolicyCreated event.
-    function createComplexPolicy(
+    /// @return newPolicyId ID of the newly created compound policy
+    /// @dev All three policy IDs must reference existing simple policies (not compound).
+    /// Compound policies are immutable - they cannot be modified after creation.
+    /// Emits CompoundPolicyCreated event.
+    function createCompoundPolicy(
         uint64 senderPolicyId,
         uint64 recipientPolicyId,
         uint64 defaultPolicyId
@@ -89,7 +90,7 @@ interface ITIP403Registry {
     /// @param user Address to check
     /// @return True if authorized to send, false otherwise
     /// @dev For simple policies: equivalent to isAuthorized()
-    /// For complex policies: checks against the senderPolicyId
+    /// For compound policies: checks against the senderPolicyId
     function isAuthorizedSender(uint64 policyId, address user) external view returns (bool);
 
     /// @notice Checks if a user is authorized as a recipient under the given policy
@@ -97,20 +98,20 @@ interface ITIP403Registry {
     /// @param user Address to check
     /// @return True if authorized to receive, false otherwise
     /// @dev For simple policies: equivalent to isAuthorized()
-    /// For complex policies: checks against the recipientPolicyId
+    /// For compound policies: checks against the recipientPolicyId
     function isAuthorizedRecipient(uint64 policyId, address user) external view returns (bool);
 
     // =========================================================================
-    //                      Complex Policy Queries
+    //                      Compound Policy Queries
     // =========================================================================
 
-    /// @notice Returns the constituent policy IDs for a complex policy
-    /// @param policyId ID of the complex policy to query
+    /// @notice Returns the constituent policy IDs for a compound policy
+    /// @param policyId ID of the compound policy to query
     /// @return senderPolicyId Policy ID for sender checks
     /// @return recipientPolicyId Policy ID for recipient checks
     /// @return defaultPolicyId Policy ID for legacy isAuthorized() calls
-    /// @dev Reverts if policyId is not a complex policy
-    function complexPolicyData(uint64 policyId) external view returns (
+    /// @dev Reverts if policyId is not a compound policy
+    function compoundPolicyData(uint64 policyId) external view returns (
         uint64 senderPolicyId,
         uint64 recipientPolicyId,
         uint64 defaultPolicyId
@@ -120,13 +121,13 @@ interface ITIP403Registry {
     //                      Events
     // =========================================================================
 
-    /// @notice Emitted when a new complex policy is created
-    /// @param policyId ID of the newly created complex policy
+    /// @notice Emitted when a new compound policy is created
+    /// @param policyId ID of the newly created compound policy
     /// @param creator Address that created the policy
     /// @param senderPolicyId Policy ID for sender checks
     /// @param recipientPolicyId Policy ID for recipient checks
     /// @param defaultPolicyId Policy ID for legacy isAuthorized() calls
-    event ComplexPolicyCreated(
+    event CompoundPolicyCreated(
         uint64 indexed policyId,
         address indexed creator,
         uint64 senderPolicyId,
@@ -154,9 +155,9 @@ interface ITIP403Registry {
 function isAuthorizedSender(uint64 policyId, address user) external view returns (bool) {
     PolicyData memory data = policyData[policyId];
     
-    if (data.policyType == PolicyType.COMPLEX) {
-        ComplexPolicyData memory complex = complexPolicyData[policyId];
-        return isAuthorized(complex.senderPolicyId, user);
+    if (data.policyType == PolicyType.COMPOUND) {
+        CompoundPolicyData memory compound = compoundPolicyData[policyId];
+        return isAuthorized(compound.senderPolicyId, user);
     }
     
     // For simple policies, sender authorization equals general authorization
@@ -170,9 +171,9 @@ function isAuthorizedSender(uint64 policyId, address user) external view returns
 function isAuthorizedRecipient(uint64 policyId, address user) external view returns (bool) {
     PolicyData memory data = policyData[policyId];
     
-    if (data.policyType == PolicyType.COMPLEX) {
-        ComplexPolicyData memory complex = complexPolicyData[policyId];
-        return isAuthorized(complex.recipientPolicyId, user);
+    if (data.policyType == PolicyType.COMPOUND) {
+        CompoundPolicyData memory compound = compoundPolicyData[policyId];
+        return isAuthorized(compound.recipientPolicyId, user);
     }
     
     // For simple policies, recipient authorization equals general authorization
@@ -182,7 +183,7 @@ function isAuthorizedRecipient(uint64 policyId, address user) external view retu
 
 ### isAuthorized (updated)
 
-The existing `isAuthorized` function is updated to handle complex policies:
+The existing `isAuthorized` function is updated to handle compound policies:
 
 ```solidity
 function isAuthorized(uint64 policyId, address user) external view returns (bool) {
@@ -192,9 +193,9 @@ function isAuthorized(uint64 policyId, address user) external view returns (bool
     
     PolicyData memory data = policyData[policyId];
     
-    if (data.policyType == PolicyType.COMPLEX) {
-        ComplexPolicyData memory complex = complexPolicyData[policyId];
-        return isAuthorized(complex.defaultPolicyId, user);
+    if (data.policyType == PolicyType.COMPOUND) {
+        CompoundPolicyData memory compound = compoundPolicyData[policyId];
+        return isAuthorized(compound.defaultPolicyId, user);
     }
     
     return data.policyType == PolicyType.WHITELIST
@@ -276,9 +277,9 @@ function systemTransferFrom(address from, address to, uint256 amount) external r
 
 ## Immutability
 
-Complex policies are immutable once created. There is no `modifyComplexPolicy` function. To change policy behavior, token issuers must:
+Compound policies are immutable once created. There is no `modifyCompoundPolicy` function. To change policy behavior, token issuers must:
 
-1. Create a new complex policy with the desired configuration
+1. Create a new compound policy with the desired configuration
 2. Update the token's `transferPolicyId` to the new policy
 
 This design:
@@ -292,36 +293,36 @@ This TIP is fully backward compatible:
 
 - Existing simple policies continue to work unchanged
 - Tokens using simple policies will see identical behavior (since `isAuthorizedSender` and `isAuthorizedRecipient` delegate to `isAuthorized` for simple policies)
-- The existing `isAuthorized` function continues to work for both simple and complex policies
+- The existing `isAuthorized` function continues to work for both simple and compound policies
 
 ---
 
 # Invariants
 
-1. **Simple Policy Constraint**: All three policy IDs in a complex policy MUST reference simple policies (WHITELIST or BLACKLIST). Complex policies cannot reference other complex policies.
+1. **Simple Policy Constraint**: All three policy IDs in a compound policy MUST reference simple policies (WHITELIST or BLACKLIST). Compound policies cannot reference other compound policies.
 
-2. **Immutability**: Once created, a complex policy's constituent policy IDs cannot be changed. The complex policy itself has no admin.
+2. **Immutability**: Once created, a compound policy's constituent policy IDs cannot be changed. The compound policy itself has no admin.
 
-3. **Existence Check**: `createComplexPolicy` MUST revert if any of the three referenced policy IDs do not exist.
+3. **Existence Check**: `createCompoundPolicy` MUST revert if any of the three referenced policy IDs do not exist.
 
 4. **Delegation Correctness**: For simple policies, `isAuthorizedSender(p, u)` MUST equal `isAuthorizedRecipient(p, u)` MUST equal `isAuthorized(p, u)`.
 
-5. **Built-in Policy Compatibility**: Complex policies MAY reference built-in policies (0 = always-reject, 1 = always-allow) as any of their constituent policies.
+5. **Built-in Policy Compatibility**: Compound policies MAY reference built-in policies (0 = always-reject, 1 = always-allow) as any of their constituent policies.
 
 ## Test Cases
 
 1. **Simple policy equivalence**: Verify that for simple policies, all three authorization functions return the same result.
 
-2. **Complex policy creation**: Verify that complex policies can be created with valid simple policy references.
+2. **Compound policy creation**: Verify that compound policies can be created with valid simple policy references.
 
-3. **Invalid creation**: Verify that `createComplexPolicy` reverts when referencing non-existent policies or complex policies.
+3. **Invalid creation**: Verify that `createCompoundPolicy` reverts when referencing non-existent policies or compound policies.
 
-4. **Sender/recipient differentiation**: Verify that a complex policy with different sender/recipient policies correctly authorizes asymmetric transfers.
+4. **Sender/recipient differentiation**: Verify that a compound policy with different sender/recipient policies correctly authorizes asymmetric transfers.
 
-5. **Default policy**: Verify that `isAuthorized` on a complex policy delegates to the defaultPolicyId.
+5. **Default policy**: Verify that `isAuthorized` on a compound policy delegates to the defaultPolicyId.
 
 6. **TIP-20 mint**: Verify that mints only check recipient authorization.
 
 7. **TIP-20 burnBlocked**: Verify that burnBlocked checks sender authorization (and allows burning from blocked senders).
 
-8. **Immutability**: Verify that there is no way to modify a complex policy after creation.
+8. **Immutability**: Verify that there is no way to modify a compound policy after creation.
