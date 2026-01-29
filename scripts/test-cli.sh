@@ -25,7 +25,7 @@ $TEMPO --help | grep -q "node" || { echo "FAIL"; exit 1; }
 echo "PASS"
 
 echo "Test: consensus generate-private-key"
-TMPKEY=$(mktemp)
+TMPKEY=$(mktemp -u)
 $TEMPO consensus generate-private-key -o "$TMPKEY" || { rm -f "$TMPKEY"; echo "FAIL"; exit 1; }
 rm -f "$TMPKEY"
 echo "PASS"
