@@ -204,25 +204,46 @@ function isAuthorized(uint64 policyId, address user) external view returns (bool
 }
 ```
 
+## Required Code Changes
+
+This TIP requires exactly 5 replacements of `isAuthorized` calls:
+
+### Direct Replacements
+
+| Location | Current | Replace With |
+|----------|---------|--------------|
+| TIP-20 `_mint` | `isAuthorized(to)` | `isAuthorizedRecipient(to)` |
+| TIP-20 `burnBlocked` | `isAuthorized(from)` | `isAuthorizedSender(from)` |
+| DEX `cancelStaleOrder` | `isAuthorized(maker)` | `isAuthorizedSender(maker)` |
+
+### Core Authorization Logic
+
+| Location | Current | Replace With |
+|----------|---------|--------------|
+| TIP-20 `isTransferAuthorized` | `isAuthorized(from)` | `isAuthorizedSender(from)` |
+| TIP-20 `isTransferAuthorized` | `isAuthorized(to)` | `isAuthorizedRecipient(to)` |
+
+All other call sites use `ensureTransferAuthorized(from, to)` which delegates to `isTransferAuthorized`, so they automatically inherit the correct behavior:
+
+- **TIP-20**: `transfer`, `transferFrom`, `transferWithMemo`, `systemTransferFrom`
+- **TIP-20 Rewards**: `distributeReward`, `setRewardRecipient`, `claimRewards`
+- **Stablecoin DEX**: `decrementBalanceOrTransferFrom`, `placeLimitOrder`, `swapExactAmountIn`
+- **Fee Manager**: `collectFeePreTx`
+
 ## TIP-20 Integration
 
 TIP-20 tokens MUST be updated to use the new sender/recipient authorization functions:
 
-### Transfer Authorization
-
-The `transferAuthorized` modifier is updated:
+### Transfer Authorization (isTransferAuthorized)
 
 ```solidity
-modifier transferAuthorized(address from, address to) {
+function isTransferAuthorized(address from, address to) internal view returns (bool) {
     uint64 policyId = transferPolicyId;
     
-    if (!TIP403_REGISTRY.isAuthorizedSender(policyId, from)) {
-        revert PolicyForbids();
-    }
-    if (!TIP403_REGISTRY.isAuthorizedRecipient(policyId, to)) {
-        revert PolicyForbids();
-    }
-    _;
+    bool fromAuthorized = TIP403_REGISTRY.isAuthorizedSender(policyId, from);
+    bool toAuthorized = TIP403_REGISTRY.isAuthorizedRecipient(policyId, to);
+    
+    return fromAuthorized && toAuthorized;
 }
 ```
 
@@ -255,23 +276,24 @@ function burnBlocked(address from, uint256 amount) external {
 }
 ```
 
-### System Transfer From
+## Stablecoin DEX Integration
 
-The `systemTransferFrom` function uses sender/recipient checks:
+### Cancel Stale Order
+
+The `cancelStaleOrder` function checks sender authorization since the maker escrowed (sent) the token:
 
 ```solidity
-function systemTransferFrom(address from, address to, uint256 amount) external returns (bool) {
-    require(isSystemCaller(msg.sender));
+function cancelStaleOrder(uint128 orderId) external {
+    Order order = orders[orderId];
+    address token = order.isBid() ? book.quote : book.base;
+    uint64 policyId = TIP20(token).transferPolicyId();
     
-    if (!TIP403_REGISTRY.isAuthorizedSender(transferPolicyId, from)) {
-        revert PolicyForbids();
-    }
-    if (!TIP403_REGISTRY.isAuthorizedRecipient(transferPolicyId, to)) {
-        revert PolicyForbids();
+    // Order is stale if maker can no longer send the escrowed token
+    if (TIP403_REGISTRY.isAuthorizedSender(policyId, order.maker())) {
+        revert OrderNotStale();
     }
     
-    _transfer(from, to, amount);
-    return true;
+    _cancelOrder(order);
 }
 ```
 
