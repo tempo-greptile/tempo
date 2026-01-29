@@ -1,5 +1,5 @@
 ---
-id: TIP-1011
+id: TIP-XXXX
 title: Complex Transfer Policies
 description: Extends TIP-403 with complex policies that specify different authorization rules for senders and recipients.
 authors: Dan Robinson @danrobinson
@@ -8,7 +8,7 @@ related: TIP-403, TIP-20
 protocolVersion: T2
 ---
 
-# TIP-1011: Complex Transfer Policies
+# TIP-XXXX: Complex Transfer Policies
 
 ## Abstract
 
