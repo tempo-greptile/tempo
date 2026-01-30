@@ -1,50 +1,43 @@
 # Tempo Improvement Proposals (TIPs)
 
-This directory contains all Tempo Improvement Proposals.
-
 ## Creating a New TIP
 
-1. **Copy the template:**
-   ```bash
-   cp tips/tip_template.md tips/draft-<your-slug>.md
-   ```
-   Example: `tips/draft-compound-transfer-policies.md`
-
-2. **Fill in the content** - leave `id: TIP-XXXX` as-is in the frontmatter
-
-3. **Open a Pull Request** - your TIP number will be assigned automatically based on the PR number
-
-4. **On merge**, CI renames your file to `tip-<PR_NUMBER>.md` and updates the frontmatter
+1. Copy template: `cp tips/tip_template.md tips/draft-<slug>.md`
+2. Fill in content (leave `id: TIP-XXXX` as-is)
+3. Open PR — on merge, CI renames to `tip-<PR_NUMBER>.md`
 
 ## Updating an Existing TIP
 
-1. **Branch naming**: Include the TIP number in your branch name
-   - Example: `fix/tip-1000-clarify-gas-limits`
+Edit `tips/tip-<NUMBER>.md` directly and open a PR.
 
-2. **Edit the file directly**: `tips/tip-1000.md`
-
-3. **Open a Pull Request**
-
-## Why PR Numbers?
-
-Using PR numbers as TIP numbers provides:
-
-- **Zero collisions**: GitHub guarantees unique PR numbers
-- **No coordination overhead**: No need to manually reserve numbers
-- **Full traceability**: Every TIP links directly to its originating PR
-- **Works at any velocity**: No bottleneck on number assignment
-
-## TIP Lifecycle
+## How TIP Numbers Are Assigned
 
 ```
-Draft → In Review → Approved → In Progress → Devnet → QA/Integration → Testnet → Mainnet
-                                                                                    ↓
-                                                                              Deprecated
+┌─────────────────────────────────────────────────────────────────┐
+│  1. Create draft                                                │
+│     cp tips/tip_template.md tips/draft-my-feature.md            │
+└───────────────────────────┬─────────────────────────────────────┘
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  2. Open PR #2400                                               │
+│     File: tips/draft-my-feature.md                              │
+│     Frontmatter: id: TIP-XXXX                                   │
+└───────────────────────────┬─────────────────────────────────────┘
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  3. PR merges → CI runs tip-number.yml                          │
+│     • Renames draft-my-feature.md → tip-2400.md                 │
+│     • Updates frontmatter: id: TIP-2400                         │
+│     • Commits to main                                           │
+└───────────────────────────┬─────────────────────────────────────┘
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  4. Result                                                      │
+│     File: tips/tip-2400.md                                      │
+│     TIP number = PR number (guaranteed unique)                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## File Naming
+## Lifecycle
 
-| Stage | Filename |
-|-------|----------|
-| Draft (in PR) | `draft-<slug>.md` |
-| Merged | `tip-<PR_NUMBER>.md` |
+Draft → In Review → Approved → In Progress → Devnet → QA/Integration → Testnet → Mainnet → Deprecated
