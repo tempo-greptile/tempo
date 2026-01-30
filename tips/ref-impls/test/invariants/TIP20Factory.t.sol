@@ -273,7 +273,9 @@ contract TIP20FactoryInvariantTest is InvariantBaseTest {
         } else if (eurAvailable) {
             // Create EUR token
             vm.startPrank(actor);
-            try factory.createToken("EUR Token", "EUR", "EUR", pathUSD, admin, eurSalt) returns (address addr) {
+            try factory.createToken("EUR Token", "EUR", "EUR", pathUSD, admin, eurSalt) returns (
+                address addr
+            ) {
                 eurToken = addr;
                 _recordCreatedToken(actor, eurSalt, addr);
             } catch (bytes memory reason) {
