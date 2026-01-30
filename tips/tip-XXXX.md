@@ -2,10 +2,10 @@
 id: TIP-XXXX
 title: Compound Transfer Policies
 description: Extends TIP-403 with compound policies that specify different authorization rules for senders and recipients.
-authors: Dan Robinson @danrobinson
+authors: Dan Robinson
 status: Draft
 related: TIP-403, TIP-20
-protocolVersion: T2
+protocolVersion: T1
 ---
 
 # TIP-XXXX: Compound Transfer Policies
