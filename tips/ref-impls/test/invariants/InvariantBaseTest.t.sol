@@ -41,7 +41,7 @@ abstract contract InvariantBaseTest is BaseTest {
     /// @dev Log file path - must be set by child contract
     string internal _logFile;
 
-    /// @dev Whether logging is enabled (disabled via INVARIANT_NO_LOG=true env var for CI)
+    /// @dev Whether logging is enabled (opt-in via LOG_INVARIANTS=true for local debugging)
     bool internal _loggingEnabled;
 
     /// @dev All addresses that may hold token balances (for invariant checks)
@@ -102,15 +102,15 @@ abstract contract InvariantBaseTest is BaseTest {
     }
 
     /// @notice Initialize log file with header
-    /// @dev Logging is disabled if INVARIANT_NO_LOG=true env var is set (for CI performance)
+    /// @dev Logging is opt-in via LOG_INVARIANTS=true env var (disabled by default for CI performance)
     /// @param logFile The log file path
     /// @param title The title for the log header
     function _initLogFile(string memory logFile, string memory title) internal {
-        // Check if logging should be disabled (for CI runs)
-        try vm.envBool("INVARIANT_NO_LOG") returns (bool noLog) {
-            _loggingEnabled = !noLog;
+        // Logging is opt-in for local debugging (default off for CI performance)
+        try vm.envBool("LOG_INVARIANTS") returns (bool logEnabled) {
+            _loggingEnabled = logEnabled;
         } catch {
-            _loggingEnabled = true; // Default to enabled for local debugging
+            _loggingEnabled = false; // Default to disabled for CI
         }
 
         if (!_loggingEnabled) {
