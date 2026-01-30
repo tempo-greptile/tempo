@@ -35,6 +35,12 @@ contract TIP403Registry is ITIP403Registry {
         public
         returns (uint64 newPolicyId)
     {
+        // Only allow WHITELIST or BLACKLIST - use createCompoundPolicy for COMPOUND
+        require(
+            policyType == PolicyType.WHITELIST || policyType == PolicyType.BLACKLIST,
+            IncompatiblePolicyType()
+        );
+
         _policyData[newPolicyId = policyIdCounter++] =
             PolicyData({ policyType: policyType, admin: admin });
 
@@ -47,6 +53,12 @@ contract TIP403Registry is ITIP403Registry {
         PolicyType policyType,
         address[] calldata accounts
     ) public returns (uint64 newPolicyId) {
+        // Only allow WHITELIST or BLACKLIST - use createCompoundPolicy for COMPOUND
+        require(
+            policyType == PolicyType.WHITELIST || policyType == PolicyType.BLACKLIST,
+            IncompatiblePolicyType()
+        );
+
         newPolicyId = policyIdCounter++;
 
         _policyData[newPolicyId] = PolicyData({ policyType: policyType, admin: admin });

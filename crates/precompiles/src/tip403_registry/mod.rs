@@ -268,6 +268,7 @@ impl TIP403Registry {
                         },
                     ))?;
                 }
+                // Already validated above, but match must be exhaustive
                 ITIP403Registry::PolicyType::COMPOUND | ITIP403Registry::PolicyType::__Invalid => {
                     // Pre-T1: no events emitted for invalid types, accounts still added
                     // T1+: unreachable since validate_simple_policy_type already rejected
@@ -784,6 +785,68 @@ mod tests {
     // =========================================================================
     //                      TIP-1015: Compound Policy Tests
     // =========================================================================
+
+    #[test]
+    fn test_create_policy_rejects_compound_type() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let admin = Address::random();
+        StorageCtx::enter(&mut storage, || {
+            let mut registry = TIP403Registry::new();
+
+            // Attempting to create a COMPOUND policy via createPolicy should fail
+            let result = registry.create_policy(
+                admin,
+                ITIP403Registry::createPolicyCall {
+                    admin,
+                    policyType: ITIP403Registry::PolicyType::COMPOUND,
+                },
+            );
+            assert!(result.is_err());
+
+            // Verify the error is IncompatiblePolicyType
+            let err = result.unwrap_err();
+            assert!(matches!(
+                err,
+                crate::error::TempoPrecompileError::TIP403RegistryError(
+                    TIP403RegistryError::IncompatiblePolicyType(_)
+                )
+            ));
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_create_policy_with_accounts_rejects_compound_type() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let admin = Address::random();
+        let user = Address::random();
+        StorageCtx::enter(&mut storage, || {
+            let mut registry = TIP403Registry::new();
+
+            // Attempting to create a COMPOUND policy via createPolicyWithAccounts should fail
+            let result = registry.create_policy_with_accounts(
+                admin,
+                ITIP403Registry::createPolicyWithAccountsCall {
+                    admin,
+                    policyType: ITIP403Registry::PolicyType::COMPOUND,
+                    accounts: vec![user],
+                },
+            );
+            assert!(result.is_err());
+
+            // Verify the error is IncompatiblePolicyType
+            let err = result.unwrap_err();
+            assert!(matches!(
+                err,
+                crate::error::TempoPrecompileError::TIP403RegistryError(
+                    TIP403RegistryError::IncompatiblePolicyType(_)
+                )
+            ));
+
+            Ok(())
+        })
+    }
 
     #[test]
     fn test_create_compound_policy() -> eyre::Result<()> {
