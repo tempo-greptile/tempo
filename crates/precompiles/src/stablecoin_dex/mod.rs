@@ -4246,8 +4246,7 @@ mod tests {
             let flip_tick = 200i16;
 
             let price = orderbook::tick_to_price(tick) as u128;
-            let escrow_quote = (amount * price + orderbook::PRICE_SCALE as u128 - 1)
-                / orderbook::PRICE_SCALE as u128;
+            let escrow_quote = (amount * price).div_ceil(orderbook::PRICE_SCALE as u128);
 
             // Setup tokens with ample balances
             let large_balance = escrow_quote * 10;
@@ -4356,13 +4355,13 @@ mod tests {
             let total_quote_liabilities = total_internal_quote;
 
             println!("=== DEX Solvency Check ===");
-            println!("DEX base balance: {}", dex_base_balance);
-            println!("DEX quote balance: {}", dex_quote_balance);
-            println!("Total internal base: {}", total_internal_base);
-            println!("Total internal quote: {}", total_internal_quote);
-            println!("Flipped order escrow (base): {}", flipped_order_escrow);
-            println!("Total base liabilities: {}", total_base_liabilities);
-            println!("Total quote liabilities: {}", total_quote_liabilities);
+            println!("DEX base balance: {dex_base_balance}");
+            println!("DEX quote balance: {dex_quote_balance}");
+            println!("Total internal base: {total_internal_base}");
+            println!("Total internal quote: {total_internal_quote}");
+            println!("Flipped order escrow (base): {flipped_order_escrow}");
+            println!("Total base liabilities: {total_base_liabilities}");
+            println!("Total quote liabilities: {total_quote_liabilities}");
 
             // The bug: DEX may not have enough base tokens
             // When the bid was filled, Alice received `amount` base tokens to her internal balance
@@ -4386,23 +4385,19 @@ mod tests {
             // Assert solvency (this should fail if there's a bug)
             assert!(
                 dex_base_balance >= total_base_liabilities,
-                "DEX is insolvent in base token: has {} but owes {}",
-                dex_base_balance,
-                total_base_liabilities
+                "DEX is insolvent in base token: has {dex_base_balance} but owes {total_base_liabilities}"
             );
 
             assert!(
                 dex_quote_balance >= total_quote_liabilities,
-                "DEX is insolvent in quote token: has {} but owes {}",
-                dex_quote_balance,
-                total_quote_liabilities
+                "DEX is insolvent in quote token: has {dex_quote_balance} but owes {total_quote_liabilities}"
             );
 
             // Step 4: Now try to trigger a withdrawal that would fail if insolvent
             // Charlie fills the flipped ask order
             let flip_price = orderbook::tick_to_price(flip_tick) as u128;
             let quote_needed =
-                (amount * flip_price + orderbook::PRICE_SCALE as u128 - 1) / orderbook::PRICE_SCALE as u128;
+                (amount * flip_price).div_ceil(orderbook::PRICE_SCALE as u128);
 
             exchange.set_balance(charlie, quote_token, quote_needed)?;
 
@@ -4417,15 +4412,14 @@ mod tests {
                 }
                 Err(e) => {
                     // Check if it's an insolvency error
-                    let error_str = format!("{:?}", e);
+                    let error_str = format!("{e:?}");
                     if error_str.contains("InsufficientBalance") {
                         panic!(
-                            "DEX INSOLVENCY CONFIRMED: Cannot complete swap due to insufficient balance: {}",
-                            error_str
+                            "DEX INSOLVENCY CONFIRMED: Cannot complete swap due to insufficient balance: {error_str}",
                         );
                     } else {
                         // Some other error (e.g., insufficient liquidity is expected if order was already filled)
-                        println!("Swap failed with: {:?}", e);
+                        println!("Swap failed with: {e:?}");
                     }
                 }
             }
@@ -4512,10 +4506,7 @@ mod tests {
                             escrowed_base += order.remaining();
                         } else {
                             let price = orderbook::tick_to_price(order.tick()) as u128;
-                            escrowed_quote += (order.remaining() as u128 * price
-                                + orderbook::PRICE_SCALE as u128
-                                - 1)
-                                / orderbook::PRICE_SCALE as u128;
+                            escrowed_quote += (order.remaining() * price).div_ceil(orderbook::PRICE_SCALE as u128);
                         }
                     }
                 }
@@ -4527,12 +4518,10 @@ mod tests {
                 let quote_surplus = dex_quote as i128 - total_quote_liab as i128;
 
                 println!(
-                    "[{}] Base: DEX={}, liab={}, surplus={}",
-                    label, dex_base, total_base_liab, base_surplus
+                    "[{label}] Base: DEX={dex_base}, liab={total_base_liab}, surplus={base_surplus}"
                 );
                 println!(
-                    "[{}] Quote: DEX={}, liab={}, surplus={}",
-                    label, dex_quote, total_quote_liab, quote_surplus
+                    "[{label}] Quote: DEX={dex_quote}, liab={total_quote_liab}, surplus={quote_surplus}"
                 );
 
                 Ok((base_surplus, quote_surplus))
@@ -4556,8 +4545,7 @@ mod tests {
             // Now there should be an ask flip order at tick_high
             // Bob fills it by buying base with quote (uses external balance from mint)
             let price_high_u128 = orderbook::tick_to_price(tick_high) as u128;
-            let quote_to_buy = (amount * price_high_u128 + orderbook::PRICE_SCALE as u128 - 1)
-                / orderbook::PRICE_SCALE as u128;
+            let quote_to_buy = (amount * price_high_u128).div_ceil(orderbook::PRICE_SCALE as u128);
 
             // This should trigger the ask->bid flip
             let result = exchange.swap_exact_amount_in(bob, quote_token, base_token, quote_to_buy, 0);
@@ -4570,20 +4558,19 @@ mod tests {
                     // Check for insolvency after two flips
                     if after_flip2_base < 0 || after_flip2_quote < 0 {
                         panic!(
-                            "INSOLVENCY after 2 flips: base_surplus={}, quote_surplus={}",
-                            after_flip2_base, after_flip2_quote
+                            "INSOLVENCY after 2 flips: base_surplus={after_flip2_base}, quote_surplus={after_flip2_quote}"
                         );
                     }
                 }
                 Err(e) => {
-                    let error_str = format!("{:?}", e);
+                    let error_str = format!("{e:?}");
                     if error_str.contains("InsufficientBalance")
                         || error_str.contains("insufficient_balance")
                     {
-                        panic!("INSOLVENCY CONFIRMED during flip 2: {}", error_str);
+                        panic!("INSOLVENCY CONFIRMED during flip 2: {error_str}");
                     }
                     // Insufficient liquidity is acceptable if order was somehow not placed
-                    println!("Flip 2 swap failed: {:?}", e);
+                    println!("Flip 2 swap failed: {e:?}");
                 }
             }
 
