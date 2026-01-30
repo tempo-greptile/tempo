@@ -330,9 +330,9 @@ contract StablecoinDEXTest is BaseTest {
 
         // After fix: flipped orders are NOT flip orders themselves (isFlipOrder=false)
         // This prevents ping-pong accumulation of rounding errors
-        // Note: flipTick is still passed as 100 (original tick) even though isFlip is false
+        // flipTick is 0 for non-flip orders
         vm.expectEmit(true, true, true, true);
-        emit OrderPlaced(2, alice, address(token1), 1e18, false, 200, false, 100);
+        emit OrderPlaced(2, alice, address(token1), 1e18, false, 200, false, 0);
 
         vm.prank(bob);
         exchange.swapExactAmountIn(address(token1), address(pathUSD), 1e18, 0);

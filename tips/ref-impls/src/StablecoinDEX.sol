@@ -588,7 +588,7 @@ contract StablecoinDEX is IStablecoinDEX {
                     !order.isBid,
                     order.flipTick,
                     false,
-                    order.tick,
+                    0,
                     false
                 );
             }
