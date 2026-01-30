@@ -43,7 +43,6 @@ crate::sol! {
         error IncompatiblePolicyType();
         error PolicyNotFound();
         error PolicyNotSimple();
-        error PolicyDoesNotExist();
     }
 }
 
@@ -65,9 +64,5 @@ impl TIP403RegistryError {
 
     pub const fn policy_not_simple() -> Self {
         Self::PolicyNotSimple(ITIP403Registry::PolicyNotSimple {})
-    }
-
-    pub const fn policy_does_not_exist() -> Self {
-        Self::PolicyDoesNotExist(ITIP403Registry::PolicyDoesNotExist {})
     }
 }
