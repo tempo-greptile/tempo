@@ -2454,8 +2454,15 @@ mod tests {
             assert_eq!(new_order.tick(), flip_tick);
             // After fix: flipped orders are regular orders, not flip orders
             // This prevents ping-pong accumulation of rounding errors
-            assert_eq!(new_order.flip_tick(), 0, "Flipped order should not be a flip order");
-            assert!(!new_order.is_flip(), "Flipped order should not be a flip order");
+            assert_eq!(
+                new_order.flip_tick(),
+                0,
+                "Flipped order should not be a flip order"
+            );
+            assert!(
+                !new_order.is_flip(),
+                "Flipped order should not be a flip order"
+            );
             assert!(new_order.is_ask());
             assert_eq!(new_order.amount(), amount);
             assert_eq!(new_order.remaining(), amount);
@@ -4282,13 +4289,8 @@ mod tests {
             // She escrows quote tokens (pathUSD) to buy base tokens
             // When filled, it will flip to an ask order at flip_tick
             let flip_order_id = exchange.place_flip(
-                alice,
-                base_token,
-                amount,
-                true, // is_bid
-                tick,
-                flip_tick,
-                false, // not internal_balance_only
+                alice, base_token, amount, true, // is_bid
+                tick, flip_tick, false, // not internal_balance_only
             )?;
 
             // Verify the order was placed
@@ -4304,7 +4306,10 @@ mod tests {
 
             // The original flip order should now be deleted (filled)
             let filled_order = exchange.orders[flip_order_id].read()?;
-            assert!(filled_order.maker().is_zero(), "Original order should be deleted");
+            assert!(
+                filled_order.maker().is_zero(),
+                "Original order should be deleted"
+            );
 
             // The flipped order should exist
             let flipped_order_id = flip_order_id + 1;
@@ -4396,8 +4401,7 @@ mod tests {
             // Step 4: Now try to trigger a withdrawal that would fail if insolvent
             // Charlie fills the flipped ask order
             let flip_price = orderbook::tick_to_price(flip_tick) as u128;
-            let quote_needed =
-                (amount * flip_price).div_ceil(orderbook::PRICE_SCALE as u128);
+            let quote_needed = (amount * flip_price).div_ceil(orderbook::PRICE_SCALE as u128);
 
             exchange.set_balance(charlie, quote_token, quote_needed)?;
 
@@ -4477,7 +4481,9 @@ mod tests {
             let tip20_quote = TIP20Token::from_address(quote_token)?;
 
             // Helper to check solvency
-            let check_solvency = |exchange: &StablecoinDEX, label: &str| -> eyre::Result<(i128, i128)> {
+            let check_solvency = |exchange: &StablecoinDEX,
+                                  label: &str|
+             -> eyre::Result<(i128, i128)> {
                 let dex_base: u128 = tip20_base
                     .balance_of(ITIP20::balanceOfCall {
                         account: exchange.address,
@@ -4506,7 +4512,8 @@ mod tests {
                             escrowed_base += order.remaining();
                         } else {
                             let price = orderbook::tick_to_price(order.tick()) as u128;
-                            escrowed_quote += (order.remaining() * price).div_ceil(orderbook::PRICE_SCALE as u128);
+                            escrowed_quote += (order.remaining() * price)
+                                .div_ceil(orderbook::PRICE_SCALE as u128);
                         }
                     }
                 }
@@ -4540,7 +4547,8 @@ mod tests {
             // Bob fills the bid by selling base (uses external balance from mint)
             exchange.swap_exact_amount_in(bob, base_token, quote_token, amount, 0)?;
 
-            let (_after_flip1_base, _after_flip1_quote) = check_solvency(&exchange, "After flip 1")?;
+            let (_after_flip1_base, _after_flip1_quote) =
+                check_solvency(&exchange, "After flip 1")?;
 
             // Now there should be an ask flip order at tick_high
             // Bob fills it by buying base with quote (uses external balance from mint)
@@ -4548,7 +4556,8 @@ mod tests {
             let quote_to_buy = (amount * price_high_u128).div_ceil(orderbook::PRICE_SCALE as u128);
 
             // This should trigger the ask->bid flip
-            let result = exchange.swap_exact_amount_in(bob, quote_token, base_token, quote_to_buy, 0);
+            let result =
+                exchange.swap_exact_amount_in(bob, quote_token, base_token, quote_to_buy, 0);
 
             match result {
                 Ok(_) => {

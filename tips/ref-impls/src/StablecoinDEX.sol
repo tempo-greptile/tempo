@@ -589,7 +589,7 @@ contract StablecoinDEX is IStablecoinDEX {
                     order.flipTick,
                     false,
                     order.tick,
-                    true
+                    false
                 );
             }
 
