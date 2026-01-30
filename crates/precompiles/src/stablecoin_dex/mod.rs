@@ -1045,7 +1045,7 @@ impl StablecoinDEX {
 
     /// Cancel a stale order where the maker is forbidden by TIP-403 policy
     /// Allows anyone to clean up stale orders from blacklisted makers
-    /// TIP-1011: For T1+, checks sender authorization (maker must be able to send the escrowed token)
+    /// TIP-1015: For T1+, checks sender authorization (maker must be able to send the escrowed token)
     pub fn cancel_stale_order(&mut self, order_id: u128) -> Result<()> {
         let order = self.orders[order_id].read()?;
 
@@ -1064,7 +1064,7 @@ impl StablecoinDEX {
         let policy_id = token_contract.transfer_policy_id()?;
 
         let registry = TIP403Registry::new();
-        // TIP-1011: Use isAuthorizedSender for T1+, isAuthorized for pre-T1
+        // TIP-1015: Use isAuthorizedSender for T1+, isAuthorized for pre-T1
         let is_authorized = if self.storage.spec().is_t1() {
             registry.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
                 policyId: policy_id,

@@ -245,7 +245,7 @@ pub trait TempoStateAccess<M = ()> {
     {
         self.with_read_only_storage_ctx(spec, || {
             // Ensure the fee payer is not blacklisted (sender authorization)
-            // TIP-1011: Use isAuthorizedSender for T1+, isAuthorized for pre-T1
+            // TIP-1015: Use isAuthorizedSender for T1+, isAuthorized for pre-T1
             let transfer_policy_id = TIP20Token::from_address(fee_token)?
                 .transfer_policy_id
                 .read()?;

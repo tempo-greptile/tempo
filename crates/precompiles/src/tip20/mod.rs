@@ -340,7 +340,7 @@ impl TIP20Token {
         let total_supply = self.total_supply()?;
 
         // Check if the `to` address is authorized to receive minted tokens
-        // TIP-1011: Use isAuthorizedMintRecipient for T1+, isAuthorized for pre-T1
+        // TIP-1015: Use isAuthorizedMintRecipient for T1+, isAuthorized for pre-T1
         let registry = TIP403Registry::new();
         let policy_id = self.transfer_policy_id()?;
         let is_authorized = if self.storage.spec().is_t1() {
@@ -428,7 +428,7 @@ impl TIP20Token {
         }
 
         // Check if the address is blocked from transferring (sender authorization)
-        // TIP-1011: Use isAuthorizedSender for T1+, isAuthorized for pre-T1
+        // TIP-1015: Use isAuthorizedSender for T1+, isAuthorized for pre-T1
         let registry = TIP403Registry::new();
         let policy_id = self.transfer_policy_id()?;
         let is_authorized = if self.storage.spec().is_t1() {
@@ -703,13 +703,13 @@ impl TIP20Token {
     }
 
     /// Checks if the transfer is authorized.
-    /// TIP-1011: For T1+, uses isAuthorizedSender/isAuthorizedRecipient for directional checks
+    /// TIP-1015: For T1+, uses isAuthorizedSender/isAuthorizedRecipient for directional checks
     pub fn is_transfer_authorized(&self, from: Address, to: Address) -> Result<bool> {
         let transfer_policy_id = self.transfer_policy_id()?;
         let registry = TIP403Registry::new();
 
         let (from_authorized, to_authorized) = if self.storage.spec().is_t1() {
-            // TIP-1011: Use directional authorization checks
+            // TIP-1015: Use directional authorization checks
             let from_auth =
                 registry.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
                     policyId: transfer_policy_id,

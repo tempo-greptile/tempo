@@ -15,11 +15,11 @@ pub struct TIP403Registry {
     policy_id_counter: u64,
     policy_data: Mapping<u64, PolicyData>,
     policy_set: Mapping<u64, Mapping<Address, bool>>,
-    // TIP-1011: Compound policy data (sender, recipient, mintRecipient policy IDs)
+    // TIP-1015: Compound policy data (sender, recipient, mintRecipient policy IDs)
     compound_policy_data: Mapping<u64, CompoundPolicyData>,
 }
 
-/// Data for compound policies (TIP-1011)
+/// Data for compound policies (TIP-1015)
 #[derive(Debug, Clone, Storable)]
 pub struct CompoundPolicyData {
     pub sender_policy_id: u64,
@@ -176,7 +176,7 @@ impl TIP403Registry {
         self.is_authorized_simple(policy_id, user, &data)
     }
 
-    /// Returns the compound policy data for a compound policy (TIP-1011)
+    /// Returns the compound policy data for a compound policy (TIP-1015)
     pub fn compound_policy_data(
         &self,
         call: ITIP403Registry::compoundPolicyDataCall,
@@ -401,7 +401,7 @@ impl TIP403Registry {
         ))
     }
 
-    /// Creates a new compound policy that references three simple policies (TIP-1011)
+    /// Creates a new compound policy that references three simple policies (TIP-1015)
     pub fn create_compound_policy(
         &mut self,
         msg_sender: Address,
