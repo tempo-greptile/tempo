@@ -10,7 +10,7 @@ use revm::{
 };
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_contracts::precompiles::{
-    DEFAULT_FEE_TOKEN, IFeeManager, IStablecoinDEX, ITIP403Registry, STABLECOIN_DEX_ADDRESS,
+    DEFAULT_FEE_TOKEN, IFeeManager, IStablecoinDEX, STABLECOIN_DEX_ADDRESS,
 };
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
@@ -18,7 +18,7 @@ use tempo_precompiles::{
     storage::{Handler, PrecompileStorageProvider, StorageCtx},
     tip_fee_manager::TipFeeManager,
     tip20::{ITIP20, TIP20Token, is_tip20_prefix},
-    tip403_registry::TIP403Registry,
+    tip403_registry::{AuthRole, TIP403Registry},
 };
 use tempo_primitives::TempoTxEnvelope;
 
@@ -246,21 +246,15 @@ pub trait TempoStateAccess<M = ()> {
         self.with_read_only_storage_ctx(spec, || {
             // Ensure the fee payer is not blacklisted (sender authorization)
             // TIP-1015: Use isAuthorizedSender for T1+, isAuthorized for pre-T1
-            let transfer_policy_id = TIP20Token::from_address(fee_token)?
+            let policy_id = TIP20Token::from_address(fee_token)?
                 .transfer_policy_id
                 .read()?;
-            let registry = TIP403Registry::new();
-            if spec.is_t1() {
-                registry.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
-                    policyId: transfer_policy_id,
-                    user: fee_payer,
-                })
+            let role = if spec.is_t1() {
+                AuthRole::Sender
             } else {
-                registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                    policyId: transfer_policy_id,
-                    user: fee_payer,
-                })
-            }
+                AuthRole::Transfer
+            };
+            TIP403Registry::new().is_authorized_as(policy_id, fee_payer, role)
         })
     }
 

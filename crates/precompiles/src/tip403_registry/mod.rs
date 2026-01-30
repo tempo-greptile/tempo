@@ -13,18 +13,41 @@ use alloy::primitives::{Address, U256};
 #[contract(addr = TIP403_REGISTRY_ADDRESS)]
 pub struct TIP403Registry {
     policy_id_counter: u64,
-    policy_data: Mapping<u64, PolicyData>,
+    policy_records: Mapping<u64, PolicyRecord>,
     policy_set: Mapping<u64, Mapping<Address, bool>>,
-    // TIP-1015: Compound policy data (sender, recipient, mintRecipient policy IDs)
-    compound_policy_data: Mapping<u64, CompoundPolicyData>,
+}
+
+/// Policy record containing base data and optional data for compound policies (TIP-1015)
+#[derive(Debug, Clone, Storable)]
+pub struct PolicyRecord {
+    /// Base policy data
+    pub base: PolicyData,
+    /// Compound policy data. Only relevant when `base.policy_type == COMPOUND`
+    pub compound: CompoundPolicyData,
 }
 
 /// Data for compound policies (TIP-1015)
-#[derive(Debug, Clone, Storable)]
+#[derive(Debug, Clone, Default, Storable)]
 pub struct CompoundPolicyData {
     pub sender_policy_id: u64,
     pub recipient_policy_id: u64,
     pub mint_recipient_policy_id: u64,
+}
+
+/// Authorization role for policy checks.
+///
+/// - `Transfer` (symmetric sender/recipient) available since `Genesis`.
+/// - Directional roles (`Sender`, `Recipient`, `MintRecipient`) for compound policies available since `T1`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthRole {
+    /// Check both sender AND recipient. Used for `isAuthorized` calls (spec: pre T1).
+    Transfer,
+    /// Check sender authorization only (spec: +T1).
+    Sender,
+    /// Check recipient authorization only (spec: +T1).
+    Recipient,
+    /// Check mint recipient authorization only (spec: +T1).
+    MintRecipient,
 }
 
 #[derive(Debug, Clone, Storable)]
@@ -60,6 +83,11 @@ impl PolicyData {
         insert_into_word(encoded, &self.admin, A_LOC.offset_bytes, A_LOC.size)
             .expect("unable to insert 'admin'")
     }
+
+    /// Returns `true` if the policy data indicates a compound policy
+    fn is_compound(&self) -> bool {
+        self.policy_type == ITIP403Registry::PolicyType::COMPOUND as u8
+    }
 }
 
 impl TIP403Registry {
@@ -75,8 +103,8 @@ impl TIP403Registry {
     }
 
     pub fn policy_exists(&self, call: ITIP403Registry::policyExistsCall) -> Result<bool> {
-        // Special policies 0 and 1 always exist
-        if call.policyId < 2 {
+        // Built-in policies (0 and 1) always exist
+        if self.builtin_authorization(call.policyId).is_some() {
             return Ok(true);
         }
 
@@ -97,6 +125,11 @@ impl TIP403Registry {
         }
 
         let data = self.get_policy_data(call.policyId)?;
+
+        if data.is_compound() && !self.storage.spec().is_t1() {
+            return Err(TempoPrecompileError::under_overflow());
+        }
+
         Ok(ITIP403Registry::policyDataReturn {
             policyType: data
                 .policy_type
@@ -104,76 +137,6 @@ impl TIP403Registry {
                 .map_err(|_| TempoPrecompileError::under_overflow())?,
             admin: data.admin,
         })
-    }
-
-    pub fn is_authorized(&self, call: ITIP403Registry::isAuthorizedCall) -> Result<bool> {
-        self.is_authorized_internal(call.policyId, call.user)
-    }
-
-    /// Checks if a user is authorized as a sender under the given policy (TIP-1015)
-    pub fn is_authorized_sender(
-        &self,
-        call: ITIP403Registry::isAuthorizedSenderCall,
-    ) -> Result<bool> {
-        let policy_id = call.policyId;
-        let user = call.user;
-
-        if self.is_builtin_policy(policy_id) {
-            return Ok(policy_id == 1);
-        }
-
-        let data = self.get_policy_data(policy_id)?;
-
-        if self.is_compound(&data) {
-            let compound = self.compound_policy_data[policy_id].read()?;
-            return self.is_authorized_internal(compound.sender_policy_id, user);
-        }
-
-        self.is_authorized_simple(policy_id, user, &data)
-    }
-
-    /// Checks if a user is authorized as a recipient under the given policy (TIP-1015)
-    pub fn is_authorized_recipient(
-        &self,
-        call: ITIP403Registry::isAuthorizedRecipientCall,
-    ) -> Result<bool> {
-        let policy_id = call.policyId;
-        let user = call.user;
-
-        if self.is_builtin_policy(policy_id) {
-            return Ok(policy_id == 1);
-        }
-
-        let data = self.get_policy_data(policy_id)?;
-
-        if self.is_compound(&data) {
-            let compound = self.compound_policy_data[policy_id].read()?;
-            return self.is_authorized_internal(compound.recipient_policy_id, user);
-        }
-
-        self.is_authorized_simple(policy_id, user, &data)
-    }
-
-    /// Checks if a user is authorized as a mint recipient under the given policy (TIP-1015)
-    pub fn is_authorized_mint_recipient(
-        &self,
-        call: ITIP403Registry::isAuthorizedMintRecipientCall,
-    ) -> Result<bool> {
-        let policy_id = call.policyId;
-        let user = call.user;
-
-        if self.is_builtin_policy(policy_id) {
-            return Ok(policy_id == 1);
-        }
-
-        let data = self.get_policy_data(policy_id)?;
-
-        if self.is_compound(&data) {
-            let compound = self.compound_policy_data[policy_id].read()?;
-            return self.is_authorized_internal(compound.mint_recipient_policy_id, user);
-        }
-
-        self.is_authorized_simple(policy_id, user, &data)
     }
 
     /// Returns the compound policy data for a compound policy (TIP-1015)
@@ -184,11 +147,11 @@ impl TIP403Registry {
         let data = self.get_policy_data(call.policyId)?;
 
         // Only compound policies have compound data
-        if data.policy_type != ITIP403Registry::PolicyType::COMPOUND as u8 {
+        if !data.is_compound() {
             return Err(TIP403RegistryError::incompatible_policy_type().into());
         }
 
-        let compound = self.compound_policy_data[call.policyId].read()?;
+        let compound = self.policy_records[call.policyId].compound.read()?;
         Ok(ITIP403Registry::compoundPolicyDataReturn {
             senderPolicyId: compound.sender_policy_id,
             recipientPolicyId: compound.recipient_policy_id,
@@ -202,6 +165,16 @@ impl TIP403Registry {
         msg_sender: Address,
         call: ITIP403Registry::createPolicyCall,
     ) -> Result<u64> {
+        if self.storage.spec().is_t1()
+            && matches!(
+                call.policyType,
+                ITIP403Registry::PolicyType::COMPOUND | ITIP403Registry::PolicyType::__Invalid
+            )
+        {
+            // COMPOUND policies are created via createCompoundPolicy
+            return Err(TIP403RegistryError::incompatible_policy_type().into());
+        }
+
         let new_policy_id = self.policy_id_counter()?;
 
         // Increment counter
@@ -212,7 +185,7 @@ impl TIP403Registry {
         )?;
 
         // Store policy data
-        self.policy_data[new_policy_id].write(PolicyData {
+        self.policy_records[new_policy_id].base.write(PolicyData {
             policy_type: call.policyType as u8,
             admin: call.admin,
         })?;
@@ -287,7 +260,7 @@ impl TIP403Registry {
                     ))?;
                 }
                 ITIP403Registry::PolicyType::COMPOUND | ITIP403Registry::PolicyType::__Invalid => {
-                    // COMPOUND policies are created via createCompoundPolicy, not createPolicyWithAccounts
+                    // COMPOUND policies are created via createCompoundPolicy
                     return Err(TIP403RegistryError::incompatible_policy_type().into());
                 }
             }
@@ -421,17 +394,17 @@ impl TIP403Registry {
                 .ok_or(TempoPrecompileError::under_overflow())?,
         )?;
 
-        // Store policy data with COMPOUND type and no admin (immutable)
-        self.policy_data[new_policy_id].write(PolicyData {
-            policy_type: ITIP403Registry::PolicyType::COMPOUND as u8,
-            admin: Address::ZERO,
-        })?;
-
-        // Store compound policy data
-        self.compound_policy_data[new_policy_id].write(CompoundPolicyData {
-            sender_policy_id: call.senderPolicyId,
-            recipient_policy_id: call.recipientPolicyId,
-            mint_recipient_policy_id: call.mintRecipientPolicyId,
+        // Store policy record with COMPOUND type and compound data
+        self.policy_records[new_policy_id].write(PolicyRecord {
+            base: PolicyData {
+                policy_type: ITIP403Registry::PolicyType::COMPOUND as u8,
+                admin: Address::ZERO,
+            },
+            compound: CompoundPolicyData {
+                sender_policy_id: call.senderPolicyId,
+                recipient_policy_id: call.recipientPolicyId,
+                mint_recipient_policy_id: call.mintRecipientPolicyId,
+            },
         })?;
 
         // Emit event
@@ -448,62 +421,59 @@ impl TIP403Registry {
         Ok(new_policy_id)
     }
 
-    // Internal helper functions
-    fn get_policy_data(&self, policy_id: u64) -> Result<PolicyData> {
-        self.policy_data[policy_id].read()
-    }
-
-    fn set_policy_data(&mut self, policy_id: u64, data: PolicyData) -> Result<()> {
-        self.policy_data[policy_id].write(data)
-    }
-
-    fn set_policy_set(&mut self, policy_id: u64, account: Address, value: bool) -> Result<()> {
-        self.policy_set[policy_id][account].write(value)
-    }
-
-    fn is_authorized_internal(&self, policy_id: u64, user: Address) -> Result<bool> {
-        if self.is_builtin_policy(policy_id) {
-            return Ok(policy_id == 1);
+    /// Core role-based authorization check (TIP-1015).
+    pub fn is_authorized_as(&self, policy_id: u64, user: Address, role: AuthRole) -> Result<bool> {
+        if let Some(auth) = self.builtin_authorization(policy_id) {
+            return Ok(auth);
         }
 
         let data = self.get_policy_data(policy_id)?;
 
-        if self.is_compound(&data) {
-            return Ok(
-                self.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
-                    policyId: policy_id,
-                    user,
-                })? && self.is_authorized_recipient(
-                    ITIP403Registry::isAuthorizedRecipientCall {
-                        policyId: policy_id,
-                        user,
-                    },
-                )?,
-            );
+        if data.is_compound() {
+            let compound = self.policy_records[policy_id].compound.read()?;
+            return match role {
+                AuthRole::Sender => {
+                    self.is_authorized_simple_policy(compound.sender_policy_id, user)
+                }
+                AuthRole::Recipient => {
+                    self.is_authorized_simple_policy(compound.recipient_policy_id, user)
+                }
+                AuthRole::MintRecipient => {
+                    self.is_authorized_simple_policy(compound.mint_recipient_policy_id, user)
+                }
+                AuthRole::Transfer => {
+                    if !self.is_authorized_simple_policy(compound.sender_policy_id, user)? {
+                        // Short-circuit: if sender fails, skip recipient check
+                        return Ok(false);
+                    }
+                    self.is_authorized_simple_policy(compound.recipient_policy_id, user)
+                }
+            };
         }
 
-        self.is_authorized_simple(policy_id, user, &data)
+        self.is_simple(policy_id, user, &data)
     }
 
-    /// Returns true if the policy ID is a built-in policy (0 = always-reject, 1 = always-allow)
+    /// Returns authorization result for built-in policies (0 = reject, 1 = allow).
+    /// Returns None for user-created policies.
     #[inline]
-    fn is_builtin_policy(&self, policy_id: u64) -> bool {
-        policy_id < 2
+    fn builtin_authorization(&self, policy_id: u64) -> Option<bool> {
+        (policy_id < 2).then_some(policy_id == 1)
     }
 
-    /// Returns true if the policy data indicates a compound policy
-    #[inline]
-    fn is_compound(&self, data: &PolicyData) -> bool {
-        data.policy_type == ITIP403Registry::PolicyType::COMPOUND as u8
+    /// Authorization for simple (non-compound) policies only.
+    ///
+    /// **WARNING:** skips compound check - caller must guarantee policy is simple.
+    fn is_authorized_simple_policy(&self, policy_id: u64, user: Address) -> Result<bool> {
+        if let Some(auth) = self.builtin_authorization(policy_id) {
+            return Ok(auth);
+        }
+        let data = self.get_policy_data(policy_id)?;
+        self.is_simple(policy_id, user, &data)
     }
 
     /// Authorization check for simple (non-compound) policies
-    fn is_authorized_simple(
-        &self,
-        policy_id: u64,
-        user: Address,
-        data: &PolicyData,
-    ) -> Result<bool> {
+    fn is_simple(&self, policy_id: u64, user: Address, data: &PolicyData) -> Result<bool> {
         let is_in_set = self.policy_set[policy_id][user].read()?;
 
         let auth = match data
@@ -521,33 +491,49 @@ impl TIP403Registry {
 
     /// Validates that a policy ID references an existing simple policy (not compound)
     fn validate_simple_policy(&self, policy_id: u64) -> Result<()> {
-        // Special policies 0 and 1 are always valid simple policies
-        if policy_id < 2 {
+        // Built-in policies (0 and 1) are always valid simple policies
+        if self.builtin_authorization(policy_id).is_some() {
             return Ok(());
         }
 
         // Check if policy exists
-        let counter = self.policy_id_counter()?;
-        if policy_id >= counter {
+        if policy_id >= self.policy_id_counter()? {
             return Err(TIP403RegistryError::policy_does_not_exist().into());
         }
 
         // Check if policy is simple (not compound)
         let data = self.get_policy_data(policy_id)?;
-        if data.policy_type == ITIP403Registry::PolicyType::COMPOUND as u8 {
+        if data.is_compound() {
             return Err(TIP403RegistryError::policy_not_simple().into());
         }
 
         Ok(())
+    }
+
+    // Internal helper functions
+    fn get_policy_data(&self, policy_id: u64) -> Result<PolicyData> {
+        self.policy_records[policy_id].base.read()
+    }
+
+    fn set_policy_data(&mut self, policy_id: u64, data: PolicyData) -> Result<()> {
+        self.policy_records[policy_id].base.write(data)
+    }
+
+    fn set_policy_set(&mut self, policy_id: u64, account: Address, value: bool) -> Result<()> {
+        self.policy_set[policy_id][account].write(value)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{StorageCtx, hashmap::HashMapStorageProvider};
+    use crate::{
+        error::TempoPrecompileError,
+        storage::{StorageCtx, hashmap::HashMapStorageProvider},
+    };
     use alloy::primitives::Address;
     use rand::Rng;
+    use tempo_chainspec::hardfork::TempoHardfork;
 
     #[test]
     fn test_create_policy() -> eyre::Result<()> {
@@ -589,14 +575,10 @@ mod tests {
             let registry = TIP403Registry::new();
 
             // Policy 0 should always reject
-            assert!(
-                !registry.is_authorized(ITIP403Registry::isAuthorizedCall { policyId: 0, user })?
-            );
+            assert!(!registry.is_authorized_as(0, user, AuthRole::Transfer)?);
 
             // Policy 1 should always allow
-            assert!(
-                registry.is_authorized(ITIP403Registry::isAuthorizedCall { policyId: 1, user })?
-            );
+            assert!(registry.is_authorized_as(1, user, AuthRole::Transfer)?);
             Ok(())
         })
     }
@@ -619,10 +601,7 @@ mod tests {
             )?;
 
             // User should not be authorized initially
-            assert!(!registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: policy_id,
-                user,
-            })?);
+            assert!(!registry.is_authorized_as(policy_id, user, AuthRole::Transfer)?);
 
             // Add user to whitelist
             registry.modify_policy_whitelist(
@@ -635,10 +614,7 @@ mod tests {
             )?;
 
             // User should now be authorized
-            assert!(registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: policy_id,
-                user,
-            })?);
+            assert!(registry.is_authorized_as(policy_id, user, AuthRole::Transfer)?);
 
             Ok(())
         })
@@ -662,10 +638,7 @@ mod tests {
             )?;
 
             // User should be authorized initially (not in blacklist)
-            assert!(registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: policy_id,
-                user,
-            })?);
+            assert!(registry.is_authorized_as(policy_id, user, AuthRole::Transfer)?);
 
             // Add user to blacklist
             registry.modify_policy_blacklist(
@@ -678,10 +651,7 @@ mod tests {
             )?;
 
             // User should no longer be authorized
-            assert!(!registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: policy_id,
-                user,
-            })?);
+            assert!(!registry.is_authorized_as(policy_id, user, AuthRole::Transfer)?);
 
             Ok(())
         })
@@ -698,12 +668,9 @@ mod tests {
             assert!(result.is_err());
 
             // Verify the error is PolicyNotFound
-            let err = result.unwrap_err();
             assert!(matches!(
-                err,
-                crate::error::TempoPrecompileError::TIP403RegistryError(
-                    TIP403RegistryError::PolicyNotFound(_)
-                )
+                result.unwrap_err(),
+                TempoPrecompileError::TIP403RegistryError(TIP403RegistryError::PolicyNotFound(_))
             ));
 
             Ok(())
@@ -764,7 +731,7 @@ mod tests {
 
     #[test]
     fn test_create_compound_policy() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T1);
         let admin = Address::random();
         let creator = Address::random();
         StorageCtx::enter(&mut storage, || {
@@ -947,50 +914,20 @@ mod tests {
             )?;
 
             // Alice can send (is in sender whitelist)
-            assert!(
-                registry.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
-                    policyId: compound_id,
-                    user: alice,
-                })?
-            );
+            assert!(registry.is_authorized_as(compound_id, alice, AuthRole::Sender)?);
 
             // Bob cannot send (not in sender whitelist)
-            assert!(
-                !registry.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
-                    policyId: compound_id,
-                    user: bob,
-                })?
-            );
+            assert!(!registry.is_authorized_as(compound_id, bob, AuthRole::Sender)?);
 
             // Bob can receive (is in recipient whitelist)
-            assert!(registry.is_authorized_recipient(
-                ITIP403Registry::isAuthorizedRecipientCall {
-                    policyId: compound_id,
-                    user: bob,
-                }
-            )?);
+            assert!(registry.is_authorized_as(compound_id, bob, AuthRole::Recipient)?);
 
             // Alice cannot receive (not in recipient whitelist)
-            assert!(!registry.is_authorized_recipient(
-                ITIP403Registry::isAuthorizedRecipientCall {
-                    policyId: compound_id,
-                    user: alice,
-                }
-            )?);
+            assert!(!registry.is_authorized_as(compound_id, alice, AuthRole::Recipient)?);
 
             // Anyone can receive mints (mintRecipientPolicyId = 1 = always-allow)
-            assert!(registry.is_authorized_mint_recipient(
-                ITIP403Registry::isAuthorizedMintRecipientCall {
-                    policyId: compound_id,
-                    user: alice,
-                }
-            )?);
-            assert!(registry.is_authorized_mint_recipient(
-                ITIP403Registry::isAuthorizedMintRecipientCall {
-                    policyId: compound_id,
-                    user: bob,
-                }
-            )?);
+            assert!(registry.is_authorized_as(compound_id, alice, AuthRole::MintRecipient)?);
+            assert!(registry.is_authorized_as(compound_id, bob, AuthRole::MintRecipient)?);
 
             Ok(())
         })
@@ -1043,24 +980,11 @@ mod tests {
 
             // isAuthorized should be sender && recipient
             // User is sender-authorized but NOT recipient-authorized
-            assert!(
-                registry.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
-                    policyId: compound_id,
-                    user,
-                })?
-            );
-            assert!(!registry.is_authorized_recipient(
-                ITIP403Registry::isAuthorizedRecipientCall {
-                    policyId: compound_id,
-                    user,
-                }
-            )?);
+            assert!(registry.is_authorized_as(compound_id, user, AuthRole::Sender)?);
+            assert!(!registry.is_authorized_as(compound_id, user, AuthRole::Recipient)?);
 
             // isAuthorized = sender && recipient = true && false = false
-            assert!(!registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: compound_id,
-                user,
-            })?);
+            assert!(!registry.is_authorized_as(compound_id, user, AuthRole::Transfer)?);
 
             // Now add user to recipient whitelist
             registry.modify_policy_whitelist(
@@ -1073,10 +997,7 @@ mod tests {
             )?;
 
             // Now isAuthorized = sender && recipient = true && true = true
-            assert!(registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: compound_id,
-                user,
-            })?);
+            assert!(registry.is_authorized_as(compound_id, user, AuthRole::Transfer)?);
 
             Ok(())
         })
@@ -1108,26 +1029,11 @@ mod tests {
             )?;
 
             // For simple policies, all four authorization functions should return the same result
-            let is_authorized = registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: policy_id,
-                user,
-            })?;
-            let is_sender =
-                registry.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
-                    policyId: policy_id,
-                    user,
-                })?;
-            let is_recipient =
-                registry.is_authorized_recipient(ITIP403Registry::isAuthorizedRecipientCall {
-                    policyId: policy_id,
-                    user,
-                })?;
-            let is_mint_recipient = registry.is_authorized_mint_recipient(
-                ITIP403Registry::isAuthorizedMintRecipientCall {
-                    policyId: policy_id,
-                    user,
-                },
-            )?;
+            let is_authorized = registry.is_authorized_as(policy_id, user, AuthRole::Transfer)?;
+            let is_sender = registry.is_authorized_as(policy_id, user, AuthRole::Sender)?;
+            let is_recipient = registry.is_authorized_as(policy_id, user, AuthRole::Recipient)?;
+            let is_mint_recipient =
+                registry.is_authorized_as(policy_id, user, AuthRole::MintRecipient)?;
 
             assert!(is_authorized);
             assert_eq!(is_authorized, is_sender);
@@ -1160,34 +1066,16 @@ mod tests {
             )?;
 
             // Anyone can send (policy 1 = always-allow)
-            assert!(
-                registry.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
-                    policyId: compound_id,
-                    user,
-                })?
-            );
+            assert!(registry.is_authorized_as(compound_id, user, AuthRole::Sender)?);
 
             // No one can receive transfers (policy 0 = always-reject)
-            assert!(!registry.is_authorized_recipient(
-                ITIP403Registry::isAuthorizedRecipientCall {
-                    policyId: compound_id,
-                    user,
-                }
-            )?);
+            assert!(!registry.is_authorized_as(compound_id, user, AuthRole::Recipient)?);
 
             // Anyone can receive mints (policy 1 = always-allow)
-            assert!(registry.is_authorized_mint_recipient(
-                ITIP403Registry::isAuthorizedMintRecipientCall {
-                    policyId: compound_id,
-                    user,
-                }
-            )?);
+            assert!(registry.is_authorized_as(compound_id, user, AuthRole::MintRecipient)?);
 
             // isAuthorized = sender && recipient = true && false = false
-            assert!(!registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: compound_id,
-                user,
-            })?);
+            assert!(!registry.is_authorized_as(compound_id, user, AuthRole::Transfer)?);
 
             Ok(())
         })
@@ -1234,34 +1122,111 @@ mod tests {
             )?;
 
             // Minting: anyone can receive mints (customer gets credits)
-            assert!(registry.is_authorized_mint_recipient(
-                ITIP403Registry::isAuthorizedMintRecipientCall {
-                    policyId: compound_id,
-                    user: customer,
-                }
-            )?);
+            assert!(registry.is_authorized_as(compound_id, customer, AuthRole::MintRecipient)?);
 
             // Transfer: customer can send
-            assert!(
-                registry.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
-                    policyId: compound_id,
-                    user: customer,
-                })?
-            );
+            assert!(registry.is_authorized_as(compound_id, customer, AuthRole::Sender)?);
 
             // Transfer: only vendor can receive
-            assert!(registry.is_authorized_recipient(
-                ITIP403Registry::isAuthorizedRecipientCall {
-                    policyId: compound_id,
-                    user: vendor,
-                }
-            )?);
-            assert!(!registry.is_authorized_recipient(
-                ITIP403Registry::isAuthorizedRecipientCall {
-                    policyId: compound_id,
-                    user: customer, // customer cannot receive transfers (no P2P)
-                }
-            )?);
+            assert!(registry.is_authorized_as(compound_id, vendor, AuthRole::Recipient)?);
+            // customer cannot receive transfers (no P2P)
+            assert!(!registry.is_authorized_as(compound_id, customer, AuthRole::Recipient)?);
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_policy_data_rejects_compound_policy_on_pre_t1() -> eyre::Result<()> {
+        let creator = Address::random();
+
+        // First, create a compound policy on T1
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T1);
+        let compound_id = StorageCtx::enter(&mut storage, || {
+            let mut registry = TIP403Registry::new();
+            registry.create_compound_policy(
+                creator,
+                ITIP403Registry::createCompoundPolicyCall {
+                    senderPolicyId: 1,
+                    recipientPolicyId: 1,
+                    mintRecipientPolicyId: 1,
+                },
+            )
+        })?;
+
+        // Now downgrade to T0 and try to read the compound policy data
+        let mut storage = storage.with_spec(TempoHardfork::T0);
+        StorageCtx::enter(&mut storage, || {
+            let registry = TIP403Registry::new();
+
+            let result = registry.policy_data(ITIP403Registry::policyDataCall {
+                policyId: compound_id,
+            });
+            assert!(result.is_err());
+            assert_eq!(result.unwrap_err(), TempoPrecompileError::under_overflow());
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_create_policy_rejects_non_simple_policy_types() -> eyre::Result<()> {
+        let admin = Address::random();
+
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T1);
+        StorageCtx::enter(&mut storage, || {
+            let mut registry = TIP403Registry::new();
+
+            for policy_type in [
+                ITIP403Registry::PolicyType::COMPOUND,
+                ITIP403Registry::PolicyType::__Invalid,
+            ] {
+                let result = registry.create_policy(
+                    admin,
+                    ITIP403Registry::createPolicyCall {
+                        admin,
+                        policyType: policy_type,
+                    },
+                );
+                assert!(matches!(
+                    result.unwrap_err(),
+                    TempoPrecompileError::TIP403RegistryError(
+                        TIP403RegistryError::IncompatiblePolicyType(_)
+                    )
+                ));
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_create_policy_with_accounts_rejects_non_simple_policy_types() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T1);
+        let admin = Address::random();
+        let account = Address::random();
+        StorageCtx::enter(&mut storage, || {
+            let mut registry = TIP403Registry::new();
+
+            for policy_type in [
+                ITIP403Registry::PolicyType::COMPOUND,
+                ITIP403Registry::PolicyType::__Invalid,
+            ] {
+                let result = registry.create_policy_with_accounts(
+                    admin,
+                    ITIP403Registry::createPolicyWithAccountsCall {
+                        admin,
+                        policyType: policy_type,
+                        accounts: vec![account],
+                    },
+                );
+                assert!(matches!(
+                    result.unwrap_err(),
+                    TempoPrecompileError::TIP403RegistryError(
+                        TIP403RegistryError::IncompatiblePolicyType(_)
+                    )
+                ));
+            }
 
             Ok(())
         })

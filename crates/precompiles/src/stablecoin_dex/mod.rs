@@ -19,7 +19,7 @@ use crate::{
     storage::{Handler, Mapping},
     tip20::{ITIP20, TIP20Token, is_tip20_prefix, validate_usd_currency},
     tip20_factory::TIP20Factory,
-    tip403_registry::{ITIP403Registry, TIP403Registry},
+    tip403_registry::{AuthRole, TIP403Registry},
 };
 use alloy::primitives::{Address, B256, U256};
 use tempo_precompiles_macros::contract;
@@ -1060,24 +1060,16 @@ impl StablecoinDEX {
             book.base
         };
 
-        let token_contract = TIP20Token::from_address(token)?;
-        let policy_id = token_contract.transfer_policy_id()?;
+        let policy_id = TIP20Token::from_address(token)?.transfer_policy_id()?;
 
-        let registry = TIP403Registry::new();
-        // TIP-1015: Use isAuthorizedSender for T1+, isAuthorized for pre-T1
-        let is_authorized = if self.storage.spec().is_t1() {
-            registry.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
-                policyId: policy_id,
-                user: order.maker(),
-            })?
+        // TIP-1015: Use `isAuthorizedSender` for T1+, `isAuthorized` for pre-T1
+        let role = if self.storage.spec().is_t1() {
+            AuthRole::Sender
         } else {
-            registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: policy_id,
-                user: order.maker(),
-            })?
+            AuthRole::Transfer
         };
 
-        if is_authorized {
+        if TIP403Registry::new().is_authorized_as(policy_id, order.maker(), role)? {
             return Err(StablecoinDEXError::order_not_stale().into());
         }
 
@@ -3819,10 +3811,7 @@ mod tests {
                     restricted: true,
                 },
             )?;
-            assert!(!registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: policy_id,
-                user: alice,
-            })?);
+            assert!(!registry.is_authorized_as(policy_id, alice, AuthRole::Transfer)?);
 
             // Attempt to place order using internal balance - should fail
             let tick = 0i16;

@@ -14,7 +14,7 @@ use crate::{
     storage::{Handler, Mapping},
     tip20::{rewards::UserRewardInfo, roles::DEFAULT_ADMIN_ROLE},
     tip20_factory::TIP20Factory,
-    tip403_registry::{ITIP403Registry, TIP403Registry},
+    tip403_registry::{AuthRole, ITIP403Registry, TIP403Registry},
 };
 use alloy::{
     hex,
@@ -340,23 +340,14 @@ impl TIP20Token {
         let total_supply = self.total_supply()?;
 
         // Check if the `to` address is authorized to receive minted tokens
-        // TIP-1015: Use isAuthorizedMintRecipient for T1+, isAuthorized for pre-T1
-        let registry = TIP403Registry::new();
+        // TIP-1015: Use `isAuthorizedMintRecipient` for T1+, `isAuthorized` for pre-T1
         let policy_id = self.transfer_policy_id()?;
-        let is_authorized = if self.storage.spec().is_t1() {
-            registry.is_authorized_mint_recipient(
-                ITIP403Registry::isAuthorizedMintRecipientCall {
-                    policyId: policy_id,
-                    user: to,
-                },
-            )?
+        let role = if self.storage.spec().is_t1() {
+            AuthRole::MintRecipient
         } else {
-            registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: policy_id,
-                user: to,
-            })?
+            AuthRole::Transfer
         };
-        if !is_authorized {
+        if !TIP403Registry::new().is_authorized_as(policy_id, to, role)? {
             return Err(TIP20Error::policy_forbids().into());
         }
 
@@ -428,21 +419,14 @@ impl TIP20Token {
         }
 
         // Check if the address is blocked from transferring (sender authorization)
-        // TIP-1015: Use isAuthorizedSender for T1+, isAuthorized for pre-T1
-        let registry = TIP403Registry::new();
+        // TIP-1015: Use `isAuthorizedSender` for T1+, `isAuthorized` for pre-T1
         let policy_id = self.transfer_policy_id()?;
-        let is_authorized = if self.storage.spec().is_t1() {
-            registry.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
-                policyId: policy_id,
-                user: call.from,
-            })?
+        let role = if self.storage.spec().is_t1() {
+            AuthRole::Sender
         } else {
-            registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: policy_id,
-                user: call.from,
-            })?
+            AuthRole::Transfer
         };
-        if is_authorized {
+        if TIP403Registry::new().is_authorized_as(policy_id, call.from, role)? {
             // Only allow burning from addresses that are blocked from transferring
             return Err(TIP20Error::policy_forbids().into());
         }
@@ -703,38 +687,21 @@ impl TIP20Token {
     }
 
     /// Checks if the transfer is authorized.
-    /// TIP-1015: For T1+, uses isAuthorizedSender/isAuthorizedRecipient for directional checks
+    /// TIP-1015: For T1+, uses directional sender/recipient checks.
     pub fn is_transfer_authorized(&self, from: Address, to: Address) -> Result<bool> {
-        let transfer_policy_id = self.transfer_policy_id()?;
+        let policy_id = self.transfer_policy_id()?;
         let registry = TIP403Registry::new();
 
-        let (from_authorized, to_authorized) = if self.storage.spec().is_t1() {
-            // TIP-1015: Use directional authorization checks
-            let from_auth =
-                registry.is_authorized_sender(ITIP403Registry::isAuthorizedSenderCall {
-                    policyId: transfer_policy_id,
-                    user: from,
-                })?;
-            let to_auth =
-                registry.is_authorized_recipient(ITIP403Registry::isAuthorizedRecipientCall {
-                    policyId: transfer_policy_id,
-                    user: to,
-                })?;
-            (from_auth, to_auth)
+        let (from_role, to_role) = if self.storage.spec().is_t1() {
+            (AuthRole::Sender, AuthRole::Recipient)
         } else {
-            // Pre-T1: Use symmetric authorization
-            let from_auth = registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: transfer_policy_id,
-                user: from,
-            })?;
-            let to_auth = registry.is_authorized(ITIP403Registry::isAuthorizedCall {
-                policyId: transfer_policy_id,
-                user: to,
-            })?;
-            (from_auth, to_auth)
+            (AuthRole::Transfer, AuthRole::Transfer)
         };
 
-        Ok(from_authorized && to_authorized)
+        if !registry.is_authorized_as(policy_id, from, from_role)? {
+            return Ok(false);
+        }
+        registry.is_authorized_as(policy_id, to, to_role)
     }
 
     /// Ensures the transfer is authorized.
