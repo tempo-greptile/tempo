@@ -887,6 +887,10 @@ contract StablecoinDEXTest is BaseTest {
 
     // Test price conversion validates bounds and reverts for out-of-range prices
     function testFuzz_PriceToTick_Conversion(uint32 price) public view {
+        // Bound price to valid int32 range to avoid overflow in expectedTick calculation
+        // MAX_PRICE is much smaller than int32.max so this is the relevant bound
+        vm.assume(price <= uint32(type(int32).max));
+
         int16 expectedTick = int16(int32(price) - int32(exchange.PRICE_SCALE()));
 
         if (price < exchange.MIN_PRICE() || price > exchange.MAX_PRICE()) {
