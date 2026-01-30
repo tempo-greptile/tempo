@@ -26,10 +26,6 @@ abstract contract GhostState {
     mapping(bytes32 => address) public ghost_createAddresses;
     mapping(address => uint256) public ghost_createCount;
 
-    // ============ Fee Tracking ============
-
-    mapping(address => uint256) public ghost_feeTokenBalance;
-
     // ============ CREATE Rejection Tracking ============
 
     uint256 public ghost_createRejectedStructure; // C1, C2, C3, C4 rejections
@@ -285,6 +281,18 @@ abstract contract GhostState {
     function _recordGasTrackingKeyAuth() internal {
         ghost_gasTrackingKeyAuth++;
         ghost_totalGasTracked++;
+    }
+
+    // ============ Expected Rejection Recording Functions ============
+
+    /// @notice Record key wrong signer rejection (K1, K7, K8)
+    function _recordKeyWrongSigner() internal {
+        ghost_keyAuthRejectedWrongSigner++;
+    }
+
+    /// @notice Record key zero limit rejection (K12)
+    function _recordKeyZeroLimit() internal {
+        ghost_keyZeroLimitRejected++;
     }
 
 }
