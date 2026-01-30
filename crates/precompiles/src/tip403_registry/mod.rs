@@ -498,7 +498,7 @@ impl TIP403Registry {
 
         // Check if policy exists
         if policy_id >= self.policy_id_counter()? {
-            return Err(TIP403RegistryError::policy_does_not_exist().into());
+            return Err(TIP403RegistryError::policy_not_found().into());
         }
 
         // Check if policy is simple (not compound)
