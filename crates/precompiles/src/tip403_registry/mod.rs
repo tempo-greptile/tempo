@@ -166,13 +166,12 @@ impl TIP403Registry {
         msg_sender: Address,
         call: ITIP403Registry::createPolicyCall,
     ) -> Result<u64> {
-        if self.storage.spec().is_t1()
-            && matches!(
-                call.policyType,
-                ITIP403Registry::PolicyType::COMPOUND | ITIP403Registry::PolicyType::__Invalid
-            )
-        {
-            // COMPOUND policies are created via createCompoundPolicy
+        // COMPOUND policies must be created via createCompoundPolicy (T1+)
+        // Reject COMPOUND and __Invalid unconditionally - hardfork independent
+        if matches!(
+            call.policyType,
+            ITIP403Registry::PolicyType::COMPOUND | ITIP403Registry::PolicyType::__Invalid
+        ) {
             return Err(TIP403RegistryError::incompatible_policy_type().into());
         }
 
@@ -216,6 +215,15 @@ impl TIP403Registry {
         msg_sender: Address,
         call: ITIP403Registry::createPolicyWithAccountsCall,
     ) -> Result<u64> {
+        // COMPOUND policies must be created via createCompoundPolicy (T1+)
+        // Reject COMPOUND and __Invalid unconditionally - hardfork independent
+        if matches!(
+            call.policyType,
+            ITIP403Registry::PolicyType::COMPOUND | ITIP403Registry::PolicyType::__Invalid
+        ) {
+            return Err(TIP403RegistryError::incompatible_policy_type().into());
+        }
+
         let (admin, policy_type) = (call.admin, call.policyType);
         let new_policy_id = self.policy_id_counter()?;
 
