@@ -41,7 +41,7 @@ crate::sol! {
         // Errors
         error Unauthorized();
         error IncompatiblePolicyType();
-        error PolicyNotFound(uint64 policyId);
+        error PolicyNotFound();
         error PolicyNotSimple();
     }
 }
@@ -58,10 +58,8 @@ impl TIP403RegistryError {
     }
 
     /// Creates an error for non-existent policy
-    pub const fn policy_not_found(policy_id: u64) -> Self {
-        Self::PolicyNotFound(ITIP403Registry::PolicyNotFound {
-            policyId: policy_id,
-        })
+    pub const fn policy_not_found() -> Self {
+        Self::PolicyNotFound(ITIP403Registry::PolicyNotFound {})
     }
 
     pub const fn policy_not_simple() -> Self {
