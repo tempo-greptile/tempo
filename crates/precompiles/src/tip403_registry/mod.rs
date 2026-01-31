@@ -269,7 +269,7 @@ impl TIP403Registry {
                 }
                 ITIP403Registry::PolicyType::COMPOUND | ITIP403Registry::PolicyType::__Invalid => {
                     // Pre-T1: no events emitted for invalid types, accounts still added
-                    // T1+: unreachable since validate_policy_type already rejected
+                    // T1+: unreachable since validate_simple_policy_type already rejected
                     return Err(TIP403RegistryError::incompatible_policy_type().into());
                 }
             }
@@ -848,7 +848,7 @@ mod tests {
 
     #[test]
     fn test_compound_policy_rejects_non_existent_refs() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T1);
         let creator = Address::random();
         StorageCtx::enter(&mut storage, || {
             let mut registry = TIP403Registry::new();
@@ -870,7 +870,7 @@ mod tests {
 
     #[test]
     fn test_compound_policy_rejects_compound_refs() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T1);
         let admin = Address::random();
         let creator = Address::random();
         StorageCtx::enter(&mut storage, || {
@@ -912,7 +912,7 @@ mod tests {
 
     #[test]
     fn test_compound_policy_sender_recipient_differentiation() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T1);
         let admin = Address::random();
         let creator = Address::random();
         let alice = Address::random();
@@ -986,7 +986,7 @@ mod tests {
 
     #[test]
     fn test_compound_policy_is_authorized_behavior() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T1);
         let admin = Address::random();
         let creator = Address::random();
         let user = Address::random();
@@ -1056,7 +1056,7 @@ mod tests {
 
     #[test]
     fn test_simple_policy_equivalence() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T1);
         let admin = Address::random();
         let user = Address::random();
         StorageCtx::enter(&mut storage, || {
@@ -1097,7 +1097,7 @@ mod tests {
 
     #[test]
     fn test_compound_policy_with_builtin_policies() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T1);
         let creator = Address::random();
         let user = Address::random();
         StorageCtx::enter(&mut storage, || {
@@ -1134,7 +1134,7 @@ mod tests {
 
     #[test]
     fn test_vendor_credits_use_case() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T1);
         let admin = Address::random();
         let creator = Address::random();
         let vendor = Address::random();
