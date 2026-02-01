@@ -15,6 +15,8 @@ pub struct HashMapStorageProvider {
     beneficiary: Address,
     spec: TempoHardfork,
     is_static: bool,
+    /// Counter for SLOAD operations (for gas regression tests)
+    sload_count: u64,
 }
 
 impl HashMapStorageProvider {
@@ -39,6 +41,7 @@ impl HashMapStorageProvider {
             beneficiary: Address::ZERO,
             spec,
             is_static: false,
+            sload_count: 0,
         }
     }
 
@@ -104,6 +107,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256, TempoPrecompileError> {
+        self.sload_count += 1;
         Ok(self
             .internals
             .get(&(address, key))
@@ -182,5 +186,15 @@ impl HashMapStorageProvider {
             .entry(address)
             .and_modify(|v| v.clear())
             .or_default();
+    }
+
+    /// Returns the number of SLOAD operations performed since creation or last reset.
+    pub fn sload_count(&self) -> u64 {
+        self.sload_count
+    }
+
+    /// Resets the SLOAD counter to zero.
+    pub fn reset_sload_count(&mut self) {
+        self.sload_count = 0;
     }
 }

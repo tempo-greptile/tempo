@@ -1768,4 +1768,131 @@ mod tests {
 
         Ok(())
     }
+
+    /// Regression test for gas accounting in is_authorized_as.
+    ///
+    /// This test emulates the transaction pattern that caused the 200 gas mismatch
+    /// in block 2875744 on moderato. The authorization check for a simple policy
+    /// (whitelist/blacklist) should perform exactly 2 SLOADs:
+    /// 1. policy_data[policy_id] - to read PolicyData
+    /// 2. policy_set[policy_id][user] - to check if user is in set
+    ///
+    /// If this test fails, it indicates a storage access pattern change that could
+    /// break historical block re-execution.
+    #[test]
+    fn test_is_authorized_gas_regression() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T0);
+        let admin = Address::random();
+        let fee_payer = Address::random();
+
+        // Setup: create a blacklist policy and add the fee_payer to it
+        let policy_id = StorageCtx::enter(&mut storage, || {
+            let mut registry = TIP403Registry::new();
+
+            // Create blacklist policy (type 1)
+            let policy_id = registry.create_policy(
+                admin,
+                ITIP403Registry::createPolicyCall {
+                    admin,
+                    policyType: ITIP403Registry::PolicyType::BLACKLIST,
+                },
+            )?;
+
+            Ok::<_, TempoPrecompileError>(policy_id)
+        })?;
+
+        // Reset SLOAD counter to measure only the authorization check
+        storage.reset_sload_count();
+
+        // Perform authorization check (emulating can_fee_payer_transfer)
+        let is_authorized = StorageCtx::enter(&mut storage, || {
+            let registry = TIP403Registry::new();
+            // This is what common.rs calls for pre-T1 authorization
+            registry.is_authorized_as(policy_id, fee_payer, AuthRole::Transfer)
+        })?;
+
+        // Fee payer is not in blacklist, so should be authorized
+        assert!(is_authorized);
+
+        // CRITICAL: Assert exact SLOAD count for gas stability
+        // 2 SLOADs: policy_data[id] + policy_set[id][user]
+        let sload_count = storage.sload_count();
+        assert_eq!(
+            sload_count, 2,
+            "is_authorized_as for simple policy should perform exactly 2 SLOADs, got {}. \
+             This indicates a storage access pattern change that will break historical block re-execution.",
+            sload_count
+        );
+
+        Ok(())
+    }
+
+    /// Test SLOAD count for whitelist policy authorization (user in whitelist)
+    #[test]
+    fn test_is_authorized_whitelist_gas_regression() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T0);
+        let admin = Address::random();
+        let user = Address::random();
+
+        // Setup: create whitelist policy and add user to it
+        let policy_id = StorageCtx::enter(&mut storage, || {
+            let mut registry = TIP403Registry::new();
+
+            let policy_id = registry.create_policy_with_accounts(
+                admin,
+                ITIP403Registry::createPolicyWithAccountsCall {
+                    admin,
+                    policyType: ITIP403Registry::PolicyType::WHITELIST,
+                    accounts: vec![user],
+                },
+            )?;
+
+            Ok::<_, TempoPrecompileError>(policy_id)
+        })?;
+
+        storage.reset_sload_count();
+
+        let is_authorized = StorageCtx::enter(&mut storage, || {
+            let registry = TIP403Registry::new();
+            registry.is_authorized_as(policy_id, user, AuthRole::Transfer)
+        })?;
+
+        assert!(is_authorized, "User should be whitelisted");
+        assert_eq!(
+            storage.sload_count(),
+            2,
+            "Whitelist auth should perform exactly 2 SLOADs"
+        );
+
+        Ok(())
+    }
+
+    /// Test that builtin policies (0, 1) perform 0 SLOADs
+    #[test]
+    fn test_builtin_policy_no_sloads() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T0);
+        let user = Address::random();
+
+        storage.reset_sload_count();
+
+        StorageCtx::enter(&mut storage, || {
+            let registry = TIP403Registry::new();
+
+            // Policy 0 (always-reject) should not SLOAD
+            let _ = registry.is_authorized_as(0, user, AuthRole::Transfer)?;
+
+            // Policy 1 (always-allow) should not SLOAD
+            let _ = registry.is_authorized_as(1, user, AuthRole::Transfer)?;
+
+            Ok::<_, TempoPrecompileError>(())
+        })?;
+
+        assert_eq!(
+            storage.sload_count(),
+            0,
+            "Builtin policies should perform 0 SLOADs"
+        );
+
+        Ok(())
+    }
 }
