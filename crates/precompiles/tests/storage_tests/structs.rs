@@ -382,6 +382,133 @@ mod nested_struct_sload_tests {
         
         // Both layouts have identical slot assignments!
         // This is because Mapping<K, V>::SLOTS = 1 regardless of V's size
+        
+    }
+
+    /// Test that the actual slot read for `.base` is identical to the flat read
+    /// by using the Slot API directly
+    #[test]
+    fn test_nested_base_reads_same_slot_as_flat() {
+        use tempo_precompiles::storage::{Slot, StorableType, StorageKey};
+
+        let (mut storage, address) = setup_storage();
+        let policy_id: u64 = 42;
+
+        // Both layouts have policy_data/policy_records at slot 1
+        let mapping_base_slot = U256::from(1);
+        let entry_slot = policy_id.mapping_slot(mapping_base_slot);
+
+        println!("Mapping base slot: {}", mapping_base_slot);
+        println!("Entry slot for policy_id={}: {:x}", policy_id, entry_slot);
+
+        // Write BaseData to the slot
+        StorageCtx::enter(&mut storage, || {
+            let mut slot = Slot::<BaseData>::new(entry_slot, address);
+            slot.write(BaseData {
+                policy_type: 1,
+                admin: test_address(0x42),
+            }).unwrap();
+        });
+
+        storage.reset_sload_count();
+
+        // Read as BaseData (flat layout style)
+        let flat_data = StorageCtx::enter(&mut storage, || {
+            let slot = Slot::<BaseData>::new(entry_slot, address);
+            slot.read()
+        }).unwrap();
+
+        let flat_sloads = storage.sload_count();
+
+        storage.reset_sload_count();
+
+        // Read as NestedRecord.base (nested layout style)
+        // The handler for NestedRecord at entry_slot should have .base at offset 0
+        let nested_data = StorageCtx::enter(&mut storage, || {
+            let handler = <NestedRecord as StorableType>::handle(entry_slot, LayoutCtx::FULL, address);
+            handler.base.read()
+        }).unwrap();
+
+        let nested_sloads = storage.sload_count();
+
+        // Both should read the same data
+        assert_eq!(flat_data.policy_type, nested_data.policy_type, "policy_type should match");
+        assert_eq!(flat_data.admin, nested_data.admin, "admin should match");
+
+        // Both should perform 1 SLOAD
+        assert_eq!(flat_sloads, 1, "Flat layout should perform 1 SLOAD");
+        assert_eq!(nested_sloads, 1, "Nested layout .base should perform 1 SLOAD");
+
+        println!("Flat data: {:?}", flat_data);
+        println!("Nested data: {:?}", nested_data);
+        println!("Flat SLOADs: {}, Nested SLOADs: {}", flat_sloads, nested_sloads);
+    }
+
+    /// This test mimics the EXACT scenario in the gas regression:
+    /// - Write data using "main" layout (flat Mapping<u64, PolicyData>)
+    /// - Read using "TIP-1015" layout (nested Mapping<u64, PolicyRecord>)
+    /// - Verify both access the SAME slot
+    #[test]
+    fn test_exact_tip1015_gas_regression_scenario() {
+        use tempo_precompiles::storage::{Slot, StorableType, StorageKey};
+
+        let (mut storage, address) = setup_storage();
+        let policy_id: u64 = 42;
+        let user = test_address(0xAB);
+
+        // Slot calculations matching actual TIP403Registry layout:
+        // - policy_id_counter: slot 0
+        // - policy_data/policy_records: slot 1
+        // - policy_set: slot 2
+        let policy_data_base = U256::from(1);
+        let policy_set_base = U256::from(2);
+
+        let policy_data_slot = policy_id.mapping_slot(policy_data_base);
+        let policy_set_inner_slot = policy_id.mapping_slot(policy_set_base);
+        let policy_set_user_slot = user.mapping_slot(policy_set_inner_slot);
+
+        println!("policy_data_base: {}", policy_data_base);
+        println!("policy_set_base: {}", policy_set_base);
+        println!("policy_data_slot for policy_id={}: {:x}", policy_id, policy_data_slot);
+        println!("policy_set[{}][{}] slot: {:x}", policy_id, user, policy_set_user_slot);
+
+        // Simulate main: write PolicyData to slot
+        StorageCtx::enter(&mut storage, || {
+            let mut slot = Slot::<BaseData>::new(policy_data_slot, address);
+            slot.write(BaseData {
+                policy_type: 1, // BLACKLIST
+                admin: test_address(0x42),
+            }).unwrap();
+
+            // Also write policy_set[policy_id][user] = true (in blacklist)
+            let mut set_slot = Slot::<bool>::new(policy_set_user_slot, address);
+            set_slot.write(true).unwrap();
+        });
+
+        // Now simulate TIP-1015 is_authorized_as reading
+        storage.reset_sload_count();
+
+        let (policy_type, is_in_set) = StorageCtx::enter(&mut storage, || {
+            // Read policy data using nested struct handler (TIP-1015 style)
+            let handler = <NestedRecord as StorableType>::handle(policy_data_slot, LayoutCtx::FULL, address);
+            let base_data = handler.base.read().unwrap();
+
+            // Read policy_set
+            let set_slot = Slot::<bool>::new(policy_set_user_slot, address);
+            let in_set = set_slot.read().unwrap();
+
+            (base_data.policy_type, in_set)
+        });
+
+        let sload_count = storage.sload_count();
+
+        println!("policy_type: {}", policy_type);
+        println!("is_in_set: {}", is_in_set);
+        println!("SLOAD count: {}", sload_count);
+
+        assert_eq!(policy_type, 1, "Should read policy_type = 1 (BLACKLIST)");
+        assert!(is_in_set, "User should be in the set");
+        assert_eq!(sload_count, 2, "Should perform exactly 2 SLOADs (policy_data + policy_set)");
     }
 
     /// Test that the actual keccak hash for mapping lookups is identical
