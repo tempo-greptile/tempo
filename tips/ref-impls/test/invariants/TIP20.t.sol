@@ -45,6 +45,36 @@ contract TIP20InvariantTest is InvariantBaseTest {
         }
     }
 
+    /// @dev Override _ensureFunds to track mints for supply conservation
+    function _ensureFunds(address actor, TIP20 token, uint256 amount) internal override {
+        if (token.balanceOf(actor) >= amount) return;
+
+        uint256 mintAmount = amount + 100_000_000;
+
+        // Check supply cap before minting
+        uint256 currentSupply = token.totalSupply();
+        uint256 supplyCap = token.supplyCap();
+        uint256 remaining = supplyCap > currentSupply ? supplyCap - currentSupply : 0;
+
+        // If not enough room, try to increase supply cap first
+        if (remaining < mintAmount) {
+            vm.prank(admin);
+            try token.setSupplyCap(supplyCap + mintAmount + 1_000_000) {
+                remaining = mintAmount + 1_000_000;
+            } catch {
+                // Can't increase cap, mint what we can
+                if (remaining == 0) return;
+                mintAmount = remaining;
+            }
+        }
+
+        vm.startPrank(admin);
+        try token.mint(actor, mintAmount) {
+            _tokenMintSum[address(token)] += mintAmount;
+        } catch { }
+        vm.stopPrank();
+    }
+
     /// @notice Sets up the test environment
     function setUp() public override {
         super.setUp();
@@ -113,16 +143,23 @@ contract TIP20InvariantTest is InvariantBaseTest {
     {
         TIP20 token = _selectBaseToken(tokenSeed);
         address actor = _selectAuthorizedActor(actorSeed, address(token));
+
         address recipient = _selectActorExcluding(recipientSeed, actor);
 
+        // Prerequisite: ensure actor has funds
         uint256 actorBalance = token.balanceOf(actor);
-        vm.assume(actorBalance > 0);
+        if (actorBalance == 0) {
+            _ensureFunds(actor, token, 1000);
+            actorBalance = token.balanceOf(actor);
+            if (actorBalance == 0) return; // Mint failed, skip
+        }
 
         amount = bound(amount, 1, actorBalance);
 
-        vm.assume(_isAuthorized(address(token), actor));
-        vm.assume(_isAuthorized(address(token), recipient));
-        vm.assume(!token.paused());
+        // Prerequisite: ensure parties are authorized and unpaused
+        if (!_ensureAuthorized(address(token), actor)) return;
+        if (!_ensureAuthorized(address(token), recipient)) return;
+        if (!_ensureUnpaused(token)) return;
 
         uint256 recipientBalanceBefore = token.balanceOf(recipient);
         uint256 totalSupplyBefore = token.totalSupply();
@@ -178,11 +215,13 @@ contract TIP20InvariantTest is InvariantBaseTest {
     {
         TIP20 token = _selectBaseToken(tokenSeed);
         address actor = _selectAuthorizedActor(actorSeed, address(token));
+
         address recipient = _selectActorExcluding(recipientSeed, actor);
 
-        vm.assume(_isAuthorized(address(token), actor));
-        vm.assume(_isAuthorized(address(token), recipient));
-        vm.assume(!token.paused());
+        // Prerequisite: ensure parties are authorized and unpaused
+        if (!_ensureAuthorized(address(token), actor)) return;
+        if (!_ensureAuthorized(address(token), recipient)) return;
+        if (!_ensureUnpaused(token)) return;
 
         uint256 actorBalanceBefore = token.balanceOf(actor);
         uint256 recipientBalanceBefore = token.balanceOf(recipient);
@@ -237,20 +276,32 @@ contract TIP20InvariantTest is InvariantBaseTest {
     ) external {
         TIP20 token = _selectBaseToken(tokenSeed);
         address owner = _selectAuthorizedActor(ownerSeed, address(token));
+
         address spender = _selectActorExcluding(actorSeed, owner);
         address recipient = _selectActorExcluding(recipientSeed, owner);
 
+        // Prerequisite: ensure owner has funds
         uint256 ownerBalance = token.balanceOf(owner);
-        vm.assume(ownerBalance > 0);
+        if (ownerBalance == 0) {
+            _ensureFunds(owner, token, 1000);
+            ownerBalance = token.balanceOf(owner);
+            if (ownerBalance == 0) return; // Mint failed, skip
+        }
 
+        // Prerequisite: ensure allowance exists
         uint256 allowance = token.allowance(owner, spender);
-        vm.assume(allowance > 0);
+        if (allowance == 0) {
+            vm.prank(owner);
+            token.approve(spender, type(uint256).max);
+            allowance = type(uint256).max;
+        }
 
         amount = bound(amount, 1, ownerBalance < allowance ? ownerBalance : allowance);
 
-        vm.assume(_isAuthorized(address(token), owner));
-        vm.assume(_isAuthorized(address(token), recipient));
-        vm.assume(!token.paused());
+        // Prerequisite: ensure parties are authorized
+        if (!_ensureAuthorized(address(token), owner)) return;
+        if (!_ensureAuthorized(address(token), recipient)) return;
+        if (!_ensureUnpaused(token)) return;
 
         uint256 recipientBalanceBefore = token.balanceOf(recipient);
         bool isInfiniteAllowance = allowance == type(uint256).max;
@@ -358,10 +409,21 @@ contract TIP20InvariantTest is InvariantBaseTest {
         uint256 supplyCap = token.supplyCap();
         uint256 remaining = supplyCap > currentSupply ? supplyCap - currentSupply : 0;
 
-        vm.assume(remaining > 0);
+        // Prerequisite: increase supply cap if at limit
+        if (remaining == 0) {
+            vm.prank(admin);
+            try token.setSupplyCap(supplyCap + 1_000_000) {
+                supplyCap = token.supplyCap();
+                remaining = supplyCap - currentSupply;
+            } catch {
+                return; // Can't increase cap, skip
+            }
+        }
+        if (remaining == 0) return;
         amount = bound(amount, 1, remaining);
 
-        vm.assume(_isAuthorized(address(token), recipient));
+        // Prerequisite: ensure recipient is authorized
+        if (!_ensureAuthorized(address(token), recipient)) return;
 
         uint256 recipientBalanceBefore = token.balanceOf(recipient);
 
@@ -411,7 +473,24 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
 
         uint256 adminBalance = token.balanceOf(admin);
-        vm.assume(adminBalance > 0);
+
+        // Prerequisite: mint tokens to admin if they have none
+        if (adminBalance == 0) {
+            uint256 currentSupply = token.totalSupply();
+            uint256 supplyCap = token.supplyCap();
+            uint256 remaining = supplyCap > currentSupply ? supplyCap - currentSupply : 0;
+            if (remaining == 0) return; // Can't mint, skip
+            if (!_isAuthorized(address(token), admin)) return; // Admin not authorized
+
+            uint256 mintAmount = bound(amount, 1, remaining);
+            vm.prank(admin);
+            try token.mint(admin, mintAmount) {
+                _tokenMintSum[address(token)] += mintAmount;
+                adminBalance = mintAmount;
+            } catch {
+                return; // Mint failed, skip
+            }
+        }
 
         amount = bound(amount, 1, adminBalance);
 
@@ -456,16 +535,23 @@ contract TIP20InvariantTest is InvariantBaseTest {
     ) external {
         TIP20 token = _selectBaseToken(tokenSeed);
         address actor = _selectAuthorizedActor(actorSeed, address(token));
+
         address recipient = _selectActorExcluding(recipientSeed, actor);
 
+        // Prerequisite: ensure actor has funds
         uint256 actorBalance = token.balanceOf(actor);
-        vm.assume(actorBalance > 0);
+        if (actorBalance == 0) {
+            _ensureFunds(actor, token, 1000);
+            actorBalance = token.balanceOf(actor);
+            if (actorBalance == 0) return; // Mint failed, skip
+        }
 
         amount = bound(amount, 1, actorBalance);
 
-        vm.assume(_isAuthorized(address(token), actor));
-        vm.assume(_isAuthorized(address(token), recipient));
-        vm.assume(!token.paused());
+        // Prerequisite: ensure parties are authorized and unpaused
+        if (!_ensureAuthorized(address(token), actor)) return;
+        if (!_ensureAuthorized(address(token), recipient)) return;
+        if (!_ensureUnpaused(token)) return;
 
         uint256 recipientBalanceBefore = token.balanceOf(recipient);
         uint256 totalSupplyBefore = token.totalSupply();
@@ -519,20 +605,32 @@ contract TIP20InvariantTest is InvariantBaseTest {
     ) external {
         TIP20 token = _selectBaseToken(tokenSeed);
         address owner = _selectAuthorizedActor(ownerSeed, address(token));
+
         address spender = _selectActorExcluding(actorSeed, owner);
         address recipient = _selectActorExcluding(recipientSeed, owner);
 
+        // Prerequisite: ensure owner has funds
         uint256 ownerBalance = token.balanceOf(owner);
-        vm.assume(ownerBalance > 0);
+        if (ownerBalance == 0) {
+            _ensureFunds(owner, token, 1000);
+            ownerBalance = token.balanceOf(owner);
+            if (ownerBalance == 0) return; // Mint failed, skip
+        }
 
+        // Prerequisite: ensure allowance exists
         uint256 allowance = token.allowance(owner, spender);
-        vm.assume(allowance > 0);
+        if (allowance == 0) {
+            vm.prank(owner);
+            token.approve(spender, type(uint256).max);
+            allowance = type(uint256).max;
+        }
 
         amount = bound(amount, 1, ownerBalance < allowance ? ownerBalance : allowance);
 
-        vm.assume(_isAuthorized(address(token), owner));
-        vm.assume(_isAuthorized(address(token), recipient));
-        vm.assume(!token.paused());
+        // Prerequisite: ensure parties are authorized and unpaused
+        if (!_ensureAuthorized(address(token), owner)) return;
+        if (!_ensureAuthorized(address(token), recipient)) return;
+        if (!_ensureUnpaused(token)) return;
 
         uint256 recipientBalanceBefore = token.balanceOf(recipient);
         uint256 totalSupplyBefore = token.totalSupply();
@@ -613,11 +711,12 @@ contract TIP20InvariantTest is InvariantBaseTest {
             if (newRecipient == actor) newRecipient = _selectActor(recipientSeed + 1);
         }
 
-        vm.assume(_isAuthorized(address(token), actor));
+        // Prerequisite: ensure parties are authorized and unpaused
+        if (!_ensureAuthorized(address(token), actor)) return;
         if (newRecipient != address(0)) {
-            vm.assume(_isAuthorized(address(token), newRecipient));
+            if (!_ensureAuthorized(address(token), newRecipient)) return;
         }
-        vm.assume(!token.paused());
+        if (!_ensureUnpaused(token)) return;
 
         (address currentRecipient,,) = token.userRewardInfo(actor);
         uint256 actorBalance = token.balanceOf(actor);
@@ -692,16 +791,31 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
         address actor = _selectAuthorizedActor(actorSeed, address(token));
 
+        // Prerequisite: ensure actor has funds
         uint256 actorBalance = token.balanceOf(actor);
-        vm.assume(actorBalance > 0);
+        if (actorBalance == 0) {
+            _ensureFunds(actor, token, 1000);
+            actorBalance = token.balanceOf(actor);
+            if (actorBalance == 0) return; // Mint failed, skip
+        }
 
         amount = bound(amount, 1, actorBalance);
 
-        vm.assume(_isAuthorized(address(token), actor));
-        vm.assume(_isAuthorized(address(token), address(token))); // Token contract must be authorized as recipient
-        vm.assume(!token.paused());
+        // Prerequisite: ensure parties are authorized
+        if (!_ensureAuthorized(address(token), actor)) return;
+        if (!_ensureAuthorized(address(token), address(token))) return;
+        if (!_ensureUnpaused(token)) return;
 
-        vm.assume(token.optedInSupply() > 0);
+        // Prerequisite: ensure someone is opted in (with balance)
+        if (token.optedInSupply() == 0) {
+            if (token.balanceOf(actor) == 0) {
+                _ensureFunds(actor, token, 1000);
+            }
+            if (token.balanceOf(actor) == 0) return;
+            vm.prank(actor);
+            token.setRewardRecipient(actor);
+            if (token.optedInSupply() == 0) return;
+        }
 
         uint256 globalRPTBefore = token.globalRewardPerToken();
         uint256 tokenBalanceBefore = token.balanceOf(address(token));
@@ -762,20 +876,27 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
         address actor = _selectAuthorizedActor(actorSeed, address(token));
 
-        vm.assume(_isAuthorized(address(token), actor));
-        vm.assume(_isAuthorized(address(token), address(token))); // Token contract must be authorized as recipient
-        vm.assume(!token.paused());
+        // Prerequisite: ensure parties are authorized
+        if (!_ensureAuthorized(address(token), actor)) return;
+        if (!_ensureAuthorized(address(token), address(token))) return;
+        if (!_ensureUnpaused(token)) return;
 
         uint128 optedInSupply = token.optedInSupply();
-        vm.assume(optedInSupply > ACC_PRECISION); // Ensure division will result in 0
+        // This edge case requires optedInSupply > ACC_PRECISION, keep early return
+        if (optedInSupply <= ACC_PRECISION) return;
 
         // Use amount = 1 where delta = floor(1 * ACC_PRECISION / optedInSupply) = 0
         uint256 amount = 1;
         uint256 expectedDelta = (amount * ACC_PRECISION) / optedInSupply;
-        vm.assume(expectedDelta == 0); // Confirm this is indeed a zero-delta case
+        if (expectedDelta != 0) return; // Edge case specific condition
 
+        // Prerequisite: ensure actor has at least 1 token
         uint256 actorBalance = token.balanceOf(actor);
-        vm.assume(actorBalance >= amount);
+        if (actorBalance < amount) {
+            _ensureFunds(actor, token, amount);
+            actorBalance = token.balanceOf(actor);
+            if (actorBalance < amount) return; // Mint failed, skip
+        }
 
         uint256 globalRPTBefore = token.globalRewardPerToken();
 
@@ -822,15 +943,22 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
         address actor = _selectAuthorizedActor(actorSeed, address(token));
 
-        vm.assume(_isAuthorized(address(token), actor));
-        vm.assume(_isAuthorized(address(token), address(token))); // Token contract must be authorized as recipient
-        vm.assume(!token.paused());
+        // Prerequisite: ensure parties are authorized
+        if (!_ensureAuthorized(address(token), actor)) return;
+        if (!_ensureAuthorized(address(token), address(token))) return;
+        if (!_ensureUnpaused(token)) return;
 
         uint128 optedInSupply = token.optedInSupply();
-        vm.assume(optedInSupply == 0); // Only test when nobody is opted in
+        // Edge case specific: need nobody opted in, keep early return
+        if (optedInSupply != 0) return;
 
+        // Prerequisite: ensure actor has funds
         uint256 actorBalance = token.balanceOf(actor);
-        vm.assume(actorBalance >= 1000);
+        if (actorBalance < 1000) {
+            _ensureFunds(actor, token, 1000);
+            actorBalance = token.balanceOf(actor);
+            if (actorBalance < 1000) return; // Mint failed, skip
+        }
 
         vm.startPrank(actor);
         try token.distributeReward(1000) {
