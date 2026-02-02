@@ -692,3 +692,22 @@ The test suite must cover:
 34. **V1 to V2 format conversion**: Reads before init correctly convert V1 format
     (`active` bool) to V2 format (using `deletedAtHeight`)
 35. **isInitialized returns correct value**: Returns false before init, true after
+
+---
+
+# Security Issues
+
+## Gas Limits on Initialization
+
+Each validator imported during initialization requires approximately 11 SSTOREs
+(validator struct fields, array push, pubkey mapping). This places an upper bound
+on the number of validators that can be migrated in a single transaction:
+
+```
+maxValidators = min(txGasLimit, blockGasLimit) / (11 * SSTORE_COST)
+```
+
+With current gas costs (~20,000 gas per cold SSTORE), this limits migration to
+roughly `30,000,000 / (11 * 20,000) ≈ 136` validators per transaction at typical
+block gas limits. Networks with more validators may need to consider batched
+initialization or increased gas limits during the migration block.
