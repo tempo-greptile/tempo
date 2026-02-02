@@ -336,6 +336,7 @@ impl TIP20Token {
 
     /// Internal helper to mint new tokens and update balances
     fn _mint(&mut self, msg_sender: Address, to: Address, amount: U256) -> Result<()> {
+        self.check_not_paused()?;
         self.check_role(msg_sender, *ISSUER_ROLE)?;
         let total_supply = self.total_supply()?;
 
@@ -443,6 +444,7 @@ impl TIP20Token {
     }
 
     fn _burn(&mut self, msg_sender: Address, amount: U256) -> Result<()> {
+        self.check_not_paused()?;
         self.check_role(msg_sender, *ISSUER_ROLE)?;
 
         self._transfer(msg_sender, Address::ZERO, amount)?;
@@ -1128,6 +1130,104 @@ pub(crate) mod tests {
                 token.transfer_fee_pre_tx(user, fee_amount),
                 Err(TempoPrecompileError::TIP20(TIP20Error::contract_paused()))
             );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_mint_paused() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let admin = Address::random();
+        let to = Address::random();
+        let amount = U256::from(100);
+
+        StorageCtx::enter(&mut storage, || {
+            let mut token = TIP20Setup::create("Test", "TST", admin)
+                .with_issuer(admin)
+                .with_role(admin, *PAUSE_ROLE)
+                .apply()?;
+
+            token.pause(admin, ITIP20::pauseCall {})?;
+
+            assert_eq!(
+                token.mint(admin, ITIP20::mintCall { to, amount }),
+                Err(TempoPrecompileError::TIP20(TIP20Error::contract_paused()))
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_burn_paused() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let admin = Address::random();
+        let amount = U256::from(100);
+
+        StorageCtx::enter(&mut storage, || {
+            let mut token = TIP20Setup::create("Test", "TST", admin)
+                .with_issuer(admin)
+                .with_role(admin, *PAUSE_ROLE)
+                .with_mint(admin, amount)
+                .apply()?;
+
+            token.pause(admin, ITIP20::pauseCall {})?;
+
+            assert_eq!(
+                token.burn(admin, ITIP20::burnCall { amount }),
+                Err(TempoPrecompileError::TIP20(TIP20Error::contract_paused()))
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_mint_with_memo_paused() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let admin = Address::random();
+        let to = Address::random();
+        let amount = U256::from(100);
+        let memo = FixedBytes::random();
+
+        StorageCtx::enter(&mut storage, || {
+            let mut token = TIP20Setup::create("Test", "TST", admin)
+                .with_issuer(admin)
+                .with_role(admin, *PAUSE_ROLE)
+                .apply()?;
+
+            token.pause(admin, ITIP20::pauseCall {})?;
+
+            assert_eq!(
+                token.mint_with_memo(admin, ITIP20::mintWithMemoCall { to, amount, memo }),
+                Err(TempoPrecompileError::TIP20(TIP20Error::contract_paused()))
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_burn_with_memo_paused() -> eyre::Result<()> {
+        let mut storage = HashMapStorageProvider::new(1);
+        let admin = Address::random();
+        let amount = U256::from(100);
+        let memo = FixedBytes::random();
+
+        StorageCtx::enter(&mut storage, || {
+            let mut token = TIP20Setup::create("Test", "TST", admin)
+                .with_issuer(admin)
+                .with_role(admin, *PAUSE_ROLE)
+                .with_mint(admin, amount)
+                .apply()?;
+
+            token.pause(admin, ITIP20::pauseCall {})?;
+
+            assert_eq!(
+                token.burn_with_memo(admin, ITIP20::burnWithMemoCall { amount, memo }),
+                Err(TempoPrecompileError::TIP20(TIP20Error::contract_paused()))
+            );
+
             Ok(())
         })
     }

@@ -216,6 +216,60 @@ contract TIP20Test is BaseTest {
         vm.stopPrank();
     }
 
+    function testMintWhenPaused() public {
+        vm.startPrank(admin);
+        token.grantRole(_PAUSE_ROLE, admin);
+        token.pause();
+
+        try token.mint(alice, 100e18) {
+            revert CallShouldHaveReverted();
+        } catch (bytes memory err) {
+            assertEq(err, abi.encodeWithSelector(ITIP20.ContractPaused.selector));
+        }
+        vm.stopPrank();
+    }
+
+    function testBurnWhenPaused() public {
+        vm.startPrank(admin);
+        token.grantRole(_PAUSE_ROLE, admin);
+        token.mint(admin, 100e18);
+        token.pause();
+
+        try token.burn(100e18) {
+            revert CallShouldHaveReverted();
+        } catch (bytes memory err) {
+            assertEq(err, abi.encodeWithSelector(ITIP20.ContractPaused.selector));
+        }
+        vm.stopPrank();
+    }
+
+    function testMintWithMemoWhenPaused() public {
+        vm.startPrank(admin);
+        token.grantRole(_PAUSE_ROLE, admin);
+        token.pause();
+
+        try token.mintWithMemo(alice, 100e18, TEST_MEMO) {
+            revert CallShouldHaveReverted();
+        } catch (bytes memory err) {
+            assertEq(err, abi.encodeWithSelector(ITIP20.ContractPaused.selector));
+        }
+        vm.stopPrank();
+    }
+
+    function testBurnWithMemoWhenPaused() public {
+        vm.startPrank(admin);
+        token.grantRole(_PAUSE_ROLE, admin);
+        token.mint(admin, 100e18);
+        token.pause();
+
+        try token.burnWithMemo(100e18, TEST_MEMO) {
+            revert CallShouldHaveReverted();
+        } catch (bytes memory err) {
+            assertEq(err, abi.encodeWithSelector(ITIP20.ContractPaused.selector));
+        }
+        vm.stopPrank();
+    }
+
     function testTransferToInvalidRecipient() public {
         vm.startPrank(alice);
 

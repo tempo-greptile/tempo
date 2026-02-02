@@ -154,12 +154,12 @@ contract TIP20 is ITIP20, TIP20RolesAuth {
         emit PauseStateUpdate(msg.sender, paused = false);
     }
 
-    function mint(address to, uint256 amount) external onlyRole(ISSUER_ROLE) {
+    function mint(address to, uint256 amount) external notPaused onlyRole(ISSUER_ROLE) {
         _mint(to, amount);
         emit Mint(to, amount);
     }
 
-    function burn(uint256 amount) external onlyRole(ISSUER_ROLE) {
+    function burn(uint256 amount) external notPaused onlyRole(ISSUER_ROLE) {
         _transfer(msg.sender, address(0), amount);
         unchecked {
             _totalSupply -= uint128(amount);
@@ -187,13 +187,17 @@ contract TIP20 is ITIP20, TIP20RolesAuth {
         emit BurnBlocked(from, amount);
     }
 
-    function mintWithMemo(address to, uint256 amount, bytes32 memo) external onlyRole(ISSUER_ROLE) {
+    function mintWithMemo(address to, uint256 amount, bytes32 memo)
+        external
+        notPaused
+        onlyRole(ISSUER_ROLE)
+    {
         _mint(to, amount);
         emit TransferWithMemo(address(0), to, amount, memo);
         emit Mint(to, amount);
     }
 
-    function burnWithMemo(uint256 amount, bytes32 memo) external onlyRole(ISSUER_ROLE) {
+    function burnWithMemo(uint256 amount, bytes32 memo) external notPaused onlyRole(ISSUER_ROLE) {
         _transfer(msg.sender, address(0), amount);
         unchecked {
             _totalSupply -= uint128(amount);
