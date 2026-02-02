@@ -609,6 +609,8 @@ Before Fork           Post-Fork (reads)         First V2 Write           After I
 
 ### For Existing Networks (testnet, mainnet)
 
+Existing networks are defined as those with hardfork_timestamp > timestamp_at_genesis
+
 1. **Release new node software** with Allegro hardfork support
 2. **Schedule the fork** by updating chainspec with target `allegroTime`
 3. **At fork activation**: V2 reads proxy through to V1 (no state changes needed)
@@ -618,9 +620,11 @@ Before Fork           Post-Fork (reads)         First V2 Write           After I
 
 ### For New Networks
 
+New networks are defined as those that have the V2 validator config contract at genesis. In these cases, the V1 validator config contract is not required if validators are set up in V2 state.
+
 1. Initialize V2 at genesis with the initial validator set (set `initialized = true`)
-2. Optionally populate V1 for backward tooling compatibility
-3. Set `allegroTime = 0` to activate V2 immediately
+2. Set `allegroTime = 0` to activate V2 immediately
+3. V1 Validator Config contract/precompile is not necessary in this flow
 
 ---
 
@@ -699,9 +703,9 @@ The test suite must cover:
 
 ## Gas Limits on Initialization
 
-Each validator imported during initialization requires approximately 11 SSTOREs
-(validator struct fields, array push, pubkey mapping). This places an upper bound
-on the number of validators that can be migrated in a single transaction:
+Each validator imported during initialization requires 11 SSTOREs (validator struct
+fields, array push, pubkey mapping). This places an upper bound on the number of 
+validators that can be migrated in a single transaction:
 
 ```
 maxValidators = min(txGasLimit, blockGasLimit) / (11 * SSTORE_COST)
