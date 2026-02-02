@@ -49,11 +49,10 @@ V2 solves these problems with an append-only design where:
 
 ### Key Design Principle
 
-By recording `addedAtHeight`, `deletedAtHeight`, and `deletedBeforeMigration`, nodes can determine DKG players for any epoch using only current state. When preparing for a DKG ceremony in epoch `E+2`, a node reads the contract at `boundary(E)` and filters:
+By recording `addedAtHeight` and `deletedAtHeight`, nodes can determine DKG players for any epoch using only current state. When preparing for a DKG ceremony in epoch `E+2`, a node reads the contract at `boundary(E)` and filters:
 
 ```
 players(E+2) = validators.filter(v =>
-    !v.deletedBeforeMigration &&
     v.addedAtHeight <= boundary(E) &&
     (v.deletedAtHeight == 0 || v.deletedAtHeight > boundary(E))
 )
@@ -84,10 +83,13 @@ pragma solidity ^0.8.13;
 ///      during node recovery. Validators are immutable after creation and can only be deleted once.
 ///
 ///      Key differences from V1:
-///      - `active` bool replaced by `addedAtHeight`, `deletedAtHeight`, and `deletedBeforeMigration`
+///      - `active` bool replaced by `addedAtHeight` and `deletedAtHeight`
 ///      - No `updateValidator` - validators are immutable after creation
 ///      - Requires Ed25519 signature on `addValidator` to prove key ownership
 ///      - Both address and public key must be unique across all validators (including deleted)
+///
+///      Note: Validators with `addedAtHeight == deletedAtHeight` are never considered active.
+///      This is used during migration for V1 validators that were already inactive.
 interface IValidatorConfigV2 {
 
     /// @notice Thrown when caller lacks authorization to perform the requested action
@@ -129,9 +131,8 @@ interface IValidatorConfigV2 {
     /// @param inboundAddress Address where other validators can connect (format: `<hostname|ip>:<port>`)
     /// @param outboundAddress IP address for firewall whitelisting (format: `<ip>:<port>`, no hostnames)
     /// @param index Position in validators array (assigned at creation, immutable)
-    /// @param addedAtHeight Block height when validator was added (0 for validators migrated from V1)
+    /// @param addedAtHeight Block height when validator was added
     /// @param deletedAtHeight Block height when validator was deleted (0 = active)
-    /// @param deletedBeforeMigration True if validator was inactive in V1 before migration (packed with uint64s)
     struct Validator {
         bytes32 publicKey;
         address validatorAddress;
@@ -140,14 +141,14 @@ interface IValidatorConfigV2 {
         uint64 index;
         uint64 addedAtHeight;
         uint64 deletedAtHeight;
-        bool deletedBeforeMigration;
     }
 
     /// @notice Get all validators (including deleted ones) in array order
     /// @return validators Array of all validators with their information
     function getValidators() external view returns (Validator[] memory validators);
 
-    /// @notice Get only active validators (where deletedAtHeight == 0 && deletedBeforeMigration == false)
+    /// @notice Get only active validators (where deletedAtHeight == 0)
+    /// @dev Note: Validators with addedAtHeight == deletedAtHeight are never considered active.
     /// @return validators Array of active validators
     function getActiveValidators() external view returns (Validator[] memory validators);
 
@@ -241,7 +242,15 @@ interface IValidatorConfigV2 {
     /// @notice Initialize V2 from V1 state (callable by anyone)
     /// @dev If already initialized, this is a no-op. Reads validators from V1 and
     ///      populates V2 storage. Copies owner, validators, and nextDkgCeremony from V1.
-    function initialize() external;
+    ///      Active V1 validators get addedAtHeight=allegroHeight and deletedAtHeight=0.
+    ///      Inactive V1 validators get addedAtHeight=allegroHeight and deletedAtHeight=allegroHeight.
+    /// @param allegroHeight The block height at which the Allegro hardfork activates.
+    ///        Used to set addedAtHeight/deletedAtHeight for migrated validators.
+    function initialize(uint64 allegroHeight) external;
+
+    /// @notice Check if V2 has been initialized from V1
+    /// @return True if initialized, false otherwise
+    function isInitialized() external view returns (bool);
 }
 ```
 
@@ -380,11 +389,12 @@ Nodes can determine the DKG players for any past or future epoch using only curr
 
 ```
 players(E+2) = validators.filter(v =>
-    !v.deletedBeforeMigration &&
     v.addedAtHeight <= boundary(E) &&
     (v.deletedAtHeight == 0 || v.deletedAtHeight > boundary(E))
 )
 ```
+
+**Note**: Validators with `addedAtHeight == deletedAtHeight` will never match this filter since `deletedAtHeight > boundary(E)` cannot be true when `addedAtHeight <= boundary(E)` and they are equal.
 
 This enables nodes to reconstruct DKG player sets without accessing historical account state—critical for node recovery and late-joining validators.
 
@@ -418,15 +428,15 @@ packing. The `initialized` flag uses bit 255 (the highest bit), leaving bits
 
 | Aspect | V1 | V2 |
 |--------|----|----|
-| Status field | `active: bool` | `deletedAtHeight: uint64` + `deletedBeforeMigration: bool` |
+| Status field | `active: bool` | `addedAtHeight: uint64` + `deletedAtHeight: uint64` |
 | Creation tracking | None | `addedAtHeight: uint64` |
 | Mutability | Mutable via `updateValidator()` | Immutable after creation |
 | Deletion | Sets `active = false` | Sets `deletedAtHeight = block.number` |
 | Re-registration | Allowed after deletion | Never allowed (address/pubkey reserved forever) |
 | Key ownership | Not verified | Ed25519 signature required |
-| Historical queries | Requires historical state | Filter `getValidators()` by `addedAtHeight`/`deletedAtHeight`/`deletedBeforeMigration` |
+| Historical queries | Requires historical state | Filter `getValidators()` by `addedAtHeight`/`deletedAtHeight` |
 | Uniqueness | Address only | Address AND public key |
-| Precompile address | `0xCCCC...0001` | `0xCCCC...0002` |
+| Precompile address | `0xCCCC...0000` | `0xCCCC...0002` |
 
 ---
 
@@ -438,12 +448,11 @@ The following invariants must always hold:
    decreases.
 
 2. **Immutable validators**: Once a validator is added, its `publicKey`,
-   `validatorAddress`, `inboundAddress`, `outboundAddress`, `index`,
-   `addedAtHeight`, and `deletedBeforeMigration` fields never change.
+   `validatorAddress`, `inboundAddress`, `outboundAddress`, `index`, and
+   `addedAtHeight` fields never change.
 
 3. **Delete-once**: A validator's `deletedAtHeight` can only transition from 0
    to a non-zero value, never back to 0 or to a different non-zero value.
-   Similarly, `deletedBeforeMigration` is immutable once set.
 
 4. **Unique addresses**: No two validators (including deleted ones) can have the
    same `validatorAddress`.
@@ -456,9 +465,10 @@ The following invariants must always hold:
 7. **Monotonic index**: Validator `index` equals its position in
    `validatorsArray` and equals `validatorCount - 1` at creation time.
 
-8. **Historical consistency**: For any height H, `getValidatorSetAtHeight(H)`
-   returns exactly the validators where `!deletedBeforeMigration &&
-   addedAtHeight <= H && (deletedAtHeight == 0 || deletedAtHeight > H)`.
+8. **Historical consistency**: For any height H, the active validator set
+   consists of validators where `addedAtHeight <= H && (deletedAtHeight == 0 ||
+   deletedAtHeight > H)`. Validators with `addedAtHeight == deletedAtHeight` are
+   never considered active.
 
 9. **Signature binding**: The signature message includes `chainId`,
    `contractAddress`, `validatorAddress`, `inboundAddress`, and
@@ -534,7 +544,7 @@ The following write functions trigger initialization if `initialized == false`:
 - `addValidator(...)`
 - `deleteValidator(...)`
 - `rotateValidator(...)`
-- `initialize()` (explicit initialization)
+- `initialize(allegroHeight)` (explicit initialization)
 
 When any of these functions is called and `initialized == false`, the
 following **Initialization Procedure** executes:
@@ -548,9 +558,8 @@ following **Initialization Procedure** executes:
      - `inboundAddress`: copied from V1
      - `outboundAddress`: copied from V1
      - `index`: assigned sequentially (0, 1, 2, ...)
-     - `addedAtHeight`: set to `block.number`
-     - `deletedAtHeight`: set to 0
-     - `deletedBeforeMigration`: set to true if V1 `active == false`, otherwise false
+     - `addedAtHeight`: set to `allegroHeight`
+     - `deletedAtHeight`: set to `allegroHeight` if V1 `active == false`, otherwise 0
    - Add to `validatorsArray`
    - Populate lookup maps (`validators[addr]`, `pubkeyToIndex[pubkey]`)
 3. Copy `owner` from V1 to V2
@@ -586,7 +595,7 @@ interface IValidatorConfigV1 {
 - **No signatures required**: V1 validators are imported without Ed25519 signatures
   (they were already validated in V1)
 - **All validators imported**: Both active and inactive V1 validators are
-    imported; inactive ones have `deletedBeforeMigration = true`
+    imported; inactive ones have `addedAtHeight == deletedAtHeight == allegroHeight`
 
 ## Timeline
 
@@ -636,7 +645,8 @@ The test suite must cover:
 
 6. **getValidators**: Returns all validators including deleted with correct
    `addedAtHeight` and `deletedAtHeight`
-7. **getActiveValidators**: Returns only validators with `deletedAtHeight == 0 && deletedBeforeMigration == false`
+7. **getActiveValidators**: Returns only validators with `deletedAtHeight == 0`
+   (note: validators with `addedAtHeight == deletedAtHeight` are excluded)
 8. **validatorByPublicKey**: Returns validator by public key lookup
 9. **validatorCount**: Returns total count including deleted
 
@@ -668,7 +678,7 @@ The test suite must cover:
 26. **deletedAtHeight correctness**: Deleted validators have correct
     `deletedAtHeight` set
 27. **Filter logic**: Caller can correctly filter by
-    `!deletedBeforeMigration && addedAtHeight <= H && (deletedAtHeight == 0 || deletedAtHeight > H)`
+    `addedAtHeight <= H && (deletedAtHeight == 0 || deletedAtHeight > H)`
 
 ### Lazy Initialization
 
@@ -677,12 +687,13 @@ The test suite must cover:
     `validatorByPublicKey`, `getNextFullDkgCeremony` all delegate to V1 without
     modifying V2 state
 29. **Write triggers init**: `addValidator`, `deleteValidator`, `rotateValidator`,
-    `initialize` trigger initialization on first call; subsequent calls skip init
+    `initialize(allegroHeight)` trigger initialization on first call; subsequent calls skip init
 30. **All validators imported on init**: Both V1 active and inactive validators are
-    imported; inactive ones have `deletedBeforeMigration = true`
+    imported; inactive ones have `addedAtHeight == deletedAtHeight == allegroHeight`
 31. **DKG ceremony copied on init**: V2 `getNextFullDkgCeremony()` matches V1 after init
 32. **addedAtHeight set correctly**: Imported validators have
-    `addedAtHeight == block.number` at initialization time
+    `addedAtHeight == allegroHeight` at initialization time
 33. **Owner copied on init**: V2 `owner()` matches V1 after initialization
 34. **V1 to V2 format conversion**: Reads before init correctly convert V1 format
-    (`active` bool) to V2 format (`deletedBeforeMigration`)
+    (`active` bool) to V2 format (using `deletedAtHeight`)
+35. **isInitialized returns correct value**: Returns false before init, true after
