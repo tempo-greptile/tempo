@@ -54,25 +54,17 @@ fn init_txpool_defaults() {
         .expect("failed to initialize txpool defaults");
 }
 
-/// Persistence threshold: how many canonical blocks must be ahead of the last persisted
-/// block before triggering a flush to disk.
-///
-/// Trade-off: Lower values cause more frequent DB writes; higher values keep more blocks
-/// in memory but improve write batching. We use 16 to batch writes efficiently while
-/// keeping memory usage reasonable.
-pub(crate) const TEMPO_PERSISTENCE_THRESHOLD: u64 = 16;
+/// How many canonical blocks ahead of the last persisted block before flushing to disk.
+/// Higher = better write batching but more memory; lower = frequent writes.
+const PERSIST_THRESHOLD: u64 = 16;
 
-/// Memory block buffer target: how many recent blocks to keep in memory after persistence.
-///
-/// This is the "reorg-safe window" - reorgs shallower than this depth won't hit disk.
-/// Set to 8 to handle typical reorg depths without touching disk, reducing I/O during
-/// chain reorganizations.
-pub(crate) const TEMPO_MEMORY_BLOCK_BUFFER_TARGET: u64 = 8;
+/// Reorgs shallower than this depth stay entirely in memory (no disk I/O).
+const REORG_SAFE_DEPTH: u64 = 8;
 
 fn init_engine_defaults() {
     DefaultEngineValues::default()
-        .with_persistence_threshold(TEMPO_PERSISTENCE_THRESHOLD)
-        .with_memory_block_buffer_target(TEMPO_MEMORY_BLOCK_BUFFER_TARGET)
+        .with_persistence_threshold(PERSIST_THRESHOLD)
+        .with_memory_block_buffer_target(REORG_SAFE_DEPTH)
         .try_init()
         .expect("failed to initialize engine defaults");
 }
