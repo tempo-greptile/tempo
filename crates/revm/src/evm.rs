@@ -1687,7 +1687,7 @@ mod tests {
         // T1 costs: CREATE cost (500k) + new account for sender (250k) + new account for contract (250k)
         let tx = TxBuilder::new()
             .create(&initcode)
-            .gas_limit(1_000_000)
+            .gas_limit(1_100_000)
             .build();
 
         let signed_tx = key_pair.sign_tx(tx)?;
@@ -1696,9 +1696,10 @@ mod tests {
         let result = evm.transact_commit(tx_env)?;
         assert!(result.is_success(), "CREATE transaction should succeed");
 
-        // With TIP-1000: CREATE cost (500k) + new account for sender (250k) + base costs
+        // With TIP-1000: CREATE cost (500k) + new account for sender (250k)
+        //                + new account for contract (250k) + base costs
         let gas_used = result.gas_used();
-        assert_eq!(gas_used, 778720, "T1 CREATE contract gas should be exact");
+        assert_eq!(gas_used, 1_028_720, "T1 CREATE contract gas should be exact");
 
         Ok(())
     }

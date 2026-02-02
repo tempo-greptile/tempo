@@ -1232,6 +1232,13 @@ where
                 init_gas.initial_gas += gas_params.get(GasId::new_account_cost());
             }
 
+            // TIP-1000: Contract account creation cost
+            // When deploying a contract (TxKind::Create), the created contract account's nonce
+            // transitions from 0 to 1, which requires an additional 250,000 gas charge.
+            if spec.is_t1() && tx.kind().is_create() {
+                init_gas.initial_gas += gas_params.get(GasId::new_account_cost());
+            }
+
             if evm.ctx.cfg.is_eip7623_disabled() {
                 init_gas.floor_gas = 0u64;
             }
@@ -1468,6 +1475,17 @@ where
             EXISTING_NONCE_KEY_GAS
         };
     };
+
+    // TIP-1000: Contract account creation cost
+    // When deploying a contract (CREATE call in AA batch), the created contract account's nonce
+    // transitions from 0 to 1, which requires an additional 250,000 gas charge per CREATE.
+    if spec.is_t1() {
+        for call in calls {
+            if call.to.is_create() {
+                batch_gas.initial_gas += gas_params.get(GasId::new_account_cost());
+            }
+        }
+    }
 
     if evm.ctx.cfg.is_eip7623_disabled() {
         batch_gas.floor_gas = 0u64;
