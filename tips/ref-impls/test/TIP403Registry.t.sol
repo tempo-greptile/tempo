@@ -678,7 +678,7 @@ contract TIP403RegistryTest is BaseTest {
             revert CallShouldHaveReverted();
         } catch (bytes memory err) {
             assertEq(
-                err, abi.encodeWithSelector(ITIP403Registry.PolicyNotFound.selector, uint64(999))
+                err, abi.encodeWithSelector(ITIP403Registry.PolicyNotFound.selector)
             );
         }
     }
