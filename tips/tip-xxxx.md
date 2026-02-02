@@ -50,8 +50,11 @@ The `signature` parameter MUST be encoded as follows:
 | secp256k1 | `r(32) \|\| s(32) \|\| v(1)` | 65 bytes |
 | P256 | `0x01 \|\| r(32) \|\| s(32) \|\| x(32) \|\| y(32) \|\| prehash(1)` | 130 bytes |
 | WebAuthn | `0x02 \|\| authData \|\| clientDataJSON \|\| r(32) \|\| s(32) \|\| x(32) \|\| y(32)` | 198–2048 bytes |
+| Keychain | `0x03 \|\| user_address(20) \|\| inner_signature` | 86–2069 bytes |
 
 For backwards compatibility, secp256k1 signatures have no type prefix. All other signature types are prefixed with a type identifier byte.
+
+For Keychain signatures, `inner_signature` is any of the above signature types (secp256k1, P256, or WebAuthn) and represents the access key's signature. The `user_address` is the root account the access key is authorized to sign on behalf of.
 
 ### Verify Semantics
 
@@ -64,7 +67,7 @@ For backwards compatibility, secp256k1 signatures have no type prefix. All other
 3. Otherwise, the first byte is the type identifier:
    - `0x01`: `P256`
    - `0x02`: `WebAuthn`
-   - `0x03`: `Keychain` (MUST revert with `SignatureNotSupported()`)
+   - `0x03`: `Keychain`
    - Other values: MUST revert with `InvalidSignature()`
 
 #### `secp256k1` Verification
@@ -118,7 +121,23 @@ For backwards compatibility, secp256k1 signatures have no type prefix. All other
 
 #### `Keychain` Verification
 
-Keychain signatures (type `0x03`) MUST revert with `KeychainNotSupported()`.
+1. If `signature.length < 86`, MUST revert with `InvalidSignature()`.
+2. Parse `user_address` (20 bytes) from signature bytes after the type prefix.
+3. Parse `inner_signature` from remaining bytes.
+4. Recursively verify the inner signature:
+   - Determine inner signature type using the same parsing rules (65 bytes = secp256k1, otherwise check type prefix).
+   - If inner signature type is `Keychain` (0x03), MUST revert with `InvalidSignature()` (no nesting).
+   - Verify the inner signature against `hash`. If verification fails, MUST revert with `InvalidSignature()`.
+5. Recover the access key address from the inner signature verification.
+6. Query the AccountKeychain precompile (`0x5169000000000000000000000000000000000001`) to check if `access_key` is authorized for `user_address`:
+   - Call `getKey(user_address, access_key)` to retrieve key info.
+   - If key does not exist, MUST revert with `InvalidSignature()`.
+   - If `is_revoked == true`, MUST revert with `InvalidSignature()`.
+   - If `expiry != 0` and `expiry < block.timestamp`, MUST revert with `InvalidSignature()`.
+7. If `user_address != signer`, MUST revert with `InvalidSignature()`.
+8. Return `true`.
+
+Note: Keychain verification only validates that the access key is authorized and not expired/revoked. It does NOT enforce spending limits, as those are transaction-specific checks that require state updates.
 
 ### Constants
 
@@ -133,9 +152,12 @@ Gas costs are TBD and will be determined during implementation.
 
 ## Rationale
 
-### Excluding Keychain Signatures
+### Keychain Signature Verification Scope
 
-Keychain (access key) signatures are intentionally excluded. Keychain signatures require validation beyond cryptographic verification: spending limit enforcement, expiry checks, and revocation status. These checks are performed during transaction validation and require state updates. Exposing keychain verification through this precompile would bypass these protections.
+Keychain verification in this precompile checks that an access key is authorized, not revoked, and not expired. It intentionally does NOT enforce spending limits because:
+- Spending limits are transaction-specific and require value/token amounts from the transaction context.
+- Limit enforcement requires state updates (decrementing remaining limits), which is inappropriate for a `view` function.
+- Contracts needing limit checks should query `getRemainingLimit()` on the AccountKeychain precompile separately.
 
 ### Signer Parameter
 
@@ -148,6 +170,6 @@ This design allows a single function call to both verify the signature and confi
 ### Revert on Invalid Signatures
 
 The function reverts on all invalid inputs rather than returning `false`. This provides:
-- **Explicit errors**: Callers know exactly why verification failed (`InvalidSignature`, `KeychainNotSupported`, `UnknownSignatureType`).
+- **Explicit errors**: Callers know exactly why verification failed (`InvalidSignature`, `UnknownSignatureType`).
 - **Fail-fast behavior**: Invalid signatures are programming errors or attacks; silent `false` returns can mask bugs.
 - **Simple success path**: If the call doesn't revert, the signature is valid.
