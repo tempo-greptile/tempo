@@ -1,40 +1,39 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.13;
 
-import { TIP20 } from "../../src/TIP20.sol";
-import { IStablecoinDEX } from "../../src/interfaces/IStablecoinDEX.sol";
-import { ITIP20 } from "../../src/interfaces/ITIP20.sol";
-import { ITIP403Registry } from "../../src/interfaces/ITIP403Registry.sol";
-import { InvariantBaseTest } from "./InvariantBaseTest.t.sol";
+import { TIP20 } from "../src/TIP20.sol";
+import { IStablecoinDEX } from "../src/interfaces/IStablecoinDEX.sol";
+import { ITIP20 } from "../src/interfaces/ITIP20.sol";
+import { ITIP403Registry } from "../src/interfaces/ITIP403Registry.sol";
+import { BaseTest } from "./BaseTest.t.sol";
 
-/// @title TIP-1015 Integration Tests
-/// @notice Tests all precompile calls that perform TIP-403 authorization checks
-/// @dev Covers TIP-20 (mint, burn, transfer), DEX (cancelStaleOrder), and fee payment
-///      Tests both simple policies (whitelist/blacklist) and compound policies
-contract TIP1015IntegrationTest is InvariantBaseTest {
+/// @title TIP-1015 Compound Policy Tests
+/// @notice Unit tests and stateless fuzz tests for compound transfer policies as specified in TIP-1015
+/// @dev Tests both TIP403Registry compound policy functions and TIP-20 integration
+contract TIP1015Test is BaseTest {
 
     /*//////////////////////////////////////////////////////////////
                               STATE
     //////////////////////////////////////////////////////////////*/
 
-    // Test users
-    address internal sender;
-    address internal recipient;
-    address internal mintRecipient;
-    address internal blockedUser;
-
-    // Simple policies
-    uint64 internal senderWhitelist;
-    uint64 internal recipientWhitelist;
+    uint64 internal whitelistPolicy;
+    uint64 internal blacklistPolicy;
+    uint64 internal senderOnlyPolicy;
+    uint64 internal recipientOnlyPolicy;
     uint64 internal mintRecipientWhitelist;
     uint64 internal senderBlacklist;
 
-    // Compound policies
     uint64 internal compoundPolicy;
     uint64 internal asymmetricCompound;
     uint64 internal vendorCreditsPolicy;
 
-    // Test token with compound policy
+    address internal sender;
+    address internal recipient;
+    address internal mintRecipient;
+    address internal blockedUser;
+    address internal whitelistedUser;
+    address internal neutralUser;
+
     TIP20 internal compoundToken;
 
     /*//////////////////////////////////////////////////////////////
@@ -44,53 +43,51 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
     function setUp() public override {
         super.setUp();
 
-        // Skip all TIP-1015 tests when running against Rust precompiles
         if (isTempo) {
             return;
         }
 
-        _setupInvariantBase();
-
-        // Create test users
         sender = makeAddr("sender");
         recipient = makeAddr("recipient");
         mintRecipient = makeAddr("mintRecipient");
         blockedUser = makeAddr("blockedUser");
+        whitelistedUser = makeAddr("whitelistedUser");
+        neutralUser = makeAddr("neutralUser");
 
         vm.startPrank(admin);
 
-        // Create simple policies
-        senderWhitelist = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
-        recipientWhitelist = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+        whitelistPolicy = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+        blacklistPolicy = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+        senderOnlyPolicy = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+        recipientOnlyPolicy = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
         mintRecipientWhitelist = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
         senderBlacklist = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
 
-        // Configure simple policies
-        registry.modifyPolicyWhitelist(senderWhitelist, sender, true);
-        registry.modifyPolicyWhitelist(recipientWhitelist, recipient, true);
+        registry.modifyPolicyWhitelist(whitelistPolicy, whitelistedUser, true);
+        registry.modifyPolicyBlacklist(blacklistPolicy, blockedUser, true);
+        registry.modifyPolicyWhitelist(senderOnlyPolicy, whitelistedUser, true);
+        registry.modifyPolicyWhitelist(senderOnlyPolicy, sender, true);
+        registry.modifyPolicyWhitelist(recipientOnlyPolicy, neutralUser, true);
+        registry.modifyPolicyWhitelist(recipientOnlyPolicy, recipient, true);
         registry.modifyPolicyWhitelist(mintRecipientWhitelist, mintRecipient, true);
         registry.modifyPolicyBlacklist(senderBlacklist, blockedUser, true);
 
-        // Create compound policy: sender whitelist, recipient whitelist, mint recipient whitelist
         compoundPolicy = registry.createCompoundPolicy(
-            senderWhitelist, recipientWhitelist, mintRecipientWhitelist
+            senderOnlyPolicy, recipientOnlyPolicy, mintRecipientWhitelist
         );
 
-        // Create asymmetric compound: sender blacklist (block bad actors), anyone can receive
         asymmetricCompound = registry.createCompoundPolicy(
-            senderBlacklist, // blockedUser cannot send
-            1, // anyone can receive (always-allow)
-            1 // anyone can receive mints
+            senderBlacklist,
+            1,
+            1
         );
 
-        // Create vendor credits: anyone can send, only recipient can receive, anyone can get mints
         vendorCreditsPolicy = registry.createCompoundPolicy(
-            1, // anyone can send
-            recipientWhitelist, // only recipient can receive
-            1 // anyone can receive mints
+            1,
+            recipientOnlyPolicy,
+            1
         );
 
-        // Create a token with compound policy
         compoundToken = TIP20(
             factory.createToken("COMPOUND", "CMP", "USD", pathUSD, admin, bytes32("compound"))
         );
@@ -101,7 +98,6 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
         vm.stopPrank();
     }
 
-    /// @dev Modifier to skip tests when running on Tempo (Rust precompiles)
     modifier onlySolidityImpl() {
         if (isTempo) {
             return;
@@ -110,27 +106,289 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
     }
 
     /*//////////////////////////////////////////////////////////////
-                    TIP-20 MINT AUTHORIZATION TESTS
+                    INVARIANT 1: Simple Policy Constraint
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Mint succeeds when recipient is authorized as mint recipient (simple policy)
+    function test_invariant1_cannotReferenceCompoundPolicy() public onlySolidityImpl {
+        vm.startPrank(admin);
+
+        uint64 cp = registry.createCompoundPolicy(whitelistPolicy, blacklistPolicy, whitelistPolicy);
+
+        vm.expectRevert(ITIP403Registry.PolicyNotSimple.selector);
+        registry.createCompoundPolicy(cp, whitelistPolicy, whitelistPolicy);
+
+        vm.expectRevert(ITIP403Registry.PolicyNotSimple.selector);
+        registry.createCompoundPolicy(whitelistPolicy, cp, whitelistPolicy);
+
+        vm.expectRevert(ITIP403Registry.PolicyNotSimple.selector);
+        registry.createCompoundPolicy(whitelistPolicy, whitelistPolicy, cp);
+
+        vm.stopPrank();
+    }
+
+    function test_invariant1_canReferenceSimplePolicies() public onlySolidityImpl {
+        vm.startPrank(admin);
+
+        uint64 cp = registry.createCompoundPolicy(whitelistPolicy, blacklistPolicy, senderOnlyPolicy);
+
+        (uint64 senderPid, uint64 recipientPid, uint64 mintPid) = registry.compoundPolicyData(cp);
+
+        assertEq(senderPid, whitelistPolicy);
+        assertEq(recipientPid, blacklistPolicy);
+        assertEq(mintPid, senderOnlyPolicy);
+
+        vm.stopPrank();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    INVARIANT 2: Immutability
+    //////////////////////////////////////////////////////////////*/
+
+    function test_invariant2_compoundPolicyHasNoAdmin() public onlySolidityImpl {
+        vm.startPrank(admin);
+
+        uint64 cp = registry.createCompoundPolicy(whitelistPolicy, whitelistPolicy, whitelistPolicy);
+
+        (ITIP403Registry.PolicyType policyType, address policyAdmin) = registry.policyData(cp);
+
+        assertEq(uint8(policyType), uint8(ITIP403Registry.PolicyType.COMPOUND));
+        assertEq(policyAdmin, address(0));
+
+        vm.stopPrank();
+    }
+
+    function test_invariant2_cannotModifyCompoundPolicy() public onlySolidityImpl {
+        vm.startPrank(admin);
+        uint64 cp = registry.createCompoundPolicy(whitelistPolicy, whitelistPolicy, whitelistPolicy);
+        vm.stopPrank();
+
+        vm.expectRevert();
+        registry.modifyPolicyWhitelist(cp, neutralUser, true);
+
+        vm.expectRevert();
+        registry.modifyPolicyBlacklist(cp, neutralUser, true);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    INVARIANT 3: Existence Check
+    //////////////////////////////////////////////////////////////*/
+
+    function test_invariant3_revertsOnNonExistentPolicy() public onlySolidityImpl {
+        uint64 nonExistentPolicy = 99_999;
+
+        vm.startPrank(admin);
+
+        vm.expectRevert(abi.encodeWithSelector(ITIP403Registry.PolicyNotFound.selector, nonExistentPolicy));
+        registry.createCompoundPolicy(nonExistentPolicy, whitelistPolicy, whitelistPolicy);
+
+        vm.expectRevert(abi.encodeWithSelector(ITIP403Registry.PolicyNotFound.selector, nonExistentPolicy));
+        registry.createCompoundPolicy(whitelistPolicy, nonExistentPolicy, whitelistPolicy);
+
+        vm.expectRevert(abi.encodeWithSelector(ITIP403Registry.PolicyNotFound.selector, nonExistentPolicy));
+        registry.createCompoundPolicy(whitelistPolicy, whitelistPolicy, nonExistentPolicy);
+
+        vm.stopPrank();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    INVARIANT 4: Delegation Correctness
+    //////////////////////////////////////////////////////////////*/
+
+    function test_invariant4_simplePolicyEquivalence() public onlySolidityImpl {
+        bool senderAuth = registry.isAuthorizedSender(whitelistPolicy, whitelistedUser);
+        bool recipientAuth = registry.isAuthorizedRecipient(whitelistPolicy, whitelistedUser);
+        bool mintAuth = registry.isAuthorizedMintRecipient(whitelistPolicy, whitelistedUser);
+        bool general = registry.isAuthorized(whitelistPolicy, whitelistedUser);
+
+        assertEq(senderAuth, recipientAuth);
+        assertEq(recipientAuth, mintAuth);
+        assertEq(senderAuth, general);
+
+        senderAuth = registry.isAuthorizedSender(whitelistPolicy, neutralUser);
+        recipientAuth = registry.isAuthorizedRecipient(whitelistPolicy, neutralUser);
+        mintAuth = registry.isAuthorizedMintRecipient(whitelistPolicy, neutralUser);
+
+        assertEq(senderAuth, recipientAuth);
+        assertEq(recipientAuth, mintAuth);
+
+        senderAuth = registry.isAuthorizedSender(blacklistPolicy, neutralUser);
+        recipientAuth = registry.isAuthorizedRecipient(blacklistPolicy, neutralUser);
+        mintAuth = registry.isAuthorizedMintRecipient(blacklistPolicy, neutralUser);
+
+        assertEq(senderAuth, recipientAuth);
+        assertEq(recipientAuth, mintAuth);
+    }
+
+    function testFuzz_invariant4_simplePolicyEquivalence(uint256 policySeed, address user)
+        public
+        onlySolidityImpl
+    {
+        vm.assume(user != address(0));
+
+        vm.startPrank(admin);
+
+        ITIP403Registry.PolicyType policyType = policySeed % 2 == 0
+            ? ITIP403Registry.PolicyType.WHITELIST
+            : ITIP403Registry.PolicyType.BLACKLIST;
+
+        uint64 testPolicy = registry.createPolicy(admin, policyType);
+
+        if (policySeed % 3 == 0) {
+            if (policyType == ITIP403Registry.PolicyType.WHITELIST) {
+                registry.modifyPolicyWhitelist(testPolicy, user, true);
+            } else {
+                registry.modifyPolicyBlacklist(testPolicy, user, true);
+            }
+        }
+
+        vm.stopPrank();
+
+        bool senderAuth = registry.isAuthorizedSender(testPolicy, user);
+        bool recipientAuth = registry.isAuthorizedRecipient(testPolicy, user);
+        bool mintAuth = registry.isAuthorizedMintRecipient(testPolicy, user);
+
+        assertEq(senderAuth, recipientAuth, "Fuzz: Sender != Recipient");
+        assertEq(recipientAuth, mintAuth, "Fuzz: Recipient != MintRecipient");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    INVARIANT 5: isAuthorized Equivalence
+    //////////////////////////////////////////////////////////////*/
+
+    function test_invariant5_isAuthorizedEquivalence() public onlySolidityImpl {
+        vm.startPrank(admin);
+
+        uint64 cp = registry.createCompoundPolicy(
+            senderOnlyPolicy,
+            recipientOnlyPolicy,
+            whitelistPolicy
+        );
+
+        vm.stopPrank();
+
+        bool senderAuth = registry.isAuthorizedSender(cp, whitelistedUser);
+        bool recipientAuth = registry.isAuthorizedRecipient(cp, whitelistedUser);
+        bool isAuth = registry.isAuthorized(cp, whitelistedUser);
+
+        assertTrue(senderAuth);
+        assertFalse(recipientAuth);
+        assertEq(isAuth, senderAuth && recipientAuth);
+        assertFalse(isAuth);
+
+        senderAuth = registry.isAuthorizedSender(cp, neutralUser);
+        recipientAuth = registry.isAuthorizedRecipient(cp, neutralUser);
+        isAuth = registry.isAuthorized(cp, neutralUser);
+
+        assertFalse(senderAuth);
+        assertTrue(recipientAuth);
+        assertEq(isAuth, senderAuth && recipientAuth);
+        assertFalse(isAuth);
+    }
+
+    function testFuzz_invariant5_isAuthorizedEquivalence(address user) public onlySolidityImpl {
+        vm.assume(user != address(0));
+
+        vm.startPrank(admin);
+        uint64 cp = registry.createCompoundPolicy(whitelistPolicy, blacklistPolicy, whitelistPolicy);
+        vm.stopPrank();
+
+        bool senderAuth = registry.isAuthorizedSender(cp, user);
+        bool recipientAuth = registry.isAuthorizedRecipient(cp, user);
+        bool isAuth = registry.isAuthorized(cp, user);
+
+        assertEq(isAuth, senderAuth && recipientAuth, "Fuzz: isAuthorized != sender && recipient");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    INVARIANT 6: Built-in Policy Compatibility
+    //////////////////////////////////////////////////////////////*/
+
+    function test_invariant6_canReferenceBuiltinPolicies() public onlySolidityImpl {
+        uint64 alwaysReject = 0;
+        uint64 alwaysAllow = 1;
+
+        vm.startPrank(admin);
+
+        uint64 cpAllow = registry.createCompoundPolicy(alwaysAllow, alwaysAllow, alwaysAllow);
+
+        assertTrue(registry.isAuthorizedSender(cpAllow, neutralUser));
+        assertTrue(registry.isAuthorizedRecipient(cpAllow, neutralUser));
+
+        uint64 cpRestrict = registry.createCompoundPolicy(alwaysReject, alwaysAllow, alwaysAllow);
+
+        assertFalse(registry.isAuthorizedSender(cpRestrict, neutralUser));
+        assertTrue(registry.isAuthorizedRecipient(cpRestrict, neutralUser));
+
+        vm.stopPrank();
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    USE CASE TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_vendorCreditsUseCase() public onlySolidityImpl {
+        address vendor = makeAddr("vendor");
+        address customer = makeAddr("customer");
+        address randomPerson = makeAddr("randomPerson");
+
+        vm.startPrank(admin);
+
+        uint64 vendorWhitelist = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+        registry.modifyPolicyWhitelist(vendorWhitelist, vendor, true);
+
+        uint64 vendorPolicy = registry.createCompoundPolicy(1, vendorWhitelist, 1);
+
+        vm.stopPrank();
+
+        assertTrue(registry.isAuthorizedMintRecipient(vendorPolicy, customer));
+        assertTrue(registry.isAuthorizedMintRecipient(vendorPolicy, randomPerson));
+
+        assertTrue(registry.isAuthorizedSender(vendorPolicy, customer));
+        assertTrue(registry.isAuthorizedSender(vendorPolicy, randomPerson));
+
+        assertTrue(registry.isAuthorizedRecipient(vendorPolicy, vendor));
+        assertFalse(registry.isAuthorizedRecipient(vendorPolicy, customer));
+        assertFalse(registry.isAuthorizedRecipient(vendorPolicy, randomPerson));
+    }
+
+    function test_asymmetricSenderRestriction() public onlySolidityImpl {
+        address sanctionedUser = makeAddr("sanctionedUser");
+        address normalUser = makeAddr("normalUser");
+
+        vm.startPrank(admin);
+
+        uint64 senderBL = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+        registry.modifyPolicyBlacklist(senderBL, sanctionedUser, true);
+
+        uint64 asymPolicy = registry.createCompoundPolicy(senderBL, 1, 1);
+
+        vm.stopPrank();
+
+        assertFalse(registry.isAuthorizedSender(asymPolicy, sanctionedUser));
+        assertTrue(registry.isAuthorizedSender(asymPolicy, normalUser));
+
+        assertTrue(registry.isAuthorizedRecipient(asymPolicy, sanctionedUser));
+        assertTrue(registry.isAuthorizedRecipient(asymPolicy, normalUser));
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                    TIP-20 MINT INTEGRATION TESTS
+    //////////////////////////////////////////////////////////////*/
+
     function test_mint_succeeds_authorizedMintRecipient_simplePolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
-        // Create token with simple whitelist policy
         TIP20 simpleToken =
             TIP20(factory.createToken("SIMPLE", "SMP", "USD", pathUSD, admin, bytes32("simple")));
         simpleToken.grantRole(_ISSUER_ROLE, admin);
         simpleToken.changeTransferPolicyId(mintRecipientWhitelist);
 
-        // Mint to whitelisted recipient should succeed
         simpleToken.mint(mintRecipient, 1000);
-        assertEq(simpleToken.balanceOf(mintRecipient), 1000, "Mint should succeed");
+        assertEq(simpleToken.balanceOf(mintRecipient), 1000);
 
         vm.stopPrank();
     }
 
-    /// @notice Mint fails when recipient is not authorized as mint recipient (simple policy)
     function test_mint_fails_unauthorizedMintRecipient_simplePolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
@@ -140,45 +398,32 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
         simpleToken.grantRole(_ISSUER_ROLE, admin);
         simpleToken.changeTransferPolicyId(mintRecipientWhitelist);
 
-        // Mint to non-whitelisted user should fail
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         simpleToken.mint(blockedUser, 1000);
 
         vm.stopPrank();
     }
 
-    /// @notice Mint succeeds when recipient is authorized via compound policy's mintRecipientPolicyId
     function test_mint_succeeds_authorizedMintRecipient_compoundPolicy() public onlySolidityImpl {
         vm.startPrank(admin);
-
-        // mintRecipient is whitelisted in mintRecipientWhitelist (used by compoundPolicy)
         compoundToken.mint(mintRecipient, 1000);
-        assertEq(compoundToken.balanceOf(mintRecipient), 1000, "Mint should succeed");
-
+        assertEq(compoundToken.balanceOf(mintRecipient), 1000);
         vm.stopPrank();
     }
 
-    /// @notice Mint fails when recipient is not authorized via compound policy's mintRecipientPolicyId
     function test_mint_fails_unauthorizedMintRecipient_compoundPolicy() public onlySolidityImpl {
         vm.startPrank(admin);
-
-        // blockedUser is not in mintRecipientWhitelist
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         compoundToken.mint(blockedUser, 1000);
-
         vm.stopPrank();
     }
 
-    /// @notice Mint uses mintRecipientPolicyId, not senderPolicyId or recipientPolicyId
     function test_mint_usesCorrectSubPolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
-        // sender is whitelisted as sender but NOT as mint recipient
-        // This should fail because mint checks mintRecipientPolicyId
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         compoundToken.mint(sender, 1000);
 
-        // recipient is whitelisted as recipient but NOT as mint recipient
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         compoundToken.mint(recipient, 1000);
 
@@ -186,18 +431,15 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
     }
 
     /*//////////////////////////////////////////////////////////////
-                    TIP-20 TRANSFER AUTHORIZATION TESTS
+                    TIP-20 TRANSFER INTEGRATION TESTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Transfer succeeds when both sender and recipient are authorized (simple policy)
     function test_transfer_succeeds_bothAuthorized_simplePolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
         TIP20 simpleToken =
             TIP20(factory.createToken("XFER1", "XF1", "USD", pathUSD, admin, bytes32("xfer1")));
         simpleToken.grantRole(_ISSUER_ROLE, admin);
-
-        // Use always-allow policy (policy ID 1)
         simpleToken.changeTransferPolicyId(1);
         simpleToken.mint(sender, 1000);
 
@@ -206,22 +448,17 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
         vm.prank(sender);
         simpleToken.transfer(recipient, 500);
 
-        assertEq(simpleToken.balanceOf(sender), 500, "Sender balance incorrect");
-        assertEq(simpleToken.balanceOf(recipient), 500, "Recipient balance incorrect");
+        assertEq(simpleToken.balanceOf(sender), 500);
+        assertEq(simpleToken.balanceOf(recipient), 500);
     }
 
-    /// @notice Transfer fails when sender is not authorized (simple blacklist)
     function test_transfer_fails_senderBlacklisted_simplePolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
         TIP20 simpleToken =
             TIP20(factory.createToken("XFER2", "XF2", "USD", pathUSD, admin, bytes32("xfer2")));
         simpleToken.grantRole(_ISSUER_ROLE, admin);
-        simpleToken.changeTransferPolicyId(senderBlacklist);
-
-        // Mint to blockedUser first (using admin privilege before policy is enforced)
-        // Actually we need to set policy after mint, or use a permissive mint policy
-        simpleToken.changeTransferPolicyId(1); // temporarily allow
+        simpleToken.changeTransferPolicyId(1);
         simpleToken.mint(blockedUser, 1000);
         simpleToken.changeTransferPolicyId(senderBlacklist);
 
@@ -232,41 +469,31 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
         simpleToken.transfer(recipient, 500);
     }
 
-    /// @notice Transfer succeeds with compound policy when sender and recipient are authorized
     function test_transfer_succeeds_bothAuthorized_compoundPolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
-        // First mint to sender (need to add sender to mint whitelist temporarily)
         registry.modifyPolicyWhitelist(mintRecipientWhitelist, sender, true);
         compoundToken.mint(sender, 1000);
 
         vm.stopPrank();
 
-        // sender is in senderWhitelist, recipient is in recipientWhitelist
         vm.prank(sender);
         compoundToken.transfer(recipient, 500);
 
-        assertEq(compoundToken.balanceOf(sender), 500, "Sender balance incorrect");
-        assertEq(compoundToken.balanceOf(recipient), 500, "Recipient balance incorrect");
+        assertEq(compoundToken.balanceOf(sender), 500);
+        assertEq(compoundToken.balanceOf(recipient), 500);
     }
 
-    /// @notice Transfer fails with compound policy when sender is not authorized
     function test_transfer_fails_senderUnauthorized_compoundPolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
-        // Mint to blockedUser via always-allow mint recipient policy
         TIP20 testToken =
             TIP20(factory.createToken("XFER3", "XF3", "USD", pathUSD, admin, bytes32("xfer3")));
         testToken.grantRole(_ISSUER_ROLE, admin);
 
-        // Create compound: blockedUser not in sender whitelist
-        uint64 testCompound = registry.createCompoundPolicy(
-            senderWhitelist, // blockedUser is NOT here
-            1, // anyone can receive
-            1 // anyone can get mints
-        );
+        uint64 testCompound = registry.createCompoundPolicy(senderOnlyPolicy, 1, 1);
 
-        testToken.changeTransferPolicyId(1); // allow mint
+        testToken.changeTransferPolicyId(1);
         testToken.mint(blockedUser, 1000);
         testToken.changeTransferPolicyId(testCompound);
 
@@ -277,56 +504,49 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
         testToken.transfer(recipient, 500);
     }
 
-    /// @notice Transfer fails with compound policy when recipient is not authorized
     function test_transfer_fails_recipientUnauthorized_compoundPolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
-        // Use vendorCreditsPolicy: anyone can send, only recipient whitelist can receive
         TIP20 testToken =
             TIP20(factory.createToken("XFER4", "XF4", "USD", pathUSD, admin, bytes32("xfer4")));
         testToken.grantRole(_ISSUER_ROLE, admin);
-        testToken.changeTransferPolicyId(1); // allow mint
+        testToken.changeTransferPolicyId(1);
         testToken.mint(sender, 1000);
         testToken.changeTransferPolicyId(vendorCreditsPolicy);
 
         vm.stopPrank();
 
-        // sender can send (policy 1), but blockedUser cannot receive (not in recipientWhitelist)
         vm.prank(sender);
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         testToken.transfer(blockedUser, 500);
     }
 
-    /// @notice Asymmetric compound: blocked sender can receive but not send
     function test_transfer_asymmetricCompound_blockedCanReceiveNotSend() public onlySolidityImpl {
         vm.startPrank(admin);
 
         TIP20 testToken =
             TIP20(factory.createToken("ASYM1", "ASY1", "USD", pathUSD, admin, bytes32("asym1")));
         testToken.grantRole(_ISSUER_ROLE, admin);
-        testToken.changeTransferPolicyId(1); // allow mints
+        testToken.changeTransferPolicyId(1);
         testToken.mint(sender, 1000);
         testToken.mint(blockedUser, 500);
         testToken.changeTransferPolicyId(asymmetricCompound);
 
         vm.stopPrank();
 
-        // sender (not blocked) can send to blockedUser (anyone can receive)
         vm.prank(sender);
         testToken.transfer(blockedUser, 200);
-        assertEq(testToken.balanceOf(blockedUser), 700, "blockedUser should receive");
+        assertEq(testToken.balanceOf(blockedUser), 700);
 
-        // blockedUser cannot send (blacklisted as sender)
         vm.prank(blockedUser);
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         testToken.transfer(sender, 100);
     }
 
     /*//////////////////////////////////////////////////////////////
-                    TIP-20 BURN_BLOCKED AUTHORIZATION TESTS
+                    TIP-20 BURN_BLOCKED INTEGRATION TESTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice burnBlocked succeeds when address is blocked from sending (simple policy)
     function test_burnBlocked_succeeds_blockedSender_simplePolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
@@ -335,19 +555,16 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
         testToken.grantRole(_ISSUER_ROLE, admin);
         testToken.grantRole(_BURN_BLOCKED_ROLE, admin);
 
-        // Mint first, then set restrictive policy
         testToken.changeTransferPolicyId(1);
         testToken.mint(blockedUser, 1000);
         testToken.changeTransferPolicyId(senderBlacklist);
 
-        // blockedUser is blacklisted, so burnBlocked should succeed
         testToken.burnBlocked(blockedUser, 500);
-        assertEq(testToken.balanceOf(blockedUser), 500, "Burn should reduce balance");
+        assertEq(testToken.balanceOf(blockedUser), 500);
 
         vm.stopPrank();
     }
 
-    /// @notice burnBlocked fails when address is authorized to send (simple policy)
     function test_burnBlocked_fails_authorizedSender_simplePolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
@@ -355,17 +572,15 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
             TIP20(factory.createToken("BURN2", "BRN2", "USD", pathUSD, admin, bytes32("burn2")));
         testToken.grantRole(_ISSUER_ROLE, admin);
         testToken.grantRole(_BURN_BLOCKED_ROLE, admin);
-        testToken.changeTransferPolicyId(1); // always allow
+        testToken.changeTransferPolicyId(1);
         testToken.mint(sender, 1000);
 
-        // sender is authorized, so burnBlocked should fail
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         testToken.burnBlocked(sender, 500);
 
         vm.stopPrank();
     }
 
-    /// @notice burnBlocked succeeds when address is blocked via compound policy's senderPolicyId
     function test_burnBlocked_succeeds_blockedSender_compoundPolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
@@ -376,16 +591,14 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
 
         testToken.changeTransferPolicyId(1);
         testToken.mint(blockedUser, 1000);
-        testToken.changeTransferPolicyId(asymmetricCompound); // blockedUser is in senderBlacklist
+        testToken.changeTransferPolicyId(asymmetricCompound);
 
-        // blockedUser is blocked as sender via compound policy
         testToken.burnBlocked(blockedUser, 500);
-        assertEq(testToken.balanceOf(blockedUser), 500, "Burn should reduce balance");
+        assertEq(testToken.balanceOf(blockedUser), 500);
 
         vm.stopPrank();
     }
 
-    /// @notice burnBlocked fails when address is authorized via compound policy
     function test_burnBlocked_fails_authorizedSender_compoundPolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
@@ -396,30 +609,21 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
 
         testToken.changeTransferPolicyId(1);
         testToken.mint(sender, 1000);
-        testToken.changeTransferPolicyId(asymmetricCompound); // sender is NOT blocked
+        testToken.changeTransferPolicyId(asymmetricCompound);
 
-        // sender is authorized as sender, burnBlocked should fail
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         testToken.burnBlocked(sender, 500);
 
         vm.stopPrank();
     }
 
-    /// @notice burnBlocked checks senderPolicyId, not recipientPolicyId
     function test_burnBlocked_checksCorrectSubPolicy() public onlySolidityImpl {
         vm.startPrank(admin);
 
-        // Create a blacklist where ONLY blockedUser is blocked as recipient (not sender)
-        uint64 recipientBlacklist =
-            registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
+        uint64 recipientBlacklist = registry.createPolicy(admin, ITIP403Registry.PolicyType.BLACKLIST);
         registry.modifyPolicyBlacklist(recipientBlacklist, blockedUser, true);
 
-        // Create compound where user is blocked as recipient but allowed as sender
-        uint64 recipientBlockedCompound = registry.createCompoundPolicy(
-            1, // anyone can send (blockedUser CAN send)
-            recipientBlacklist, // blockedUser cannot receive
-            1 // anyone can mint
-        );
+        uint64 recipientBlockedCompound = registry.createCompoundPolicy(1, recipientBlacklist, 1);
 
         TIP20 testToken =
             TIP20(factory.createToken("BURN5", "BRN5", "USD", pathUSD, admin, bytes32("burn5")));
@@ -430,8 +634,6 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
         testToken.mint(blockedUser, 1000);
         testToken.changeTransferPolicyId(recipientBlockedCompound);
 
-        // blockedUser is blocked as RECIPIENT but allowed as SENDER
-        // burnBlocked checks sender authorization, so this should FAIL (user CAN send)
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         testToken.burnBlocked(blockedUser, 500);
 
@@ -442,33 +644,26 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
                     DEX CANCEL_STALE_ORDER TESTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice cancelStaleOrder succeeds when maker is blocked from sending
     function test_cancelStaleOrder_succeeds_blockedMaker_simplePolicy() public onlySolidityImpl {
-        uint128 MIN_ORDER = 100_000_000; // DEX minimum order amount
+        uint128 MIN_ORDER = 100_000_000;
 
         vm.startPrank(admin);
 
-        // Create and configure token for DEX
         TIP20 baseToken =
             TIP20(factory.createToken("BASE1", "BS1", "USD", pathUSD, admin, bytes32("base1")));
         baseToken.grantRole(_ISSUER_ROLE, admin);
-
-        // Mint to sender first
         baseToken.changeTransferPolicyId(1);
         baseToken.mint(sender, MIN_ORDER * 10);
 
-        // Create DEX pair
         exchange.createPair(address(baseToken));
 
         vm.stopPrank();
 
-        // Mint pathUSD to sender for placing bid orders (pathUSDAdmin is the issuer)
         vm.startPrank(pathUSDAdmin);
         pathUSD.grantRole(_ISSUER_ROLE, pathUSDAdmin);
         pathUSD.mint(sender, MIN_ORDER * 10);
         vm.stopPrank();
 
-        // sender places an order
         vm.startPrank(sender);
         baseToken.approve(address(exchange), type(uint256).max);
         pathUSD.approve(address(exchange), type(uint256).max);
@@ -476,21 +671,16 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
         uint128 orderId = exchange.place(address(baseToken), MIN_ORDER, true, 0);
         vm.stopPrank();
 
-        // Now blacklist the sender on pathUSD (the escrowed token for bid orders)
-        // For bid orders, the checked token is book.quote (pathUSD)
         vm.startPrank(pathUSDAdmin);
-        uint64 makerBlacklist =
-            registry.createPolicy(pathUSDAdmin, ITIP403Registry.PolicyType.BLACKLIST);
+        uint64 makerBlacklist = registry.createPolicy(pathUSDAdmin, ITIP403Registry.PolicyType.BLACKLIST);
         registry.modifyPolicyBlacklist(makerBlacklist, sender, true);
         pathUSD.changeTransferPolicyId(makerBlacklist);
         vm.stopPrank();
 
-        // Anyone can cancel the stale order since maker is blocked on pathUSD
         vm.prank(recipient);
         exchange.cancelStaleOrder(orderId);
     }
 
-    /// @notice cancelStaleOrder fails when maker is still authorized
     function test_cancelStaleOrder_fails_authorizedMaker_simplePolicy() public onlySolidityImpl {
         uint128 MIN_ORDER = 100_000_000;
 
@@ -518,13 +708,11 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
         uint128 orderId = exchange.place(address(baseToken), MIN_ORDER, true, 0);
         vm.stopPrank();
 
-        // Try to cancel without blacklisting - should fail
         vm.prank(recipient);
         vm.expectRevert(IStablecoinDEX.OrderNotStale.selector);
         exchange.cancelStaleOrder(orderId);
     }
 
-    /// @notice cancelStaleOrder with compound policy checks senderPolicyId
     function test_cancelStaleOrder_succeeds_blockedMaker_compoundPolicy() public onlySolidityImpl {
         uint128 MIN_ORDER = 100_000_000;
 
@@ -552,21 +740,14 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
         uint128 orderId = exchange.place(address(baseToken), MIN_ORDER, true, 0);
         vm.stopPrank();
 
-        // Blacklist sender via compound policy on pathUSD (the escrowed token for bid orders)
         vm.startPrank(pathUSDAdmin);
-        uint64 senderOnlyBlacklist =
-            registry.createPolicy(pathUSDAdmin, ITIP403Registry.PolicyType.BLACKLIST);
-        registry.modifyPolicyBlacklist(senderOnlyBlacklist, sender, true);
+        uint64 senderOnlyBL = registry.createPolicy(pathUSDAdmin, ITIP403Registry.PolicyType.BLACKLIST);
+        registry.modifyPolicyBlacklist(senderOnlyBL, sender, true);
 
-        uint64 staleCompound = registry.createCompoundPolicy(
-            senderOnlyBlacklist, // sender is blocked
-            1, // anyone can receive
-            1 // anyone can mint
-        );
+        uint64 staleCompound = registry.createCompoundPolicy(senderOnlyBL, 1, 1);
         pathUSD.changeTransferPolicyId(staleCompound);
         vm.stopPrank();
 
-        // Cancel should succeed since maker is blocked as sender on pathUSD
         vm.prank(recipient);
         exchange.cancelStaleOrder(orderId);
     }
@@ -575,7 +756,6 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
                     FUZZ TESTS
     //////////////////////////////////////////////////////////////*/
 
-    /// @notice Fuzz: Transfer authorization respects compound policy structure
     function testFuzz_transfer_compoundPolicyRespected(
         bool senderInWhitelist,
         bool recipientInWhitelist,
@@ -588,18 +768,17 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
 
         vm.startPrank(admin);
 
-        // Create fresh policies for this test
-        uint64 senderPolicy = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
-        uint64 recipientPolicy = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+        uint64 sPolicy = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
+        uint64 rPolicy = registry.createPolicy(admin, ITIP403Registry.PolicyType.WHITELIST);
 
         if (senderInWhitelist) {
-            registry.modifyPolicyWhitelist(senderPolicy, testSender, true);
+            registry.modifyPolicyWhitelist(sPolicy, testSender, true);
         }
         if (recipientInWhitelist) {
-            registry.modifyPolicyWhitelist(recipientPolicy, testRecipient, true);
+            registry.modifyPolicyWhitelist(rPolicy, testRecipient, true);
         }
 
-        uint64 fuzzCompound = registry.createCompoundPolicy(senderPolicy, recipientPolicy, 1);
+        uint64 fuzzCompound = registry.createCompoundPolicy(sPolicy, rPolicy, 1);
 
         TIP20 fuzzToken = TIP20(
             factory.createToken(
@@ -620,17 +799,14 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
 
         vm.prank(testSender);
         if (senderInWhitelist && recipientInWhitelist) {
-            // Should succeed
             fuzzToken.transfer(testRecipient, amount);
-            assertEq(fuzzToken.balanceOf(testRecipient), amount, "Transfer should succeed");
+            assertEq(fuzzToken.balanceOf(testRecipient), amount);
         } else {
-            // Should fail
             vm.expectRevert(ITIP20.PolicyForbids.selector);
             fuzzToken.transfer(testRecipient, amount);
         }
     }
 
-    /// @notice Fuzz: Mint authorization only checks mintRecipientPolicyId
     function testFuzz_mint_onlyChecksMintRecipientPolicy(
         bool inSenderPolicy,
         bool inRecipientPolicy,
@@ -673,11 +849,9 @@ contract TIP1015IntegrationTest is InvariantBaseTest {
         fuzzToken.changeTransferPolicyId(fuzzCompound);
 
         if (inMintPolicy) {
-            // Should succeed regardless of sender/recipient policy membership
             fuzzToken.mint(testMintRecipient, amount);
-            assertEq(fuzzToken.balanceOf(testMintRecipient), amount, "Mint should succeed");
+            assertEq(fuzzToken.balanceOf(testMintRecipient), amount);
         } else {
-            // Should fail because not in mint policy
             vm.expectRevert(ITIP20.PolicyForbids.selector);
             fuzzToken.mint(testMintRecipient, amount);
         }
