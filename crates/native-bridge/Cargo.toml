@@ -88,6 +88,14 @@ reth-node-api.workspace = true
 reth-rpc-builder.workspace = true
 alloy-rpc-types-engine.workspace = true
 
+# For receipt MPT proof generation
+alloy-trie = "0.9"
+alloy-rlp.workspace = true
+alloy-consensus.workspace = true
+
+# Consensus RPC client
+jsonrpsee = { workspace = true, features = ["http-client", "ws-client"] }
+
 [features]
 p2p = []
 

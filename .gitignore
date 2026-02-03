@@ -30,3 +30,6 @@ _
 .vercel
 .env*.local
 .worktrees/
+
+# Bytecode hex files
+*.hex

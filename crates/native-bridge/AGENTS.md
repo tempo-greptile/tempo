@@ -4,7 +4,30 @@
 
 - Bridge uses **MinSig variant** (G2 public keys, G1 signatures) - same as consensus - enabling validators to reuse DKG shares for both consensus and bridge signing
 - DST suffix indicates hash-to-curve target: `G1_XMD` for MinSig, `G2_XMD` for MinPk
-- Current DST: `TEMPO_BRIDGE_BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_`
+
+### FinalizationBridge Signature Format
+
+The FinalizationBridge contract verifies consensus finalization signatures directly. The signature format matches what commonware-consensus produces:
+
+- **Namespace**: `TEMPO_FINALIZE` (consensus appends `_FINALIZE` to base namespace `TEMPO`)
+- **Message**: The signed message is: `varint(len(namespace)) || namespace || proposal.encode()`
+  - For namespace "TEMPO_FINALIZE" (14 bytes), varint is `0x0E`
+  - Proposal contains: epoch (u64) + view (u64) + parent (u64) + payload (32 bytes = block hash)
+- **DST**: `BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_` (commonware standard for MinSig)
+
+### MessageBridge Signature Format (separate signing)
+
+MessageBridge uses bridge-specific signing (not consensus signatures):
+
+- **DST**: `TEMPO_BRIDGE_BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_`
+- **Message**: `keccak256(domain || sender || messageHash || originChainId || destinationChainId)`
+
+## Tempo Block Header Format
+
+- **Tempo uses a non-standard block header format**: `rlp([generalGasLimit, sharedGasLimit, timestampMillisPart, inner])` where `inner` is the standard Ethereum header
+- The block hash is `keccak256(rlp(tempoHeader))` - not the inner Ethereum header
+- `BlockHeaderDecoder.sol` parses this nested structure: `receiptsRoot` is at index 5 of the inner list (index 3 of outer)
+- Tempo RPC returns extra fields: `mainBlockGeneralGasLimit`, `sharedGasLimit`, `timestampMillisPart` - must use raw RPC requests to fetch these (alloy types don't include them)
 
 ## EIP-2537 BLS Precompiles
 
@@ -28,6 +51,10 @@
 - E2E tests should use real contracts, not mocks - the MessageBridge bytecode is at `contracts/out/MessageBridge.sol/MessageBridge.bytecode.hex`
 - Run `forge build` in `contracts/` to regenerate bytecode after Solidity changes
 - Calls from contracts to TIP-20 precompiles require high gas limits (~5M) - 500k will cause silent reverts with no error data
+- **TIP-1000 increases contract deployment gas costs on Tempo**: base deployment=500k, code deposit=1k/byte, account creation=250k. Use 2M+ gas for contract deploys, 500k+ for calls that create accounts
+- **Anvil needs higher gas limit for large contracts**: Use `--gas-limit 100000000` when starting Anvil to deploy FinalizationBridge with libraries
+- **Foundry EVM version must be `cancun`**: bls-solidity uses `mcopy` opcode which is not available in Shanghai
+- **Bytecode extraction from Forge**: Forge outputs JSON, extract with `jq -r '.bytecode.object' <contract>.json | sed 's/^0x//' > <contract>.bytecode.hex`
 
 ## Devnet Setup
 

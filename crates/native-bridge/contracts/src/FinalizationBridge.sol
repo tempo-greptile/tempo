@@ -19,15 +19,16 @@ contract FinalizationBridge is IFinalizationBridge {
     //                          CONSTANTS
     //=============================================================
 
-    /// @notice Domain separator for finalization signatures
-    /// @dev Validators sign: keccak256(FINALIZATION_DOMAIN || blockHash)
-    bytes public constant FINALIZATION_DOMAIN = "TEMPO_FINALIZATION_V1";
+    /// @notice Namespace for finalization signatures (consensus uses "TEMPO_FINALIZE")
+    /// @dev Validators sign: varint(len(namespace)) || namespace || proposal.encode()
+    bytes public constant FINALIZATION_NAMESPACE = "TEMPO_FINALIZE";
 
     /// @notice Domain separator for key rotation
     bytes public constant KEY_ROTATION_DOMAIN = "TEMPO_BRIDGE_KEY_ROTATION_V1";
 
     /// @notice BLS Domain Separation Tag for hash-to-curve (MinSig variant, targets G1)
-    bytes public constant BLS_DST = "TEMPO_BRIDGE_BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_";
+    /// @dev This is the standard DST used by commonware-cryptography for BLS12-381 MinSig
+    bytes public constant BLS_DST = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_POP_";
 
     /// @notice Expected length for uncompressed G1 point (signature in MinSig)
     uint256 internal constant G1_POINT_LENGTH = 128;
@@ -126,6 +127,7 @@ contract FinalizationBridge is IFinalizationBridge {
     /// @inheritdoc IFinalizationBridge
     function write(
         bytes calldata blockHeader,
+        bytes calldata finalizationProposal,
         bytes calldata finalizationSignature,
         bytes[] calldata receiptProof,
         uint256 receiptIndex,
@@ -137,23 +139,29 @@ contract FinalizationBridge is IFinalizationBridge {
         // 1. Decode block header and get blockHash + receiptsRoot
         (bytes32 blockHash, bytes32 receiptsRoot) = BlockHeaderDecoder.decode(blockHeader);
 
-        // 2. Verify finalization signature over blockHash
-        bytes32 signedHash = _computeFinalizationHash(blockHash);
-        bool valid = _verifyBLSSignature(groupPublicKey, signedHash, finalizationSignature);
+        // 2. Verify finalization signature over proposal (which contains the blockHash)
+        // Consensus signs: varint(len(namespace)) || namespace || proposal.encode()
+        bytes memory signedMessage = _computeFinalizationMessage(finalizationProposal);
+        bool valid = _verifyBLSSignatureRaw(groupPublicKey, signedMessage, finalizationSignature);
 
         if (!valid && previousGroupPublicKey.length > 0) {
-            valid = _verifyBLSSignature(previousGroupPublicKey, signedHash, finalizationSignature);
+            valid = _verifyBLSSignatureRaw(previousGroupPublicKey, signedMessage, finalizationSignature);
         }
 
         if (!valid) revert InvalidFinalizationSignature();
 
-        // 3. Verify receipt proof and extract message
+        // 3. Verify the proposal contains the correct block hash
+        // The proposal payload (last 32 bytes) should match the block hash
+        _verifyProposalMatchesBlock(finalizationProposal, blockHash);
+
+        // 4. Verify receipt proof and extract message
         _verifyAndStoreMessage(receiptsRoot, receiptProof, receiptIndex, logIndex);
     }
 
     /// @inheritdoc IFinalizationBridge
     function writeBatch(
         bytes calldata blockHeader,
+        bytes calldata finalizationProposal,
         bytes calldata finalizationSignature,
         bytes[][] calldata receiptProofs,
         uint256[] calldata receiptIndices,
@@ -168,17 +176,20 @@ contract FinalizationBridge is IFinalizationBridge {
         // 1. Decode block header and get blockHash + receiptsRoot
         (bytes32 blockHash, bytes32 receiptsRoot) = BlockHeaderDecoder.decode(blockHeader);
 
-        // 2. Verify finalization signature over blockHash (once for the batch)
-        bytes32 signedHash = _computeFinalizationHash(blockHash);
-        bool valid = _verifyBLSSignature(groupPublicKey, signedHash, finalizationSignature);
+        // 2. Verify finalization signature over proposal (once for the batch)
+        bytes memory signedMessage = _computeFinalizationMessage(finalizationProposal);
+        bool valid = _verifyBLSSignatureRaw(groupPublicKey, signedMessage, finalizationSignature);
 
         if (!valid && previousGroupPublicKey.length > 0) {
-            valid = _verifyBLSSignature(previousGroupPublicKey, signedHash, finalizationSignature);
+            valid = _verifyBLSSignatureRaw(previousGroupPublicKey, signedMessage, finalizationSignature);
         }
 
         if (!valid) revert InvalidFinalizationSignature();
 
-        // 3. Process each message
+        // 3. Verify the proposal contains the correct block hash
+        _verifyProposalMatchesBlock(finalizationProposal, blockHash);
+
+        // 4. Process each message
         for (uint256 i = 0; i < receiptProofs.length; i++) {
             _verifyAndStoreMessage(receiptsRoot, receiptProofs[i], receiptIndices[i], logIndices[i]);
         }
@@ -305,9 +316,21 @@ contract FinalizationBridge is IFinalizationBridge {
         emit MessageReceived(originChainId, log.sender, log.messageHash, timestamp);
     }
 
-    /// @notice Compute the hash that validators sign for finalization
-    function _computeFinalizationHash(bytes32 blockHash) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(FINALIZATION_DOMAIN, blockHash));
+    /// @notice Construct the message that validators sign for finalization
+    /// @dev Format: varint(len(namespace)) || namespace || proposal
+    /// For "TEMPO_FINALIZE" (14 bytes), varint is 0x0E
+    function _computeFinalizationMessage(bytes calldata proposal) internal pure returns (bytes memory) {
+        // Namespace length as varint (14 = 0x0E, fits in one byte)
+        return abi.encodePacked(uint8(FINALIZATION_NAMESPACE.length), FINALIZATION_NAMESPACE, proposal);
+    }
+
+    /// @notice Verify the proposal's payload matches the block hash
+    /// @dev The proposal structure is: Round (epoch u64 + view u64) + parent u64 + payload (32 bytes)
+    /// Payload is the last 32 bytes of the encoded proposal
+    function _verifyProposalMatchesBlock(bytes calldata proposal, bytes32 blockHash) internal pure {
+        if (proposal.length < 32) revert InvalidBlockHeader();
+        bytes32 proposalPayload = bytes32(proposal[proposal.length - 32:]);
+        if (proposalPayload != blockHash) revert BlockHashMismatch(blockHash, proposalPayload);
     }
 
     /// @notice Compute key rotation authorization hash
@@ -335,7 +358,18 @@ contract FinalizationBridge is IFinalizationBridge {
         emit KeyRotated(oldEpoch, newEpoch, oldKey, newPublicKey);
     }
 
+    /// @notice Verify a BLS signature over raw message bytes (MinSig variant)
+    /// @dev Used for finalization signatures where message is varint(len) || namespace || proposal
+    function _verifyBLSSignatureRaw(
+        bytes memory publicKey,
+        bytes memory message,
+        bytes calldata signature
+    ) internal view returns (bool) {
+        return BLS12381.verify(publicKey, message, BLS_DST, bytes(signature));
+    }
+
     /// @notice Verify a BLS signature using RFC 9380 hash-to-curve (MinSig variant)
+    /// @dev Used for key rotation where message is a keccak256 hash
     function _verifyBLSSignature(
         bytes memory publicKey,
         bytes32 messageHash,

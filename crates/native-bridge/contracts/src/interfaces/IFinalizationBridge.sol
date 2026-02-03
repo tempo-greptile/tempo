@@ -64,15 +64,17 @@ interface IFinalizationBridge {
     //=============================================================
 
     /// @notice Write a received message proven via finalization certificate and receipt proof
-    /// @dev Verifies: 1) BLS sig over blockHash, 2) header hashes to blockHash,
+    /// @dev Verifies: 1) BLS sig over proposal, 2) proposal payload matches blockHash,
     ///      3) receipt exists in receiptsRoot, 4) MessageSent log in receipt
     /// @param blockHeader RLP-encoded Tempo block header
-    /// @param finalizationSignature Aggregated BLS threshold signature over the block hash (G1, 128 bytes)
+    /// @param finalizationProposal Encoded consensus proposal (contains block hash as payload)
+    /// @param finalizationSignature Aggregated BLS threshold signature over the proposal (G1, 128 bytes)
     /// @param receiptProof MPT proof nodes for the receipt
     /// @param receiptIndex Index of the receipt in the block
     /// @param logIndex Index of the MessageSent log in the receipt
     function write(
         bytes calldata blockHeader,
+        bytes calldata finalizationProposal,
         bytes calldata finalizationSignature,
         bytes[] calldata receiptProof,
         uint256 receiptIndex,
@@ -82,12 +84,14 @@ interface IFinalizationBridge {
     /// @notice Write multiple messages from the same block
     /// @dev More efficient than multiple write() calls - verifies finalization once
     /// @param blockHeader RLP-encoded Tempo block header
+    /// @param finalizationProposal Encoded consensus proposal (contains block hash as payload)
     /// @param finalizationSignature Aggregated BLS threshold signature (G1, 128 bytes)
     /// @param receiptProofs Array of MPT proof nodes for each receipt
     /// @param receiptIndices Array of receipt indices
     /// @param logIndices Array of log indices within each receipt
     function writeBatch(
         bytes calldata blockHeader,
+        bytes calldata finalizationProposal,
         bytes calldata finalizationSignature,
         bytes[][] calldata receiptProofs,
         uint256[] calldata receiptIndices,
