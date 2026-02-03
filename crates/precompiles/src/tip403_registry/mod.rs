@@ -522,13 +522,6 @@ impl TIP403Registry {
     fn set_policy_data(&mut self, policy_id: u64, data: PolicyData) -> Result<()> {
         self.policy_records[policy_id].base.write(data)
     }
-
-    /// Returns authorization result for built-in policies (0 = reject, 1 = allow).
-    /// Returns None for user-created policies.
-    #[inline]
-    fn builtin_authorization(&self, policy_id: u64) -> Option<bool> {
-        (policy_id < 2).then_some(policy_id == 1)
-    }
 }
 
 impl AuthRole {
@@ -582,40 +575,6 @@ impl PolicyTypeExt for PolicyType {
                 }
             }
         }
-    }
-
-    /// Validates that a policy ID references an existing simple policy (not compound)
-    fn validate_simple_policy(&self, policy_id: u64) -> Result<()> {
-        // Built-in policies (0 and 1) are always valid simple policies
-        if self.builtin_authorization(policy_id).is_some() {
-            return Ok(());
-        }
-
-        // Check if policy exists
-        if policy_id >= self.policy_id_counter()? {
-            return Err(TIP403RegistryError::policy_not_found().into());
-        }
-
-        // Check if policy is simple (not compound)
-        let data = self.get_policy_data(policy_id)?;
-        if data.is_compound() {
-            return Err(TIP403RegistryError::policy_not_simple().into());
-        }
-
-        Ok(())
-    }
-
-    // Internal helper functions
-    fn get_policy_data(&self, policy_id: u64) -> Result<PolicyData> {
-        self.policy_records[policy_id].base.read()
-    }
-
-    fn set_policy_data(&mut self, policy_id: u64, data: PolicyData) -> Result<()> {
-        self.policy_records[policy_id].base.write(data)
-    }
-
-    fn set_policy_set(&mut self, policy_id: u64, account: Address, value: bool) -> Result<()> {
-        self.policy_set[policy_id][account].write(value)
     }
 }
 
