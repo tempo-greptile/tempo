@@ -3,41 +3,27 @@
 ## Creating a New TIP
 
 1. Copy template: `cp tips/tip_template.md tips/draft-<slug>.md`
-2. Fill in content (leave `id: TIP-XXXX` as-is)
-3. Open PR — on merge, CI renames to `tip-<PR_NUMBER>.md`
+2. Fill in content, leaving `id: TIP-XXXX` as-is
+3. Open PR
+
+On PR open, a GitHub Action assigns the next sequential TIP number, renames the file to `tip-<N>.md`, and replaces all `TIP-XXXX` references in the content.
+
+## Picking a Specific Number
+
+To reserve a specific TIP number, name your file `tip-<N>.md` directly (e.g., `tip-1050.md`). CI validates the number is not already used on main or in another open PR.
 
 ## Updating an Existing TIP
 
-Edit `tips/tip-<NUMBER>.md` directly and open a PR.
+Edit `tips/tip-<N>.md` directly and open a PR.
 
-## How TIP Numbers Are Assigned
+## Number Assignment Details
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  1. Create draft                                                │
-│     cp tips/tip_template.md tips/draft-my-feature.md            │
-└───────────────────────────┬─────────────────────────────────────┘
-                            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  2. Open PR #2400                                               │
-│     File: tips/draft-my-feature.md                              │
-│     Frontmatter: id: TIP-XXXX                                   │
-└───────────────────────────┬─────────────────────────────────────┘
-                            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  3. PR merges → CI runs tip-number.yml                          │
-│     • Renames draft-my-feature.md → tip-2400.md                 │
-│     • Updates frontmatter: id: TIP-2400                         │
-│     • Commits to main                                           │
-└───────────────────────────┬─────────────────────────────────────┘
-                            ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  4. Result                                                      │
-│     File: tips/tip-2400.md                                      │
-│     TIP number = PR number (guaranteed unique)                  │
-└─────────────────────────────────────────────────────────────────┘
-```
+The assignment workflow:
 
-## Lifecycle
+1. Scans `tips/tip-*.md` on main to find the highest existing number
+2. Scans open PRs for `tip-*.md` files to find any reserved numbers
+3. Assigns `max(both) + 1` to the new TIP
+4. Renames the file and updates content in-place
+5. Pushes a commit to the PR branch
 
-Draft → In Review → Approved → In Progress → Devnet → QA/Integration → Testnet → Mainnet → Deprecated
+A concurrency group ensures two simultaneous PRs cannot receive the same number.
