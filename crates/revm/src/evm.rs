@@ -1871,106 +1871,78 @@ mod tests {
         Ok(())
     }
 
-    /// Test that gas estimation for CREATE + 2D nonce includes the 250k account creation cost.
-    /// This verifies the fix for the bug where eth_fillTransaction failed because
-    /// validate_aa_initial_tx_gas didn't include the 250k account creation cost,
-    /// causing execution to fail with "gas limit X is less than intrinsic gas Y".
-    ///
-    /// The fix ensures:
-    /// 1. Gas estimation (validate_aa_initial_tx_gas) includes conservative 250k
-    /// 2. Execution (validate_against_state_and_deduct_caller) refunds if account exists
-    /// 3. Transaction passes intrinsic gas validation and can proceed to execution
     #[test]
     fn test_gas_estimation_create_with_2d_nonce() -> eyre::Result<()> {
-        let initcode = vec![0x60, 0x00, 0x60, 0x00, 0xF3]; // PUSH0 PUSH0 RETURN
-        let key_pair = P256KeyPair::random();
-        let caller = key_pair.address;
+        let initcode = vec![0x60, 0x00, 0x60, 0x00, 0xF3]; // PUSH1 0x00, PUSH1 0x00, RETURN
+        let initcode_execution_gas = 6u64; // 2 x PUSH1 = 6 gas
         let nonce_key_2d = U256::ONE;
-
-        // Execute first tx to create the account (so caller.nonce > 0)
-        let mut evm = create_funded_evm_t1(caller);
-        let first_tx = TxBuilder::new()
-            .call_identity(&[0x01])
-            .gas_limit(500_000)
-            .build();
-        let signed_first_tx = key_pair.sign_tx(first_tx)?;
-        let first_tx_env = TempoTxEnv::from_recovered_tx(&signed_first_tx, caller);
-        let first_result = evm.transact_commit(first_tx_env)?;
-        assert!(first_result.is_success(), "First tx should succeed");
-
-        // Verify account now exists with nonce > 0
-        let account_nonce = evm
-            .ctx
-            .db()
-            .basic_ref(caller)
-            .ok()
-            .flatten()
-            .map(|a| a.nonce)
-            .unwrap_or(0);
-        assert!(
-            account_nonce > 0,
-            "Account nonce should be > 0 after first tx"
-        );
-
-        // Step 2: Get intrinsic gas estimate for CREATE + 2D nonce
-        // Gas estimation still includes conservative 250k (can't access state)
-        let create_tx = TxBuilder::new()
-            .create(&initcode)
-            .nonce_key(nonce_key_2d)
-            .nonce(0) // 2D nonce starts at 0
-            .gas_limit(u64::MAX)
-            .build();
-
-        let signed_create_tx = key_pair.sign_tx(create_tx)?;
-        let create_tx_env = TempoTxEnv::from_recovered_tx(&signed_create_tx, caller);
-        evm.ctx.tx = create_tx_env.clone();
-
         let handler = TempoEvmHandler::default();
-        let estimated_gas = handler.validate_initial_tx_gas(&mut evm)?;
 
-        // Verify estimate includes conservative 250k for CREATE + 2D nonce
-        // Base CREATE (~528k) + tx.nonce==0 (250k) + CREATE+2D account (250k) = ~1028k
-        assert!(
-            estimated_gas.initial_gas >= 1_000_000,
-            "Estimated gas {} should include 250k for CREATE + 2D nonce",
-            estimated_gas.initial_gas
-        );
+        // (label, setup_existing_account, expected_gas_remaining)
+        let test_cases: [(&str, bool, u64); 2] = [
+            ("new", false, 0),           // New account: no refund, all gas used
+            ("existing", true, 250_000), // Existing account: 250k refunded
+        ];
 
-        // Execute with estimated gas - should succeed because:
-        // - Conservative 250k is included in estimate
-        // - Account exists (nonce > 0), so 250k is refunded during execution
-        // - Net effect: enough gas for execution
-        let create_tx_with_gas = TxBuilder::new()
-            .create(&initcode)
-            .nonce_key(nonce_key_2d)
-            .nonce(0)
-            .gas_limit(estimated_gas.initial_gas) // Add buffer for CREATE execution
-            .build();
+        for (label, setup_existing_account, expected_remaining) in test_cases {
+            let key_pair = P256KeyPair::random();
+            let caller = key_pair.address;
 
-        let signed_create_tx_with_gas = key_pair.sign_tx(create_tx_with_gas)?;
-        let create_tx_env_with_gas =
-            TempoTxEnv::from_recovered_tx(&signed_create_tx_with_gas, caller);
-        let result = evm.transact_commit(create_tx_env_with_gas)?;
+            let mut evm = create_funded_evm_t1(caller);
 
-        assert!(
-            result.is_success(),
-            "CREATE + 2D nonce should succeed with estimated gas (account exists, 250k refunded)"
-        );
+            // For existing account case, execute a tx first to bump protocol nonce
+            if setup_existing_account {
+                let setup_tx = TxBuilder::new()
+                    .call_identity(&[0x01])
+                    .gas_limit(500_000)
+                    .build();
+                let signed_setup_tx = key_pair.sign_tx(setup_tx)?;
+                let setup_tx_env = TempoTxEnv::from_recovered_tx(&signed_setup_tx, caller);
+                evm.transact_commit(setup_tx_env)?;
+            }
 
-        // Verify gas used is ~250k less than estimate due to refund
-        let gas_used = result.gas_used();
-        let gas_available = estimated_gas.initial_gas;
-        let gas_remaining = gas_available - gas_used;
+            // Get intrinsic gas estimate - always includes conservative 250k
+            let estimate_tx = TxBuilder::new()
+                .create(&initcode)
+                .nonce_key(nonce_key_2d)
+                .nonce(0)
+                .gas_limit(u64::MAX)
+                .build();
 
-        // Gas remaining = 250k refund - initcode execution (2 x PUSH1 = 6 gas)
-        assert_eq!(
-            gas_remaining,
-            250_000 - 6,
-            "Expected 250k refund minus initcode execution, remaining={} (available={}, used={})",
-            gas_remaining,
-            gas_available,
-            gas_used
-        );
+            let signed_estimate_tx = key_pair.sign_tx(estimate_tx)?;
+            evm.ctx.tx = TempoTxEnv::from_recovered_tx(&signed_estimate_tx, caller);
+
+            let estimated_gas = handler.validate_initial_tx_gas(&mut evm)?;
+            // Base CREATE (~528k) + tx.nonce==0 (250k) + CREATE+2D nonce (250k) = 1,028,714
+            assert_eq!(
+                estimated_gas.initial_gas, 1_028_714,
+                "[{label}] Unexpected estimated gas"
+            );
+
+            // Execute with estimated gas + initcode execution gas
+            let gas_limit = estimated_gas.initial_gas + initcode_execution_gas;
+            let exec_tx = TxBuilder::new()
+                .create(&initcode)
+                .nonce_key(nonce_key_2d)
+                .nonce(0)
+                .gas_limit(gas_limit)
+                .build();
+
+            let signed_exec_tx = key_pair.sign_tx(exec_tx)?;
+            let exec_tx_env = TempoTxEnv::from_recovered_tx(&signed_exec_tx, caller);
+            let result = evm.transact_commit(exec_tx_env)?;
+
+            assert!(
+                result.is_success(),
+                "[{label}] CREATE + 2D nonce should succeed"
+            );
+
+            let gas_remaining = gas_limit - result.gas_used();
+            assert_eq!(
+                gas_remaining, expected_remaining,
+                "[{label}] Unexpected gas remaining"
+            );
+        }
 
         Ok(())
     }
