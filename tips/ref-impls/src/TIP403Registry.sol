@@ -137,8 +137,13 @@ contract TIP403Registry is ITIP403Registry {
         PolicyData memory data = _policyData[policyId];
 
         // TIP-1015: For compound policies, check both sender and recipient
+        // Short-circuit: skip recipient check if sender fails
         if (data.policyType == PolicyType.COMPOUND) {
-            return isAuthorizedSender(policyId, user) && isAuthorizedRecipient(policyId, user);
+            bool senderAuth = isAuthorizedSender(policyId, user);
+            if (!senderAuth) {
+                return false;
+            }
+            return isAuthorizedRecipient(policyId, user);
         }
 
         return data.policyType == PolicyType.WHITELIST
