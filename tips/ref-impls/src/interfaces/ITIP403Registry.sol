@@ -26,14 +26,17 @@ interface ITIP403Registry {
     /// @notice Error when caller lacks authorization to perform the requested action
     error Unauthorized();
 
-    /// @notice Error when attempting to operate on a policy with incompatible type
-    error IncompatiblePolicyType();
-
     /// @notice Error when querying a policy that does not exist
     error PolicyNotFound();
 
     /// @notice TIP-1015: Error when a compound policy references a non-simple policy
     error PolicyNotSimple();
+
+    /// @notice Error when attempting to operate on a policy with incompatible type
+    error IncompatiblePolicyType();
+
+    /// @notice Error when attempting to operate on a policy with incompatible type
+    error InvalidPolicyType();
 
     /// @notice Emitted when a policy's admin is updated
     /// @param policyId The ID of the policy that was updated
