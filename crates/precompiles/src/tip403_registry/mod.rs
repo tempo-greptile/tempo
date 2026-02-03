@@ -522,6 +522,10 @@ impl TIP403Registry {
     fn set_policy_data(&mut self, policy_id: u64, data: PolicyData) -> Result<()> {
         self.policy_records[policy_id].base.write(data)
     }
+
+    fn set_policy_set(&mut self, policy_id: u64, account: Address, value: bool) -> Result<()> {
+        self.policy_set[policy_id][account].write(value)
+    }
 }
 
 impl AuthRole {
@@ -575,37 +579,6 @@ impl PolicyTypeExt for PolicyType {
                 }
             }
         }
-    }
-}
-
-impl AuthRole {
-    #[inline]
-    fn transfer_or(t1_variant: Self) -> Self {
-        if StorageCtx.spec().is_t1() {
-            t1_variant
-        } else {
-            Self::Transfer
-        }
-    }
-
-    /// Hardfork-aware: always returns `Transfer`.
-    pub fn transfer() -> Self {
-        Self::Transfer
-    }
-
-    /// Hardfork-aware: returns `Sender` for T1+, `Transfer` for pre-T1.
-    pub fn sender() -> Self {
-        Self::transfer_or(Self::Sender)
-    }
-
-    /// Hardfork-aware: returns `Recipient` for T1+, `Transfer` for pre-T1.
-    pub fn recipient() -> Self {
-        Self::transfer_or(Self::Recipient)
-    }
-
-    /// Hardfork-aware: returns `MintRecipient` for T1+, `Transfer` for pre-T1.
-    pub fn mint_recipient() -> Self {
-        Self::transfer_or(Self::MintRecipient)
     }
 }
 
