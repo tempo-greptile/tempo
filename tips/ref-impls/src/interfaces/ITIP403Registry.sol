@@ -35,7 +35,7 @@ interface ITIP403Registry {
     /// @notice Error when attempting to operate on a policy with incompatible type
     error IncompatiblePolicyType();
 
-    /// @notice Error when attempting to operate on a policy with incompatible type
+    /// @notice Error when policy has an invalid type
     error InvalidPolicyType();
 
     /// @notice Emitted when a policy's admin is updated
