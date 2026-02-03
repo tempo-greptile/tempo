@@ -2312,8 +2312,12 @@ contract TIP20Test is BaseTest {
         compoundToken.grantRole(_ISSUER_ROLE, admin);
         compoundToken.changeTransferPolicyId(compound);
 
-        vm.expectRevert(ITIP20.PolicyForbids.selector);
-        compoundToken.mint(charlie, 1000);
+        // Use try/catch instead of vm.expectRevert() due to precompile call depth issues
+        try compoundToken.mint(charlie, 1000) {
+            revert("mint should have reverted");
+        } catch (bytes memory err) {
+            assertEq(bytes4(err), ITIP20.PolicyForbids.selector);
+        }
 
         vm.stopPrank();
     }
@@ -2366,8 +2370,12 @@ contract TIP20Test is BaseTest {
         vm.stopPrank();
 
         vm.prank(alice);
-        vm.expectRevert(ITIP20.PolicyForbids.selector);
-        compoundToken.transfer(bob, 500);
+        // Use try/catch instead of vm.expectRevert() due to precompile call depth issues
+        try compoundToken.transfer(bob, 500) {
+            revert("transfer should have reverted");
+        } catch (bytes memory err) {
+            assertEq(bytes4(err), ITIP20.PolicyForbids.selector);
+        }
     }
 
     function test_Transfer_Fails_RecipientUnauthorized_CompoundPolicy() public {
@@ -2390,8 +2398,12 @@ contract TIP20Test is BaseTest {
         vm.stopPrank();
 
         vm.prank(alice);
-        vm.expectRevert(ITIP20.PolicyForbids.selector);
-        compoundToken.transfer(bob, 500);
+        // Use try/catch instead of vm.expectRevert() due to precompile call depth issues
+        try compoundToken.transfer(bob, 500) {
+            revert("transfer should have reverted");
+        } catch (bytes memory err) {
+            assertEq(bytes4(err), ITIP20.PolicyForbids.selector);
+        }
     }
 
     function test_Transfer_AsymmetricCompound_BlockedCanReceiveNotSend() public {
@@ -2420,8 +2432,12 @@ contract TIP20Test is BaseTest {
 
         // charlie cannot send (blocked as sender)
         vm.prank(charlie);
-        vm.expectRevert(ITIP20.PolicyForbids.selector);
-        compoundToken.transfer(alice, 100);
+        // Use try/catch instead of vm.expectRevert() due to precompile call depth issues
+        try compoundToken.transfer(alice, 100) {
+            revert("transfer should have reverted");
+        } catch (bytes memory err) {
+            assertEq(bytes4(err), ITIP20.PolicyForbids.selector);
+        }
     }
 
     function test_BurnBlocked_Succeeds_BlockedSender_CompoundPolicy() public {
@@ -2462,8 +2478,12 @@ contract TIP20Test is BaseTest {
         compoundToken.mint(alice, 1000);
         compoundToken.changeTransferPolicyId(asymmetricCompound);
 
-        vm.expectRevert(ITIP20.PolicyForbids.selector);
-        compoundToken.burnBlocked(alice, 500);
+        // Use try/catch instead of vm.expectRevert() due to precompile call depth issues
+        try compoundToken.burnBlocked(alice, 500) {
+            revert("burnBlocked should have reverted");
+        } catch (bytes memory err) {
+            assertEq(bytes4(err), ITIP20.PolicyForbids.selector);
+        }
 
         vm.stopPrank();
     }
@@ -2487,8 +2507,12 @@ contract TIP20Test is BaseTest {
         compoundToken.changeTransferPolicyId(recipientBlockedCompound);
 
         // charlie is blocked as recipient but NOT as sender, so burnBlocked should fail
-        vm.expectRevert(ITIP20.PolicyForbids.selector);
-        compoundToken.burnBlocked(charlie, 500);
+        // Use try/catch instead of vm.expectRevert() due to precompile call depth issues
+        try compoundToken.burnBlocked(charlie, 500) {
+            revert("burnBlocked should have reverted");
+        } catch (bytes memory err) {
+            assertEq(bytes4(err), ITIP20.PolicyForbids.selector);
+        }
 
         vm.stopPrank();
     }

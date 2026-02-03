@@ -927,14 +927,24 @@ contract TIP403RegistryTest is BaseTest {
         uint64 whitelist = registry.createPolicy(alice, ITIP403Registry.PolicyType.WHITELIST);
         uint64 nonExistent = 99_999;
 
-        vm.expectRevert(ITIP403Registry.PolicyNotFound.selector);
-        registry.createCompoundPolicy(nonExistent, whitelist, whitelist);
+        // Use try/catch instead of vm.expectRevert() due to precompile call depth issues
+        try registry.createCompoundPolicy(nonExistent, whitelist, whitelist) returns (uint64) {
+            revert("createCompoundPolicy should have reverted");
+        } catch (bytes memory err) {
+            assertEq(bytes4(err), ITIP403Registry.PolicyNotFound.selector);
+        }
 
-        vm.expectRevert(ITIP403Registry.PolicyNotFound.selector);
-        registry.createCompoundPolicy(whitelist, nonExistent, whitelist);
+        try registry.createCompoundPolicy(whitelist, nonExistent, whitelist) returns (uint64) {
+            revert("createCompoundPolicy should have reverted");
+        } catch (bytes memory err) {
+            assertEq(bytes4(err), ITIP403Registry.PolicyNotFound.selector);
+        }
 
-        vm.expectRevert(ITIP403Registry.PolicyNotFound.selector);
-        registry.createCompoundPolicy(whitelist, whitelist, nonExistent);
+        try registry.createCompoundPolicy(whitelist, whitelist, nonExistent) returns (uint64) {
+            revert("createCompoundPolicy should have reverted");
+        } catch (bytes memory err) {
+            assertEq(bytes4(err), ITIP403Registry.PolicyNotFound.selector);
+        }
     }
 
     function test_CreateCompoundPolicy_CanReferenceBuiltinPolicies() public {
@@ -954,18 +964,25 @@ contract TIP403RegistryTest is BaseTest {
         uint64 whitelist = registry.createPolicy(alice, ITIP403Registry.PolicyType.WHITELIST);
         uint64 compound = registry.createCompoundPolicy(whitelist, whitelist, whitelist);
 
-        vm.expectRevert();
-        registry.modifyPolicyWhitelist(compound, alice, true);
+        // Use try/catch instead of vm.expectRevert() due to precompile call depth issues
+        try registry.modifyPolicyWhitelist(compound, alice, true) {
+            revert("modifyPolicyWhitelist should have reverted");
+        } catch { }
 
-        vm.expectRevert();
-        registry.modifyPolicyBlacklist(compound, alice, true);
+        try registry.modifyPolicyBlacklist(compound, alice, true) {
+            revert("modifyPolicyBlacklist should have reverted");
+        } catch { }
     }
 
     function test_CompoundPolicyData_RevertsForNonCompound() public {
         uint64 whitelist = registry.createPolicy(alice, ITIP403Registry.PolicyType.WHITELIST);
 
-        vm.expectRevert(ITIP403Registry.IncompatiblePolicyType.selector);
-        registry.compoundPolicyData(whitelist);
+        // Use try/catch instead of vm.expectRevert() due to precompile call depth issues
+        try registry.compoundPolicyData(whitelist) returns (uint64, uint64, uint64) {
+            revert("compoundPolicyData should have reverted");
+        } catch (bytes memory err) {
+            assertEq(bytes4(err), ITIP403Registry.IncompatiblePolicyType.selector);
+        }
     }
 
     function test_IsAuthorizedSender_SimplePolicy() public {

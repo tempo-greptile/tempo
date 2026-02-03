@@ -215,6 +215,11 @@ contract FeeManagerTest is BaseTest {
     }
 
     function test_collectFeePreTx_RevertsIf_FeePayerNotAuthorizedSender() public {
+        // TODO: collectFeePreTx fn is not exposed by precompiles
+        if (isTempo) {
+            return;
+        }
+
         // Blacklist user as sender on the fee token.
         address[] memory accounts = new address[](1);
         accounts[0] = user;
@@ -236,6 +241,11 @@ contract FeeManagerTest is BaseTest {
     }
 
     function test_collectFeePreTx_RevertsIf_FeeManagerNotAuthorizedRecipient() public {
+        // TODO: collectFeePreTx fn is not exposed by precompiles
+        if (isTempo) {
+            return;
+        }
+
         // Whitelist user but not FeeManager as recipient on the fee token.
         address[] memory accounts = new address[](1);
         accounts[0] = user;
