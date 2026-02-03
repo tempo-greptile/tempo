@@ -9,13 +9,15 @@ import { InvariantBaseTest } from "./InvariantBaseTest.t.sol";
 
 /// @title TIP-1015 Compound Policy Invariant Tests
 /// @notice Handler-based invariant tests for compound transfer policies as specified in TIP-1015
-/// @dev Tests 6 invariants using Foundry's stateful fuzzing:
+/// @dev Tests 8 invariants using Foundry's stateful fuzzing:
 ///      TEMPO-1015-1: Simple Policy Constraint - compound policies only reference simple policies
 ///      TEMPO-1015-2: Immutability - compound policies have no admin and cannot be modified
 ///      TEMPO-1015-3: Existence Check - createCompoundPolicy reverts for non-existent policies
 ///      TEMPO-1015-4: Delegation Correctness - simple policies have equivalent directional auth
 ///      TEMPO-1015-5: isAuthorized Equivalence - isAuthorized = sender && recipient
 ///      TEMPO-1015-6: Built-in Policy Compatibility - compound policies can reference policies 0/1
+///      TEMPO-1015-7: distributeReward requires both sender AND recipient authorization
+///      TEMPO-1015-8: claimRewards uses correct directional authorization
 contract TIP1015InvariantTest is InvariantBaseTest {
 
     /*//////////////////////////////////////////////////////////////
@@ -601,6 +603,191 @@ contract TIP1015InvariantTest is InvariantBaseTest {
             }
         }
         vm.stopPrank();
+    }
+
+    /// @notice TEMPO-1015-7: distributeReward requires both sender AND recipient authorization
+    /// @dev Sender must be authorized to send, contract must be authorized to receive
+    function distributeRewardWithCompoundPolicy(
+        uint256 tokenSeed,
+        uint256 senderSeed,
+        uint256 amount
+    ) external {
+        if (_compoundTokens.length == 0) return;
+
+        TIP20 token = _compoundTokens[tokenSeed % _compoundTokens.length];
+        uint64 pid = _tokenPolicy[address(token)];
+        address sender = _selectActor(senderSeed);
+
+        amount = bound(amount, 1, 10_000);
+
+        // Skip if sender is not authorized to receive mints (can't get balance)
+        if (!registry.isAuthorizedMintRecipient(pid, sender)) return;
+
+        // Ensure sender has sufficient balance - mint extra to avoid underflow
+        uint256 senderBalance = token.balanceOf(sender);
+        if (senderBalance < amount + 1000) {
+            vm.startPrank(admin);
+            try token.mint(sender, amount + 1000) { }
+            catch {
+                vm.stopPrank();
+                return;
+            }
+            vm.stopPrank();
+        }
+        senderBalance = token.balanceOf(sender);
+        if (senderBalance < amount) return;
+
+        // Need at least one opted-in holder for distributeReward to work
+        // Use a different actor to opt-in (use XOR to avoid overflow)
+        address optedInHolder = _selectActorExcluding(senderSeed ^ 0x1234, sender);
+        if (registry.isAuthorizedMintRecipient(pid, optedInHolder)) {
+            if (token.balanceOf(optedInHolder) == 0) {
+                vm.startPrank(admin);
+                try token.mint(optedInHolder, 1000) { } catch { }
+                vm.stopPrank();
+            }
+            if (token.balanceOf(optedInHolder) > 0) {
+                // Check if can opt in (needs sender + recipient auth for setRewardRecipient)
+                if (
+                    registry.isAuthorizedSender(pid, optedInHolder)
+                        && registry.isAuthorizedRecipient(pid, optedInHolder)
+                ) {
+                    vm.prank(optedInHolder);
+                    try token.setRewardRecipient(optedInHolder) { } catch { }
+                }
+            }
+        }
+
+        // Skip if no opted-in supply
+        if (token.optedInSupply() == 0) return;
+
+        bool senderAuth = registry.isAuthorizedSender(pid, sender);
+        bool contractRecipientAuth = registry.isAuthorizedRecipient(pid, address(token));
+
+        vm.prank(sender);
+        if (senderAuth && contractRecipientAuth) {
+            try token.distributeReward(amount) {
+                if (_loggingEnabled) {
+                    _log(
+                        string.concat(
+                            "DISTRIBUTE_REWARD: sender=",
+                            _getActorIndex(sender),
+                            " amount=",
+                            vm.toString(amount),
+                            " (authorized)"
+                        )
+                    );
+                }
+            } catch {
+                // Can fail for other reasons (e.g., zero optedInSupply race)
+            }
+        } else {
+            try token.distributeReward(amount) {
+                revert("TEMPO-1015-7: distributeReward should revert for unauthorized");
+            } catch (bytes memory reason) {
+                // May revert for other reasons too, only check if it's PolicyForbids
+                if (bytes4(reason) == ITIP20.PolicyForbids.selector) {
+                    if (_loggingEnabled) {
+                        _log(
+                            string.concat(
+                                "DISTRIBUTE_REWARD: sender=",
+                                _getActorIndex(sender),
+                                " senderAuth=",
+                                senderAuth ? "true" : "false",
+                                " contractRecipientAuth=",
+                                contractRecipientAuth ? "true" : "false",
+                                " (correctly reverted)"
+                            )
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// @notice TEMPO-1015-8: claimRewards uses correct directional authorization
+    /// @dev Contract must be authorized to send, claimer must be authorized to receive
+    function claimRewardsWithCompoundPolicy(uint256 tokenSeed, uint256 claimerSeed) external {
+        if (_compoundTokens.length == 0) return;
+
+        TIP20 token = _compoundTokens[tokenSeed % _compoundTokens.length];
+        uint64 pid = _tokenPolicy[address(token)];
+        address claimer = _selectActor(claimerSeed);
+
+        // Skip if claimer can't receive mints
+        if (!registry.isAuthorizedMintRecipient(pid, claimer)) return;
+
+        // Claimer must opt-in first and have some rewards to claim
+        // First ensure claimer has balance
+        if (token.balanceOf(claimer) == 0) {
+            vm.startPrank(admin);
+            try token.mint(claimer, 1000) { }
+            catch {
+                vm.stopPrank();
+                return;
+            }
+            vm.stopPrank();
+        }
+        if (token.balanceOf(claimer) == 0) return;
+
+        // Check if claimer is opted in, if not try to opt in
+        // setRewardRecipient requires sender + recipient auth
+        (address rewardRecipient,,) = token.userRewardInfo(claimer);
+        if (rewardRecipient == address(0)) {
+            if (
+                !registry.isAuthorizedSender(pid, claimer)
+                    || !registry.isAuthorizedRecipient(pid, claimer)
+            ) {
+                return; // Can't opt in due to policy
+            }
+            vm.prank(claimer);
+            try token.setRewardRecipient(claimer) { }
+            catch {
+                return; // Can't opt in, skip
+            }
+        }
+
+        // Skip if no opted-in supply
+        if (token.optedInSupply() == 0) return;
+
+        bool contractSenderAuth = registry.isAuthorizedSender(pid, address(token));
+        bool claimerRecipientAuth = registry.isAuthorizedRecipient(pid, claimer);
+
+        vm.prank(claimer);
+        if (contractSenderAuth && claimerRecipientAuth) {
+            try token.claimRewards() {
+                if (_loggingEnabled) {
+                    _log(
+                        string.concat(
+                            "CLAIM_REWARDS: claimer=", _getActorIndex(claimer), " (authorized)"
+                        )
+                    );
+                }
+            } catch {
+                // Can fail for other reasons
+            }
+        } else {
+            try token.claimRewards() {
+                revert("TEMPO-1015-8: claimRewards should revert for unauthorized");
+            } catch (bytes memory reason) {
+                // May revert for other reasons too, only check if it's PolicyForbids
+                if (bytes4(reason) == ITIP20.PolicyForbids.selector) {
+                    if (_loggingEnabled) {
+                        _log(
+                            string.concat(
+                                "CLAIM_REWARDS: claimer=",
+                                _getActorIndex(claimer),
+                                " contractSenderAuth=",
+                                contractSenderAuth ? "true" : "false",
+                                " claimerRecipientAuth=",
+                                claimerRecipientAuth ? "true" : "false",
+                                " (correctly reverted)"
+                            )
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// @notice DEX cancelStaleOrder uses senderPolicyId to check if maker is blocked
