@@ -5,10 +5,13 @@ import { FeeAMM } from "./FeeAMM.sol";
 import { IERC20 } from "./interfaces/IERC20.sol";
 import { IFeeManager } from "./interfaces/IFeeManager.sol";
 import { ITIP20 } from "./interfaces/ITIP20.sol";
+import { TIP403Registry } from "./TIP403Registry.sol";
 
 contract FeeManager is IFeeManager, FeeAMM {
 
     address internal constant PATH_USD = 0x20C0000000000000000000000000000000000000;
+    TIP403Registry internal constant TIP403_REGISTRY =
+        TIP403Registry(0x403c000000000000000000000000000000000000);
 
     mapping(address => address) public validatorTokens;
     mapping(address => address) public userTokens;
@@ -38,6 +41,15 @@ contract FeeManager is IFeeManager, FeeAMM {
         address validatorToken = validatorTokens[block.coinbase];
         if (validatorToken == address(0)) {
             validatorToken = PATH_USD;
+        }
+
+        // Ensure fee payer can send the fee token and FeeManager can receive it.
+        uint64 policyId = ITIP20(userToken).transferPolicyId();
+        if (
+            !TIP403_REGISTRY.isAuthorizedSender(policyId, user)
+                || !TIP403_REGISTRY.isAuthorizedRecipient(policyId, address(this))
+        ) {
+            revert ITIP20.PolicyForbids();
         }
 
         ITIP20(userToken).transferFeePreTx(user, maxAmount);
