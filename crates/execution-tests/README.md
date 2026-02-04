@@ -148,12 +148,22 @@ vectors/
 ```json
 { "success": true }
 
+{ "success": false, "error": "0x" }
+
 { "success": false, "error": "TokenAlreadyExists(address)" }
 
-{ "success": false, "revert_contains": "insufficient balance" }
-
 { "success": false, "error": "0xabcdef12" }
+
+{ "success": false, "revert_contains": "insufficient balance" }
 ```
+
+| Field | Description |
+|-------|-------------|
+| `success: true` | Transaction succeeds |
+| `error: "0x"` | Reverts with empty data |
+| `error: "ErrorName(types)"` | Reverts with custom error (matched by selector) |
+| `error: "0xabcdef12"` | Reverts with raw 4-byte selector |
+| `revert_contains: "msg"` | Reverts with `Error(string)` containing msg |
 
 ### Hardfork-Specific Outcomes
 

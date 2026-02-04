@@ -149,8 +149,18 @@ pub fn validate_tx_outcomes(
                 }
             }
 
-            // Check error (custom error by selector)
-            if let Some(expected_selector) = outcome.error_selector() {
+            // Check error field
+            if outcome.expects_empty_revert() {
+                // error: "0x" means expect empty revert data
+                if !result.return_data.is_empty() {
+                    errors.push(format!(
+                        "tx {i}: expected empty revert data, got {} bytes: 0x{}",
+                        result.return_data.len(),
+                        hex::encode(&result.return_data)
+                    ));
+                }
+            } else if let Some(expected_selector) = outcome.error_selector() {
+                // Check custom error by selector
                 if result.return_data.len() >= 4 {
                     let actual_selector = &result.return_data[..4];
                     if actual_selector != expected_selector {

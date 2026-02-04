@@ -188,6 +188,7 @@ impl TxOutcome {
     /// Validate the outcome configuration.
     /// - When success=true, error and revert_contains must be None
     /// - When success=false, at least one of error or revert_contains must be Some
+    ///   Use `error: "0x"` for empty revert data
     pub fn validate(&self) -> Result<(), String> {
         if self.success {
             if self.error.is_some() {
@@ -198,11 +199,16 @@ impl TxOutcome {
             }
         } else if self.error.is_none() && self.revert_contains.is_none() {
             return Err(
-                "outcome has success=false but neither 'error' nor 'revert_contains' is set"
+                "outcome has success=false but neither 'error' nor 'revert_contains' is set. Use 'error: \"0x\"' for empty revert."
                     .to_string(),
             );
         }
         Ok(())
+    }
+
+    /// Returns true if this outcome expects empty revert data (error: "0x")
+    pub fn expects_empty_revert(&self) -> bool {
+        self.error.as_ref().map(|e| e == "0x").unwrap_or(false)
     }
 
     /// Compute the 4-byte selector for a custom error.
