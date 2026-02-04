@@ -753,7 +753,7 @@ mod tests {
             // Test 100 random policy IDs > 1 should not exist initially
             let mut rng = rand::rng();
             for _ in 0..100 {
-                let random_policy_id = rng.gen_range(2..u64::MAX);
+                let random_policy_id = rng.random_range(2..u64::MAX);
                 assert!(!registry.policy_exists(ITIP403Registry::policyExistsCall {
                     policyId: random_policy_id
                 })?);

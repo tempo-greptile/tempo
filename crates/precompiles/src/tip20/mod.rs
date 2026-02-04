@@ -1852,7 +1852,7 @@ pub(crate) mod tests {
             // Test random invalid policy IDs should fail
             let mut rng = rand::rng();
             for _ in 0..20 {
-                let invalid_policy_id = rng.gen_range(2..u64::MAX);
+                let invalid_policy_id = rng.random_range(2..u64::MAX);
                 let result = token.change_transfer_policy_id(
                     admin,
                     ITIP20::changeTransferPolicyIdCall {
