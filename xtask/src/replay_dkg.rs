@@ -79,7 +79,8 @@ struct ReplayResult {
     dealings_found: Vec<DealingInfo>,
     observe_success: bool,
     observe_error: Option<String>,
-    network_identity: Option<Bytes>,
+    incoming_network_identity: Bytes,
+    resulting_network_identity: Bytes,
 }
 
 fn pubkey_to_hex(pk: &PublicKey) -> String {
@@ -152,6 +153,8 @@ impl ReplayDkg {
         let dealers = prev_outcome.players().clone();
         let players = prev_outcome.next_players().clone();
         let prev_polynomial = *prev_outcome.sharing().public();
+        let incoming_network_identity =
+            Bytes::copy_from_slice(&prev_outcome.output.public().public().encode());
 
         eprintln!(
             "DKG round info:\ndealers: {dealers:?}\nplayers: {players:?}\npolynomial: {prev_polynomial:?}",
@@ -322,19 +325,39 @@ impl ReplayDkg {
 
         eprintln!("\nFound {} valid dealer logs", logs.len());
 
+        // Fetch the current epoch boundary block to get the resulting network identity
+        let current_boundary_block = provider
+            .get_block_by_number(epoch_end.into())
+            .await
+            .wrap_err("failed to fetch current epoch boundary block")?
+            .ok_or_else(|| eyre!("current epoch boundary block {epoch_end} not found"))?;
+
+        let current_extra_data = &current_boundary_block.header.inner.extra_data;
+        eyre::ensure!(
+            !current_extra_data.is_empty(),
+            "current epoch boundary block {epoch_end} has empty extra_data",
+        );
+
+        let current_outcome = OnchainDkgOutcome::read(&mut current_extra_data.as_ref())
+            .wrap_err("failed to parse DKG outcome from current epoch boundary block")?;
+
+        let resulting_network_identity =
+            Bytes::copy_from_slice(&current_outcome.output.public().public().encode());
+
         // Call observe to replay the DKG
-        let (observe_success, observe_error, network_identity) =
+        let (observe_success, observe_error) =
             match dkg::observe::<_, _, N3f1>(info, logs, &Sequential) {
                 Ok(output) => {
                     eprintln!("DKG observe succeeded!");
                     let identity = Bytes::copy_from_slice(&commonware_codec::Encode::encode(
                         output.public().public(),
                     ));
-                    (true, None, Some(identity))
+                    eprintln!("Observed identity: {identity}");
+                    (true, None)
                 }
                 Err(e) => {
                     eprintln!("DKG observe failed: {e:?}");
-                    (false, Some(format!("{e:?}")), None)
+                    (false, Some(format!("{e:?}")))
                 }
             };
 
@@ -348,7 +371,8 @@ impl ReplayDkg {
             dealings_found,
             observe_success,
             observe_error,
-            network_identity,
+            incoming_network_identity,
+            resulting_network_identity,
         };
 
         println!("{}", serde_json::to_string_pretty(&result)?);
