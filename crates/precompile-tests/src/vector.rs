@@ -1,7 +1,8 @@
-use alloy_primitives::{Address, B256, Bytes, U256};
+use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
+use tempo_chainspec::hardfork::ALL_TEMPO_HARDFORKS;
 use tempo_primitives::TempoTxType;
 
 /// A test vector for precompile differential testing
@@ -10,15 +11,12 @@ pub struct TestVector {
     /// Optional template to extend
     #[serde(default)]
     pub extends: Option<String>,
-    /// Unique name for this vector
+    /// Unique name for this vector (derived from file path, not in JSON)
+    #[serde(skip)]
     pub name: String,
     /// Description of what this vector tests
     #[serde(default)]
     pub description: String,
-    /// Target hardfork (e.g., "T0", "T1")
-    /// Optional when extending a template that provides it.
-    #[serde(default)]
-    pub hardfork: String,
     /// Initial state before execution
     #[serde(default)]
     pub prestate: Prestate,
@@ -36,6 +34,13 @@ pub struct TestVector {
     /// Required for all vectors (but optional in templates that are extended).
     #[serde(default)]
     pub check_regression: Option<bool>,
+}
+
+impl TestVector {
+    /// Returns all hardforks to run this vector on.
+    pub fn target_hardforks(&self) -> Vec<&'static str> {
+        ALL_TEMPO_HARDFORKS.iter().map(|h| h.name()).collect()
+    }
 }
 
 /// Initial state (accounts, storage, code)
@@ -125,6 +130,100 @@ pub struct Transaction {
     /// Valid after timestamp (Tempo AA)
     #[serde(default)]
     pub valid_after: Option<u64>,
+
+    /// Expected outcome for this transaction (same across all hardforks)
+    /// Use this OR `outcomes`, not both.
+    #[serde(default)]
+    pub outcome: Option<TxOutcome>,
+
+    /// Expected outcomes per hardfork (when behavior differs across hardforks)
+    /// Use this OR `outcome`, not both.
+    #[serde(default)]
+    pub outcomes: Vec<HardforkOutcome>,
+}
+
+/// Expected outcome for specific hardforks
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HardforkOutcome {
+    /// Which hardforks this outcome applies to
+    pub hardforks: Vec<String>,
+    /// The expected outcome for these hardforks
+    pub outcome: TxOutcome,
+}
+
+impl Transaction {
+    /// Get the expected outcome for a specific hardfork.
+    /// Returns None if no outcome is defined for this hardfork.
+    pub fn outcome_for_hardfork(&self, hardfork: &str) -> Option<&TxOutcome> {
+        // If single outcome is defined, use it for all hardforks
+        if let Some(ref outcome) = self.outcome {
+            return Some(outcome);
+        }
+
+        // Otherwise, look up in hardfork-specific outcomes
+        self.outcomes
+            .iter()
+            .find(|ho| ho.hardforks.iter().any(|h| h == hardfork))
+            .map(|ho| &ho.outcome)
+    }
+}
+
+/// Expected outcome for a transaction
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxOutcome {
+    /// Expected success (true) or revert (false)
+    pub success: bool,
+    /// Custom error - either a signature (e.g., "TokenAlreadyExists(address)")
+    /// or a raw 4-byte selector starting with "0x" (e.g., "0x12345678")
+    /// Only valid when success is false
+    #[serde(default)]
+    pub error: Option<String>,
+    /// For Error(string) reverts - assert decoded message contains this
+    /// Only valid when success is false
+    #[serde(default)]
+    pub revert_contains: Option<String>,
+}
+
+impl TxOutcome {
+    /// Validate the outcome configuration.
+    /// - When success=true, error and revert_contains must be None
+    /// - When success=false, at least one of error or revert_contains must be Some
+    pub fn validate(&self) -> Result<(), String> {
+        if self.success {
+            if self.error.is_some() {
+                return Err("outcome has success=true but 'error' is set".to_string());
+            }
+            if self.revert_contains.is_some() {
+                return Err("outcome has success=true but 'revert_contains' is set".to_string());
+            }
+        } else if self.error.is_none() && self.revert_contains.is_none() {
+            return Err(
+                "outcome has success=false but neither 'error' nor 'revert_contains' is set"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    /// Compute the 4-byte selector for a custom error.
+    /// If error starts with "0x" and is 10 chars, treat as raw selector.
+    /// Otherwise, derive selector from signature via keccak256.
+    pub fn error_selector(&self) -> Option<[u8; 4]> {
+        self.error.as_ref().and_then(|err| {
+            // Check if it's a raw selector (0x + 8 hex chars = 10 chars)
+            if err.starts_with("0x") && err.len() == 10 {
+                let hex_str = &err[2..];
+                if let Ok(bytes) = hex::decode(hex_str)
+                    && bytes.len() == 4 {
+                        return Some([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                    }
+                return None;
+            }
+            // Treat as signature, compute selector
+            let hash = alloy_primitives::keccak256(err.as_bytes());
+            Some([hash[0], hash[1], hash[2], hash[3]])
+        })
+    }
 }
 
 /// A call within a Tempo transaction
@@ -297,8 +396,18 @@ impl TestVector {
     ///
     /// If the vector has an `extends` field, the template is loaded first
     /// and the vector's fields are merged on top.
-    pub fn load_with_inheritance(path: impl AsRef<Path>) -> eyre::Result<Self> {
-        let vector = Self::load_raw(path)?;
+    ///
+    /// The `base_dir` is used to derive the vector name from the relative path.
+    pub fn load_with_inheritance(
+        path: impl AsRef<Path>,
+        base_dir: impl AsRef<Path>,
+    ) -> eyre::Result<Self> {
+        let path = path.as_ref();
+        let mut vector = Self::load_raw(path)?;
+
+        // Derive name from path relative to base_dir
+        // e.g., "tip20_factory/create_token.json" -> "tip20_factory::create_token"
+        vector.name = Self::derive_name(path, base_dir.as_ref());
 
         // Validate that check_regression is set (required for all non-template vectors)
         if vector.check_regression.is_none() {
@@ -308,7 +417,73 @@ impl TestVector {
             ));
         }
 
+        // Validate all transaction outcomes
+        for (i, tx) in vector.transactions.iter().enumerate() {
+            // Must have either outcome or outcomes, not both or neither
+            if tx.outcome.is_some() && !tx.outcomes.is_empty() {
+                return Err(eyre::eyre!(
+                    "vector '{}' tx {}: cannot have both 'outcome' and 'outcomes'",
+                    vector.name, i
+                ));
+            }
+            if tx.outcome.is_none() && tx.outcomes.is_empty() {
+                return Err(eyre::eyre!(
+                    "vector '{}' tx {}: must have 'outcome' or 'outcomes'",
+                    vector.name, i
+                ));
+            }
+
+            // Validate single outcome
+            if let Some(ref outcome) = tx.outcome
+                && let Err(e) = outcome.validate() {
+                    return Err(eyre::eyre!("vector '{}' tx {}: {}", vector.name, i, e));
+                }
+
+            // Validate hardfork-specific outcomes
+            if !tx.outcomes.is_empty() {
+                // Collect all hardforks covered by outcomes
+                let mut covered: HashSet<&str> = HashSet::new();
+                for ho in &tx.outcomes {
+                    if let Err(e) = ho.outcome.validate() {
+                        return Err(eyre::eyre!(
+                            "vector '{}' tx {} (hardforks {:?}): {}",
+                            vector.name, i, ho.hardforks, e
+                        ));
+                    }
+                    for hf in &ho.hardforks {
+                        covered.insert(hf.as_str());
+                    }
+                }
+
+                // Check all hardforks are covered
+                let all_hardforks: Vec<&str> =
+                    ALL_TEMPO_HARDFORKS.iter().map(|h| h.name()).collect();
+                let missing: Vec<_> = all_hardforks
+                    .iter()
+                    .filter(|hf| !covered.contains(*hf))
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(eyre::eyre!(
+                        "vector '{}' tx {}: 'outcomes' must cover all hardforks, missing: {:?}",
+                        vector.name, i, missing
+                    ));
+                }
+            }
+        }
+
         Ok(vector)
+    }
+
+    /// Derive vector name from file path relative to base directory.
+    /// e.g., "tip20_factory/create_token.json" -> "tip20_factory::create_token"
+    fn derive_name(path: &Path, base_dir: &Path) -> String {
+        let relative = path.strip_prefix(base_dir).unwrap_or(path);
+        let without_ext = relative.with_extension("");
+        without_ext
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("::")
     }
 
     /// Load a vector without validation (used for templates).
@@ -334,26 +509,28 @@ impl TestVector {
 
     /// Load all vectors from a directory (recursively)
     pub fn from_directory(path: impl AsRef<Path>) -> eyre::Result<Vec<Self>> {
+        let base_dir = path.as_ref();
         let mut vectors = Vec::new();
-        Self::load_recursive(path.as_ref(), &mut vectors)?;
+        Self::load_recursive(base_dir, base_dir, &mut vectors)?;
         vectors.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(vectors)
     }
 
-    fn load_recursive(dir: &Path, vectors: &mut Vec<Self>) -> eyre::Result<()> {
+    fn load_recursive(
+        dir: &Path,
+        base_dir: &Path,
+        vectors: &mut Vec<Self>,
+    ) -> eyre::Result<()> {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
-                // Skip _templates directories (they're not standalone tests)
-                if path.file_name().map(|n| n.to_str()) != Some(Some("_templates")) {
-                    Self::load_recursive(&path, vectors)?;
-                }
+                Self::load_recursive(&path, base_dir, vectors)?;
             } else if path.extension().is_some_and(|e| e == "json") {
-                // Skip template files (files starting with _)
+                // Skip setup files (starting with "setup") - they're only for inheritance
                 let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if !file_name.starts_with('_') {
-                    match Self::load_with_inheritance(&path) {
+                if !file_name.starts_with("setup") {
+                    match Self::load_with_inheritance(&path, base_dir) {
                         Ok(vector) => vectors.push(vector),
                         Err(e) => {
                             eprintln!("Warning: Failed to load {path:?}: {e}");
@@ -395,7 +572,7 @@ fn merge_storage(
 /// - prestate.code: merge maps (child wins on conflict)
 /// - prestate.precompiles: concatenate (child's come after parent's)
 /// - block: child wins entirely if any field is set
-/// - transactions: child wins entirely (no merge)
+/// - transactions: concatenate (parent's first, then child's)
 /// - checks: merge (child extends parent)
 fn merge_vectors(parent: TestVector, child: TestVector) -> TestVector {
     // Merge prestate
@@ -482,17 +659,12 @@ fn merge_vectors(parent: TestVector, child: TestVector) -> TestVector {
         } else {
             child.description
         },
-        hardfork: if child.hardfork.is_empty() {
-            parent.hardfork
-        } else {
-            child.hardfork
-        },
         prestate,
         block,
-        transactions: if child.transactions.is_empty() {
-            parent.transactions
-        } else {
-            child.transactions
+        transactions: {
+            let mut transactions = parent.transactions;
+            transactions.extend(child.transactions);
+            transactions
         },
         checks,
         check_regression: child.check_regression, // Must be set by child, not inherited
@@ -586,10 +758,10 @@ mod tests {
             "prestate": {},
             "block": { "number": 1, "timestamp": 1, "gas_limit": 30000000 },
             "transactions": [
-                { "tx_type": "legacy", "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000 },
-                { "tx_type": "eip1559", "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000 },
-                { "tx_type": "tempo", "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000 },
-                { "tx_type": "aa", "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000 }
+                { "tx_type": "legacy", "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000, "outcome": { "success": true } },
+                { "tx_type": "eip1559", "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000, "outcome": { "success": true } },
+                { "tx_type": "tempo", "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000, "outcome": { "success": true } },
+                { "tx_type": "aa", "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000, "outcome": { "success": true } }
             ],
             "checks": {}
         }"#;
@@ -612,9 +784,9 @@ mod tests {
             "prestate": {},
             "block": { "number": 1, "timestamp": 1, "gas_limit": 30000000 },
             "transactions": [
-                { "tx_type": 0, "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000 },
-                { "tx_type": 2, "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000 },
-                { "tx_type": 118, "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000 }
+                { "tx_type": 0, "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000, "outcome": { "success": true } },
+                { "tx_type": 2, "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000, "outcome": { "success": true } },
+                { "tx_type": 118, "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000, "outcome": { "success": true } }
             ],
             "checks": {}
         }"#;
@@ -636,7 +808,7 @@ mod tests {
             "prestate": {},
             "block": { "number": 1, "timestamp": 1, "gas_limit": 30000000 },
             "transactions": [
-                { "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000 }
+                { "from": "0x1111111111111111111111111111111111111111", "gas_limit": 21000, "outcome": { "success": true } }
             ],
             "checks": {}
         }"#;
@@ -666,6 +838,12 @@ mod tests {
             fee_token: None,
             valid_before: None,
             valid_after: None,
+            outcome: Some(TxOutcome {
+                success: true,
+                error: None,
+                revert_contains: None,
+            }),
+            outcomes: vec![],
         };
 
         let json = serde_json::to_string(&tx).expect("Failed to serialize");
@@ -708,7 +886,7 @@ mod tests {
             extends: None,
             name: "parent".to_string(),
             description: "Parent description".to_string(),
-            hardfork: "T0".to_string(),
+            
             prestate: Prestate {
                 accounts: parent_accounts,
                 ..Default::default()
@@ -731,7 +909,7 @@ mod tests {
             extends: Some("parent.json".to_string()),
             name: "child".to_string(),
             description: "".to_string(), // Empty, should inherit
-            hardfork: "T1".to_string(),
+            
             prestate: Prestate {
                 accounts: child_accounts,
                 ..Default::default()
@@ -754,7 +932,6 @@ mod tests {
 
         assert_eq!(merged.name, "child");
         assert_eq!(merged.description, "Parent description"); // Inherited
-        assert_eq!(merged.hardfork, "T1"); // Child wins
         assert!(merged.extends.is_none()); // Cleared after merge
         assert_eq!(merged.prestate.accounts.len(), 2); // Both accounts merged
         assert_eq!(merged.prestate.accounts.get(&addr1).unwrap().nonce, 5);
@@ -767,7 +944,7 @@ mod tests {
             extends: None,
             name: "parent".to_string(),
             description: "".to_string(),
-            hardfork: "T0".to_string(),
+            
             prestate: Prestate {
                 precompiles: vec![PrecompileState {
                     name: "Token1".to_string(),
@@ -796,7 +973,7 @@ mod tests {
             extends: Some("parent.json".to_string()),
             name: "child".to_string(),
             description: "".to_string(),
-            hardfork: "T0".to_string(),
+            
             prestate: Prestate {
                 precompiles: vec![PrecompileState {
                     name: "Token2".to_string(),
@@ -842,7 +1019,7 @@ mod tests {
             extends: None,
             name: "parent".to_string(),
             description: "".to_string(),
-            hardfork: "T0".to_string(),
+            
             prestate: Prestate::default(),
             block: BlockContext {
                 number: 1,
@@ -865,7 +1042,7 @@ mod tests {
             extends: Some("parent.json".to_string()),
             name: "child".to_string(),
             description: "".to_string(),
-            hardfork: "T0".to_string(),
+            
             prestate: Prestate::default(),
             block: BlockContext {
                 number: 1,
@@ -916,5 +1093,105 @@ mod tests {
         let slots = merged.get(&addr).unwrap();
         assert_eq!(slots.get(&slot1), Some(&U256::from(200))); // Child overrides
         assert_eq!(slots.get(&slot2), Some(&U256::from(300))); // Child added
+    }
+
+    #[test]
+    fn test_merge_vectors_transactions_concatenate() {
+        let addr: Address = "0x1111111111111111111111111111111111111111"
+            .parse()
+            .unwrap();
+
+        let parent_tx = Transaction {
+            tx_type: tempo_primitives::TempoTxType::Eip1559,
+            from: addr,
+            to: None,
+            value: U256::from(100),
+            input: Bytes::new(),
+            gas_limit: 21000,
+            max_fee_per_gas: U256::ZERO,
+            max_priority_fee_per_gas: U256::ZERO,
+            nonce: Some(0),
+            calls: vec![],
+            nonce_key: U256::ZERO,
+            fee_token: None,
+            valid_before: None,
+            valid_after: None,
+            outcome: Some(TxOutcome {
+                success: true,
+                error: None,
+                revert_contains: None,
+            }),
+            outcomes: vec![],
+        };
+
+        let child_tx = Transaction {
+            tx_type: tempo_primitives::TempoTxType::Eip1559,
+            from: addr,
+            to: None,
+            value: U256::from(200),
+            input: Bytes::new(),
+            gas_limit: 21000,
+            max_fee_per_gas: U256::ZERO,
+            max_priority_fee_per_gas: U256::ZERO,
+            nonce: Some(1),
+            calls: vec![],
+            nonce_key: U256::ZERO,
+            fee_token: None,
+            valid_before: None,
+            valid_after: None,
+            outcome: Some(TxOutcome {
+                success: true,
+                error: None,
+                revert_contains: None,
+            }),
+            outcomes: vec![],
+        };
+
+        let parent = TestVector {
+            extends: None,
+            name: "parent".to_string(),
+            description: "".to_string(),
+            
+            prestate: Prestate::default(),
+            block: BlockContext {
+                number: 1,
+                timestamp: 1,
+                timestamp_millis_part: 0,
+                basefee: U256::ZERO,
+                gas_limit: 30000000,
+                coinbase: Address::ZERO,
+                prevrandao: B256::ZERO,
+            },
+            transactions: vec![parent_tx],
+            checks: Checks::default(),
+            check_regression: Some(false),
+        };
+
+        let child = TestVector {
+            extends: Some("parent.json".to_string()),
+            name: "child".to_string(),
+            description: "".to_string(),
+            
+            prestate: Prestate::default(),
+            block: BlockContext {
+                number: 1,
+                timestamp: 1,
+                timestamp_millis_part: 0,
+                basefee: U256::ZERO,
+                gas_limit: 30000000,
+                coinbase: Address::ZERO,
+                prevrandao: B256::ZERO,
+            },
+            transactions: vec![child_tx],
+            checks: Checks::default(),
+            check_regression: Some(false),
+        };
+
+        let merged = super::merge_vectors(parent, child);
+
+        // Transactions should be concatenated: parent first, then child
+        assert_eq!(merged.transactions.len(), 2);
+        assert_eq!(merged.transactions[0].value, U256::from(100)); // Parent's tx
+        assert_eq!(merged.transactions[1].value, U256::from(200)); // Child's tx
     }
 }

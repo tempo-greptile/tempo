@@ -1,0 +1,50 @@
+{
+  "extends": "setup.json",
+  "description": "isTIP20 returns true for deployed tokens, false for non-TIP20 prefix or undeployed. Tests FAC2, FAC8",
+  "check_regression": true,
+  "transactions": [
+    {
+      "tx_type": "tempo",
+      "from": "0x1111111111111111111111111111111111111111",
+      "gas_limit": 500000,
+      "max_fee_per_gas": "100",
+      "nonce_key": "1",
+      "calls": [
+        {
+          "to": "0x20FC000000000000000000000000000000000000",
+          "input": "0x35ec42c900000000000000000000000020c0000000000000000000000000000000000000"
+        }
+      ],
+      "outcome": { "success": true }
+    },
+    {
+      "tx_type": "tempo",
+      "from": "0x1111111111111111111111111111111111111111",
+      "gas_limit": 500000,
+      "max_fee_per_gas": "100",
+      "nonce_key": "2",
+      "calls": [
+        {
+          "to": "0x20FC000000000000000000000000000000000000",
+          "input": "0x35ec42c9000000000000000000000000deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+        }
+      ],
+      "outcome": { "success": true }
+    },
+    {
+      "tx_type": "tempo",
+      "from": "0x1111111111111111111111111111111111111111",
+      "gas_limit": 500000,
+      "max_fee_per_gas": "100",
+      "nonce_key": "3",
+      "calls": [
+        {
+          "to": "0x20FC000000000000000000000000000000000000",
+          "input": "0x35ec42c900000000000000000000000020c0ffffffffffffffffffffffffffffffffffff"
+        }
+      ],
+      "outcome": { "success": true }
+    }
+  ],
+  "checks": {}
+}

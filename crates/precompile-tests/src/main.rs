@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use eyre::{Result, bail};
 use precompile_tests::{
     PostExecutionState, VectorDatabase, VectorExecutor, fingerprint::Fingerprint,
-    vector::TestVector,
+    validate_tx_outcomes, vector::TestVector,
 };
 
 /// Differential testing framework for Tempo precompiles.
@@ -56,7 +56,7 @@ enum Commands {
     #[command(visible_alias = "r")]
     Run {
         /// Path to a single vector JSON file.
-        #[arg(short, long, value_name = "PATH")]
+        #[arg(short = 'f', long, value_name = "PATH")]
         vector: Option<PathBuf>,
 
         /// Path to a directory of vectors (scanned recursively).
@@ -69,9 +69,9 @@ enum Commands {
         #[arg(short, long, value_name = "PATH")]
         output: Option<PathBuf>,
 
-        /// Output format for the results.
-        #[arg(short, long, value_enum, default_value_t = OutputFormat::Json)]
-        format: OutputFormat,
+        /// Verbosity: -v for failed JSON, -vv for all JSON
+        #[arg(short, long, action = clap::ArgAction::Count)]
+        verbosity: u8,
     },
 
     /// Compare two fingerprint files.
@@ -134,17 +134,6 @@ enum Commands {
     },
 }
 
-/// Output format for fingerprint results.
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum OutputFormat {
-    /// Full JSON output with all fingerprint details.
-    Json,
-    /// Only output the fingerprint hashes.
-    Hashes,
-    /// Human-readable summary.
-    Summary,
-}
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -153,9 +142,9 @@ fn main() -> Result<()> {
             vector,
             dir,
             output,
-            format,
+            verbosity,
         } => {
-            run_command(vector, dir, output, format)?;
+            run_command(vector, dir, output, verbosity)?;
         }
         Commands::Compare {
             baseline,
@@ -185,7 +174,7 @@ fn run_command(
     vector: Option<PathBuf>,
     dir: Option<PathBuf>,
     output: Option<PathBuf>,
-    format: OutputFormat,
+    verbosity: u8,
 ) -> Result<()> {
     if vector.is_none() && dir.is_none() {
         bail!("At least one of --vector or --dir must be provided");
@@ -194,74 +183,130 @@ fn run_command(
     let mut vectors = Vec::new();
 
     if let Some(path) = vector {
-        vectors.push(TestVector::load_with_inheritance(&path)?);
+        let base_dir = path.parent().unwrap_or(Path::new("."));
+        vectors.push(TestVector::load_with_inheritance(&path, base_dir)?);
     }
 
     if let Some(path) = dir {
         vectors.extend(TestVector::from_directory(&path)?);
     }
 
-    let mut fingerprints = BTreeMap::new();
-    let mut errors = Vec::new();
+    let mut passed: BTreeMap<String, Fingerprint> = BTreeMap::new();
+    let mut failed: BTreeMap<String, Fingerprint> = BTreeMap::new();
+    let mut errors: Vec<(String, eyre::Report)> = Vec::new();
     let executor = VectorExecutor::with_test_chainspec();
 
     for vector in &vectors {
-        eprintln!("Running: {}...", vector.name);
-
-        match execute_vector(&executor, vector) {
-            Ok(fingerprint) => {
-                fingerprints.insert(vector.name.clone(), fingerprint);
-            }
-            Err(e) => {
-                eprintln!("  ✗ Error: {e}");
-                errors.push((vector.name.clone(), e));
+        for hardfork in vector.target_hardforks() {
+            let test_name = format!("{}::{}", hardfork, vector.name);
+            match execute_vector(&executor, vector, hardfork) {
+                Ok(result) => {
+                    if result.validation_errors.is_empty() {
+                        passed.insert(test_name, result.fingerprint);
+                    } else {
+                        failed.insert(test_name, result.fingerprint);
+                    }
+                }
+                Err(e) => {
+                    errors.push((test_name, e));
+                }
             }
         }
     }
 
-    let output_str = match format {
-        OutputFormat::Json => serde_json::to_string_pretty(&fingerprints)?,
-        OutputFormat::Hashes => {
-            let hashes: BTreeMap<String, String> = fingerprints
-                .iter()
-                .map(|(name, fp)| (name.clone(), format!("{:#x}", fp.hash())))
-                .collect();
-            serde_json::to_string_pretty(&hashes)?
-        }
-        OutputFormat::Summary => {
-            let mut summary = String::new();
-            for (name, fp) in &fingerprints {
-                summary.push_str(&format!("✓ {} ({:#x})\n", name, fp.hash()));
+    // Output format based on verbosity:
+    // 0 (default): list pass/fail
+    // 1 (-v): list pass, then each failed test with JSON
+    // 2+ (-vv): each test with JSON
+    let mut result = String::new();
+
+    match verbosity {
+        0 => {
+            for name in passed.keys() {
+                result.push_str(&format!("✓ {name}\n"));
+            }
+            for name in failed.keys() {
+                result.push_str(&format!("✗ {name}\n"));
             }
             for (name, err) in &errors {
-                summary.push_str(&format!("✗ {name}: {err}\n"));
+                result.push_str(&format!("✗ {name}: {err}\n"));
             }
-            summary
         }
-    };
+        1 => {
+            for name in passed.keys() {
+                result.push_str(&format!("✓ {name}\n"));
+            }
+            for (name, fp) in &failed {
+                result.push_str(&format!("\n✗ {name}\n"));
+                result.push_str(&serde_json::to_string_pretty(&fp)?);
+                result.push('\n');
+            }
+            for (name, err) in &errors {
+                result.push_str(&format!("\n✗ {name}: {err}\n"));
+            }
+        }
+        _ => {
+            for (name, fp) in &passed {
+                result.push_str(&format!("\n✓ {name}\n"));
+                result.push_str(&serde_json::to_string_pretty(&fp)?);
+                result.push('\n');
+            }
+            for (name, fp) in &failed {
+                result.push_str(&format!("\n✗ {name}\n"));
+                result.push_str(&serde_json::to_string_pretty(&fp)?);
+                result.push('\n');
+            }
+            for (name, err) in &errors {
+                result.push_str(&format!("\n✗ {name}: {err}\n"));
+            }
+        }
+    }
+
+    // Always append summary
+    result.push_str(&format!(
+        "\n{} passed, {} failed\n",
+        passed.len(),
+        failed.len() + errors.len()
+    ));
 
     if let Some(path) = output {
         let mut file = std::fs::File::create(&path)?;
-        file.write_all(output_str.as_bytes())?;
+        file.write_all(result.as_bytes())?;
     } else {
-        print!("{output_str}");
+        print!("{result}");
+    }
+
+    // Exit with code 1 if any tests failed or errored
+    if !failed.is_empty() || !errors.is_empty() {
+        std::process::exit(1);
     }
 
     Ok(())
 }
 
-fn execute_vector(executor: &VectorExecutor, vector: &TestVector) -> Result<Fingerprint> {
+/// Result of executing a vector - includes fingerprint and any validation errors
+struct VectorResult {
+    fingerprint: Fingerprint,
+    validation_errors: Vec<String>,
+}
+
+fn execute_vector(executor: &VectorExecutor, vector: &TestVector, hardfork: &str) -> Result<VectorResult> {
     let mut db = VectorDatabase::from_prestate(&vector.prestate)?;
     let result = executor.execute(vector, &mut db)?;
+
+    // Validate transaction outcomes
+    let validation_errors = validate_tx_outcomes(&result.tx_results, &vector.transactions, hardfork);
+
+    let test_name = format!("{}::{}", hardfork, vector.name);
     let post_state = PostExecutionState::capture(&db.db, &vector.checks)?;
     let fingerprint = Fingerprint::from_execution(
-        &vector.name,
-        &vector.hardfork,
+        &test_name,
+        hardfork,
         vector.block.number,
         result.tx_results,
         post_state,
     );
-    Ok(fingerprint)
+    Ok(VectorResult { fingerprint, validation_errors })
 }
 
 fn compare_command(baseline: PathBuf, current: PathBuf, strict: bool) -> Result<()> {
@@ -326,9 +371,9 @@ fn list_command(dir: PathBuf) -> Result<()> {
 
     for vector in &vectors {
         if vector.description.is_empty() {
-            println!("  {} ({})", vector.name, vector.hardfork);
+            println!("  {}", vector.name);
         } else {
-            println!("  {} ({})", vector.name, vector.hardfork);
+            println!("  {}", vector.name);
             println!("    {}", vector.description);
         }
     }
@@ -339,10 +384,13 @@ fn list_command(dir: PathBuf) -> Result<()> {
 }
 
 fn run_single_command(vector_path: PathBuf) -> Result<()> {
-    let vector = TestVector::load_with_inheritance(&vector_path)?;
+    let base_dir = vector_path.parent().unwrap_or(Path::new("."));
+    let vector = TestVector::load_with_inheritance(&vector_path, base_dir)?;
     let executor = VectorExecutor::with_test_chainspec();
-    let fingerprint = execute_vector(&executor, &vector)?;
-    let json = serde_json::to_string(&fingerprint)?;
+    // For run-single, use the first target hardfork
+    let hardfork = vector.target_hardforks().first().copied().unwrap_or("T1");
+    let result = execute_vector(&executor, &vector, hardfork)?;
+    let json = serde_json::to_string(&result.fingerprint)?;
     println!("{json}");
     Ok(())
 }
@@ -362,17 +410,23 @@ fn diff_command(baseline_binary: PathBuf, dir: PathBuf) -> Result<()> {
     let mut vector_paths: BTreeMap<String, PathBuf> = BTreeMap::new();
     let mut execution_errors: Vec<(String, String)> = Vec::new();
 
-    eprintln!("Running {} vectors on current binary...", vectors.len());
+    // Count total test runs (vectors × hardforks)
+    let total_runs: usize = vectors.iter().map(|v| v.target_hardforks().len()).sum();
+    eprintln!("Running {total_runs} test runs on current binary...");
+    
     for vector in &vectors {
         let vector_path = find_vector_path(&dir, &vector.name)?;
         vector_paths.insert(vector.name.clone(), vector_path);
 
-        match execute_vector(&executor, vector) {
-            Ok(fingerprint) => {
-                current_fingerprints.insert(vector.name.clone(), fingerprint);
-            }
-            Err(e) => {
-                execution_errors.push((vector.name.clone(), e.to_string()));
+        for hardfork in vector.target_hardforks() {
+            let test_name = format!("{}::{}", hardfork, vector.name);
+            match execute_vector(&executor, vector, hardfork) {
+                Ok(result) => {
+                    current_fingerprints.insert(test_name, result.fingerprint);
+                }
+                Err(e) => {
+                    execution_errors.push((test_name, e.to_string()));
+                }
             }
         }
     }
@@ -382,9 +436,9 @@ fn diff_command(baseline_binary: PathBuf, dir: PathBuf) -> Result<()> {
         .filter(|v| v.check_regression.unwrap_or(false))
         .collect();
 
+    let baseline_runs: usize = baseline_vectors.iter().map(|v| v.target_hardforks().len()).sum();
     eprintln!(
-        "Comparing {} vectors with check_regression=true against baseline...",
-        baseline_vectors.len()
+        "Comparing {baseline_runs} test runs with check_regression=true against baseline..."
     );
 
     let mut matched = 0;
@@ -394,52 +448,54 @@ fn diff_command(baseline_binary: PathBuf, dir: PathBuf) -> Result<()> {
     for vector in &baseline_vectors {
         let vector_path = vector_paths.get(&vector.name).unwrap();
 
-        let current_fp = match current_fingerprints.get(&vector.name) {
-            Some(fp) => fp,
-            None => {
-                continue;
-            }
-        };
+        for hardfork in vector.target_hardforks() {
+            let test_name = format!("{}::{}", hardfork, vector.name);
+            
+            let current_fp = match current_fingerprints.get(&test_name) {
+                Some(fp) => fp,
+                None => {
+                    continue;
+                }
+            };
 
-        let baseline_output = Command::new(&baseline_binary)
-            .arg("run-single")
-            .arg(vector_path)
-            .output();
+            let baseline_output = Command::new(&baseline_binary)
+                .arg("run-single")
+                .arg(vector_path)
+                .output();
 
-        match baseline_output {
-            Ok(output) => {
-                if output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    match serde_json::from_str::<Fingerprint>(&stdout) {
-                        Ok(baseline_fp) => {
-                            let current_hash = current_fp.hash();
-                            let baseline_hash = baseline_fp.hash();
-                            if current_hash == baseline_hash {
-                                matched += 1;
-                            } else {
-                                regressions.push((
-                                    vector.name.clone(),
-                                    format!("{baseline_hash:#x}"),
-                                    format!("{current_hash:#x}"),
-                                ));
+            match baseline_output {
+                Ok(output) => {
+                    if output.status.success() {
+                        let stdout = String::from_utf8_lossy(&output.stdout);
+                        match serde_json::from_str::<Fingerprint>(&stdout) {
+                            Ok(baseline_fp) => {
+                                let current_hash = current_fp.hash();
+                                let baseline_hash = baseline_fp.hash();
+                                if current_hash == baseline_hash {
+                                    matched += 1;
+                                } else {
+                                    regressions.push((
+                                        test_name.clone(),
+                                        format!("{baseline_hash:#x}"),
+                                        format!("{current_hash:#x}"),
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "  Warning: failed to parse baseline fingerprint for {test_name}: {e}"
+                                );
                             }
                         }
-                        Err(e) => {
-                            eprintln!(
-                                "  Warning: failed to parse baseline fingerprint for {}: {}",
-                                vector.name, e
-                            );
-                        }
+                    } else {
+                        new_passed += 1;
                     }
-                } else {
-                    new_passed += 1;
                 }
-            }
-            Err(e) => {
-                eprintln!(
-                    "  Warning: failed to run baseline for {}: {}",
-                    vector.name, e
-                );
+                Err(e) => {
+                    eprintln!(
+                        "  Warning: failed to run baseline for {test_name}: {e}"
+                    );
+                }
             }
         }
     }

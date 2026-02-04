@@ -1,0 +1,33 @@
+{
+  "description": "TIP20Factory with PATH_USD pre-deployed and sender funded",
+  "prestate": {
+    "accounts": {
+      "0x1111111111111111111111111111111111111111": { "nonce": 0 }
+    },
+    "precompiles": [
+      {
+        "name": "TIP20Token",
+        "address": "0x20C0000000000000000000000000000000000000",
+        "fields": {
+          "name": "Path USD",
+          "symbol": "PATH_USD",
+          "currency": "USD",
+          "quote_token": "0x0000000000000000000000000000000000000000",
+          "transfer_policy_id": 1,
+          "total_supply": "1000000000000",
+          "balances": {
+            "0x1111111111111111111111111111111111111111": "1000000000000"
+          }
+        }
+      }
+    ]
+  },
+  "block": {
+    "number": 1,
+    "timestamp": 1700000000,
+    "basefee": "100",
+    "gas_limit": 30000000
+  },
+  "transactions": [],
+  "checks": {}
+}
