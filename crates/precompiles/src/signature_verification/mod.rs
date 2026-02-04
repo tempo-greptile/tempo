@@ -260,6 +260,62 @@ mod tests {
     }
 
     #[test]
+    fn test_gas_calculation_p256() {
+        use tempo_primitives::transaction::tt_signature::P256SignatureWithPreHash;
+
+        let p256_sig = P256SignatureWithPreHash {
+            r: B256::ZERO,
+            s: B256::ZERO,
+            pub_key_x: B256::ZERO,
+            pub_key_y: B256::ZERO,
+            pre_hash: false,
+        };
+        let sig = TempoSignature::Primitive(PrimitiveSignature::P256(p256_sig));
+
+        let gas = precompile_signature_verification_gas(&sig);
+        // ECRECOVER_GAS (3000) + P256_VERIFY_GAS (5000) = 8000
+        assert_eq!(gas, 8000, "P256 should cost 8000 gas");
+    }
+
+    #[test]
+    fn test_gas_calculation_keychain_secp256k1() {
+        use alloy_signer::Signature;
+        use tempo_primitives::transaction::KeychainSignature;
+
+        let inner_sig = PrimitiveSignature::Secp256k1(Signature::new(
+            alloy_primitives::U256::ZERO,
+            alloy_primitives::U256::ZERO,
+            false,
+        ));
+        let keychain_sig = KeychainSignature::new(Address::ZERO, inner_sig);
+        let sig = TempoSignature::Keychain(keychain_sig);
+
+        let gas = precompile_signature_verification_gas(&sig);
+        // ECRECOVER_GAS (3000) + 0 (secp256k1) + KEYCHAIN_VALIDATION_GAS (2100 + 900 = 3000) = 6000
+        assert_eq!(gas, 6000, "Keychain with secp256k1 should cost 6000 gas");
+    }
+
+    #[test]
+    fn test_gas_calculation_keychain_p256() {
+        use tempo_primitives::transaction::{KeychainSignature, tt_signature::P256SignatureWithPreHash};
+
+        let p256_sig = P256SignatureWithPreHash {
+            r: B256::ZERO,
+            s: B256::ZERO,
+            pub_key_x: B256::ZERO,
+            pub_key_y: B256::ZERO,
+            pre_hash: false,
+        };
+        let inner_sig = PrimitiveSignature::P256(p256_sig);
+        let keychain_sig = KeychainSignature::new(Address::ZERO, inner_sig);
+        let sig = TempoSignature::Keychain(keychain_sig);
+
+        let gas = precompile_signature_verification_gas(&sig);
+        // ECRECOVER_GAS (3000) + P256_VERIFY_GAS (5000) + KEYCHAIN_VALIDATION_GAS (3000) = 11000
+        assert_eq!(gas, 11000, "Keychain with P256 should cost 11000 gas");
+    }
+
+    #[test]
     fn test_keychain_unauthorized_key() -> eyre::Result<()> {
         let mut storage = HashMapStorageProvider::new(1);
         StorageCtx::enter(&mut storage, || {

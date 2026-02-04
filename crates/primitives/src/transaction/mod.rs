@@ -13,7 +13,8 @@ pub use tt_signature::{
 };
 pub use signature_gas::{
     ECRECOVER_GAS, KEYCHAIN_VALIDATION_GAS, P256_VERIFY_GAS, precompile_signature_verification_gas,
-    primitive_signature_verification_gas, tempo_signature_verification_gas,
+    primitive_signature_verification_gas, primitive_signature_verification_gas_precompile,
+    tempo_signature_verification_gas,
 };
 
 pub use alloy_eips::eip7702::Authorization;

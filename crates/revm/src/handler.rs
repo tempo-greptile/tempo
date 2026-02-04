@@ -43,7 +43,8 @@ use tempo_precompiles::{
     tip20::{ITIP20::InsufficientBalance, TIP20Error, TIP20Token, is_tip20_prefix},
 };
 use tempo_primitives::transaction::{
-    SignatureType, TEMPO_EXPIRING_NONCE_KEY, calc_gas_balance_spending, validate_calls,
+    PrimitiveSignature, SignatureType, TEMPO_EXPIRING_NONCE_KEY, calc_gas_balance_spending,
+    validate_calls,
 };
 
 use crate::{

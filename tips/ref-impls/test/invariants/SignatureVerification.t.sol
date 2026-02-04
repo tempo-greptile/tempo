@@ -173,6 +173,9 @@ contract SignatureVerificationInvariantTest is InvariantBaseTest {
     /// @notice Handler for verifying a valid secp256k1 signature
     /// @dev Tests TEMPO-SIG1, TEMPO-SIG4: Valid secp256k1 signature returns true
     function verifyValidSecp256k1(uint256 signerSeed, bytes32 messageSeed) external {
+        // Skip when not on Tempo (precompile not available)
+        if (!isTempo) return;
+
         (uint256 privateKey, address signerAddr) = _selectSecp256k1Signer(signerSeed);
         bytes32 messageHash = keccak256(abi.encodePacked(messageSeed, block.timestamp));
 
@@ -194,19 +197,18 @@ contract SignatureVerificationInvariantTest is InvariantBaseTest {
                     )
                 );
             }
-        } catch (bytes memory reason) {
+        } catch {
             _totalFailedVerifies++;
-            revert(
-                string.concat(
-                    "TEMPO-SIG1: Valid secp256k1 signature should not revert"
-                )
-            );
+            revert("TEMPO-SIG1: Valid secp256k1 signature should not revert");
         }
     }
 
     /// @notice Handler for verifying a valid P256 signature
     /// @dev Tests TEMPO-SIG1, TEMPO-SIG4: Valid P256 signature returns true
     function verifyValidP256(uint256 signerSeed, bytes32 messageSeed) external {
+        // Skip when not on Tempo (precompile not available)
+        if (!isTempo) return;
+
         (uint256 privateKey, bytes32 pubX, bytes32 pubY, address signerAddr) =
             _selectP256Signer(signerSeed);
         bytes32 messageHash = keccak256(abi.encodePacked(messageSeed, block.timestamp, "p256"));
@@ -229,7 +231,7 @@ contract SignatureVerificationInvariantTest is InvariantBaseTest {
                     )
                 );
             }
-        } catch (bytes memory reason) {
+        } catch {
             _totalFailedVerifies++;
             revert("TEMPO-SIG1: Valid P256 signature should not revert");
         }
@@ -240,6 +242,9 @@ contract SignatureVerificationInvariantTest is InvariantBaseTest {
     function verifyWrongSigner(uint256 signerSeed, uint256 wrongSignerSeed, bytes32 messageSeed)
         external
     {
+        // Skip when not on Tempo (precompile not available)
+        if (!isTempo) return;
+
         (uint256 privateKey, address actualSigner) = _selectSecp256k1Signer(signerSeed);
         (, address wrongSigner) = _selectSecp256k1Signer(wrongSignerSeed);
 
@@ -279,6 +284,9 @@ contract SignatureVerificationInvariantTest is InvariantBaseTest {
     /// @notice Handler for verifying with wrong hash
     /// @dev Tests TEMPO-SIG10: Signature valid for hash H is invalid for H' ≠ H
     function verifyWrongHash(uint256 signerSeed, bytes32 originalHash, bytes32 wrongHash) external {
+        // Skip when not on Tempo (precompile not available)
+        if (!isTempo) return;
+
         // Ensure hashes are different
         if (originalHash == wrongHash) {
             wrongHash = keccak256(abi.encodePacked(wrongHash, "different"));
@@ -315,6 +323,9 @@ contract SignatureVerificationInvariantTest is InvariantBaseTest {
     function verifyInvalidSignature(uint256 signerSeed, bytes32 hash, uint8 invalidLength)
         external
     {
+        // Skip when not on Tempo (precompile not available)
+        if (!isTempo) return;
+
         (, address signerAddr) = _selectSecp256k1Signer(signerSeed);
 
         // Create invalid signature (wrong length, not 65 bytes for secp256k1)
@@ -350,6 +361,9 @@ contract SignatureVerificationInvariantTest is InvariantBaseTest {
     /// @notice Handler for verifying empty signature
     /// @dev Tests TEMPO-SIG2: Empty signature reverts
     function verifyEmptySignature(uint256 signerSeed, bytes32 hash) external {
+        // Skip when not on Tempo (precompile not available)
+        if (!isTempo) return;
+
         (, address signerAddr) = _selectSecp256k1Signer(signerSeed);
 
         _totalVerifyAttempts++;
@@ -373,6 +387,9 @@ contract SignatureVerificationInvariantTest is InvariantBaseTest {
     /// @notice Handler for verifying keychain signature with unauthorized key
     /// @dev Tests TEMPO-SIG9: Keychain with non-existent key reverts
     function verifyUnauthorizedKeychainKey(uint256 signerSeed, bytes32 hash) external {
+        // Skip when not on Tempo (precompile not available)
+        if (!isTempo) return;
+
         // Use one secp256k1 key as the "access key" and another as the "root user"
         (uint256 accessKeyPk, address accessKeyAddr) = _selectSecp256k1Signer(signerSeed);
         (, address rootAddr) = _selectSecp256k1Signer(signerSeed + 1);
@@ -401,6 +418,253 @@ contract SignatureVerificationInvariantTest is InvariantBaseTest {
                 _log(
                     string.concat(
                         "VERIFY_UNAUTHORIZED_KEYCHAIN: rootAddr=",
+                        vm.toString(rootAddr)
+                    )
+                );
+            }
+        }
+    }
+
+    /// @notice Handler for verifying a valid keychain signature
+    /// @dev Tests TEMPO-SIG1, TEMPO-SIG4: Valid keychain signature with authorized key returns true
+    function verifyValidKeychainSignature(
+        uint256 rootSignerSeed,
+        uint256 accessKeySignerSeed,
+        bytes32 messageSeed
+    ) external {
+        // Skip when not on Tempo (precompile not available)
+        if (!isTempo) return;
+
+        (, address rootAddr) = _selectSecp256k1Signer(rootSignerSeed);
+        (uint256 accessKeyPk, address accessKeyAddr) = _selectSecp256k1Signer(accessKeySignerSeed);
+
+        // Ensure different keys
+        if (rootAddr == accessKeyAddr) return;
+
+        bytes32 messageHash = keccak256(abi.encodePacked(messageSeed, block.timestamp, "keychain"));
+
+        // Authorize the access key in AccountKeychain (as root signer)
+        IAccountKeychain keychain = IAccountKeychain(_ACCOUNT_KEYCHAIN);
+        IAccountKeychain.TokenLimit[] memory limits = new IAccountKeychain.TokenLimit[](0);
+
+        vm.prank(rootAddr);
+        try keychain.authorizeKey(
+            accessKeyAddr,
+            IAccountKeychain.SignatureType.Secp256k1,
+            uint64(block.timestamp + 1 days),
+            false,
+            limits
+        ) {} catch {
+            // Key may already exist, that's fine
+            return;
+        }
+
+        // Create keychain signature
+        bytes memory keychainSig = _signKeychainSecp256k1(accessKeyPk, messageHash, rootAddr);
+
+        _totalVerifyAttempts++;
+
+        try sigVerifier.verify(rootAddr, messageHash, keychainSig) returns (bool result) {
+            assertTrue(result, "TEMPO-SIG1: Valid keychain signature should return true");
+            _totalSuccessfulVerifies++;
+
+            if (_loggingEnabled) {
+                _log(
+                    string.concat(
+                        "VERIFY_VALID_KEYCHAIN: rootAddr=",
+                        vm.toString(rootAddr),
+                        " accessKey=",
+                        vm.toString(accessKeyAddr)
+                    )
+                );
+            }
+        } catch {
+            _totalFailedVerifies++;
+            revert("TEMPO-SIG1: Valid keychain signature should not revert");
+        }
+    }
+
+    /// @notice Handler for verifying keychain signature with revoked key
+    /// @dev Tests TEMPO-SIG6: Keychain with revoked key reverts UnauthorizedKeychainKey
+    function verifyRevokedKeychainKey(
+        uint256 rootSignerSeed,
+        uint256 accessKeySignerSeed,
+        bytes32 messageSeed
+    ) external {
+        // Skip when not on Tempo (precompile not available)
+        if (!isTempo) return;
+
+        (, address rootAddr) = _selectSecp256k1Signer(rootSignerSeed);
+        (uint256 accessKeyPk, address accessKeyAddr) = _selectSecp256k1Signer(accessKeySignerSeed);
+
+        // Ensure different keys
+        if (rootAddr == accessKeyAddr) return;
+
+        bytes32 messageHash = keccak256(abi.encodePacked(messageSeed, block.timestamp, "revoked"));
+
+        // Authorize then revoke the access key
+        IAccountKeychain keychain = IAccountKeychain(_ACCOUNT_KEYCHAIN);
+        IAccountKeychain.TokenLimit[] memory limits = new IAccountKeychain.TokenLimit[](0);
+
+        vm.startPrank(rootAddr);
+        try keychain.authorizeKey(
+            accessKeyAddr,
+            IAccountKeychain.SignatureType.Secp256k1,
+            uint64(block.timestamp + 1 days),
+            false,
+            limits
+        ) {} catch {
+            vm.stopPrank();
+            return; // Key already exists
+        }
+
+        // Revoke the key
+        try keychain.revokeKey(accessKeyAddr) {} catch {
+            vm.stopPrank();
+            return; // Already revoked
+        }
+        vm.stopPrank();
+
+        // Create keychain signature with revoked key
+        bytes memory keychainSig = _signKeychainSecp256k1(accessKeyPk, messageHash, rootAddr);
+
+        _totalVerifyAttempts++;
+
+        try sigVerifier.verify(rootAddr, messageHash, keychainSig) returns (bool) {
+            revert("TEMPO-SIG6: Keychain with revoked key should revert");
+        } catch (bytes memory reason) {
+            _totalFailedVerifies++;
+            assertEq(
+                bytes4(reason),
+                ISignatureVerification.UnauthorizedKeychainKey.selector,
+                "TEMPO-SIG6: Should revert with UnauthorizedKeychainKey"
+            );
+
+            if (_loggingEnabled) {
+                _log(
+                    string.concat(
+                        "VERIFY_REVOKED_KEYCHAIN: rootAddr=",
+                        vm.toString(rootAddr)
+                    )
+                );
+            }
+        }
+    }
+
+    /// @notice Handler for verifying keychain signature with expired key
+    /// @dev Tests TEMPO-SIG7: Keychain with expired key reverts UnauthorizedKeychainKey
+    function verifyExpiredKeychainKey(
+        uint256 rootSignerSeed,
+        uint256 accessKeySignerSeed,
+        bytes32 messageSeed
+    ) external {
+        // Skip when not on Tempo (precompile not available)
+        if (!isTempo) return;
+
+        (, address rootAddr) = _selectSecp256k1Signer(rootSignerSeed);
+        (uint256 accessKeyPk, address accessKeyAddr) = _selectSecp256k1Signer(accessKeySignerSeed);
+
+        // Ensure different keys
+        if (rootAddr == accessKeyAddr) return;
+
+        // Authorize key with expiry in the past (already expired)
+        IAccountKeychain keychain = IAccountKeychain(_ACCOUNT_KEYCHAIN);
+        IAccountKeychain.TokenLimit[] memory limits = new IAccountKeychain.TokenLimit[](0);
+
+        // Set timestamp to allow for expired key setup
+        vm.warp(block.timestamp + 2 days);
+
+        vm.prank(rootAddr);
+        try keychain.authorizeKey(
+            accessKeyAddr,
+            IAccountKeychain.SignatureType.Secp256k1,
+            uint64(block.timestamp - 1), // Already expired
+            false,
+            limits
+        ) {} catch {
+            return; // Key already exists or invalid expiry
+        }
+
+        bytes32 messageHash = keccak256(abi.encodePacked(messageSeed, block.timestamp, "expired"));
+
+        // Create keychain signature with expired key
+        bytes memory keychainSig = _signKeychainSecp256k1(accessKeyPk, messageHash, rootAddr);
+
+        _totalVerifyAttempts++;
+
+        try sigVerifier.verify(rootAddr, messageHash, keychainSig) returns (bool) {
+            revert("TEMPO-SIG7: Keychain with expired key should revert");
+        } catch (bytes memory reason) {
+            _totalFailedVerifies++;
+            assertEq(
+                bytes4(reason),
+                ISignatureVerification.UnauthorizedKeychainKey.selector,
+                "TEMPO-SIG7: Should revert with UnauthorizedKeychainKey"
+            );
+
+            if (_loggingEnabled) {
+                _log(
+                    string.concat(
+                        "VERIFY_EXPIRED_KEYCHAIN: rootAddr=",
+                        vm.toString(rootAddr)
+                    )
+                );
+            }
+        }
+    }
+
+    /// @notice Handler for verifying keychain signature with wrong signature type
+    /// @dev Tests TEMPO-SIG8: Keychain signature type mismatch reverts UnauthorizedKeychainKey
+    function verifyWrongSignatureTypeKeychain(
+        uint256 rootSignerSeed,
+        uint256 accessKeySignerSeed,
+        bytes32 messageSeed
+    ) external {
+        // Skip when not on Tempo (precompile not available)
+        if (!isTempo) return;
+
+        (, address rootAddr) = _selectSecp256k1Signer(rootSignerSeed);
+        (uint256 accessKeyPk, address accessKeyAddr) = _selectSecp256k1Signer(accessKeySignerSeed);
+
+        // Ensure different keys
+        if (rootAddr == accessKeyAddr) return;
+
+        // Authorize key for P256 (type 1) but we'll sign with secp256k1 (type 0)
+        IAccountKeychain keychain = IAccountKeychain(_ACCOUNT_KEYCHAIN);
+        IAccountKeychain.TokenLimit[] memory limits = new IAccountKeychain.TokenLimit[](0);
+
+        vm.prank(rootAddr);
+        try keychain.authorizeKey(
+            accessKeyAddr,
+            IAccountKeychain.SignatureType.P256, // Authorized for P256
+            uint64(block.timestamp + 1 days),
+            false,
+            limits
+        ) {} catch {
+            return; // Key already exists
+        }
+
+        bytes32 messageHash = keccak256(abi.encodePacked(messageSeed, block.timestamp, "wrongtype"));
+
+        // Create keychain signature with secp256k1 (type mismatch)
+        bytes memory keychainSig = _signKeychainSecp256k1(accessKeyPk, messageHash, rootAddr);
+
+        _totalVerifyAttempts++;
+
+        try sigVerifier.verify(rootAddr, messageHash, keychainSig) returns (bool) {
+            revert("TEMPO-SIG8: Keychain with wrong signature type should revert");
+        } catch (bytes memory reason) {
+            _totalFailedVerifies++;
+            assertEq(
+                bytes4(reason),
+                ISignatureVerification.UnauthorizedKeychainKey.selector,
+                "TEMPO-SIG8: Should revert with UnauthorizedKeychainKey"
+            );
+
+            if (_loggingEnabled) {
+                _log(
+                    string.concat(
+                        "VERIFY_WRONG_TYPE_KEYCHAIN: rootAddr=",
                         vm.toString(rootAddr)
                     )
                 );

@@ -482,4 +482,4 @@ The SignatureVerification precompile enables contracts to verify Tempo signature
 
 ### Gas Cost Invariants (Tested in Rust)
 
-- **TEMPO-SIG5**: Gas costs match spec - secp256k1=3000, P256=8000, WebAuthn=8000+calldata, Keychain=inner+3000. Verified in `crates/precompiles/src/signature_verification/mod.rs` unit tests.
+- **TEMPO-SIG5**: Gas costs match spec - secp256k1=3000, P256=8000, WebAuthn=8000, Keychain=inner+3000. Note: WebAuthn does NOT add calldata gas in the precompile because the EVM already charges for calldata when the signature is passed as a function argument. Verified in `crates/precompiles/src/signature_verification/mod.rs` unit tests.
