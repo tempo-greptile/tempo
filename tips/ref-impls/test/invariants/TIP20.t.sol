@@ -712,7 +712,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         }
 
         // Reward recipient cannot be the token address itself
-        vm.assume(newRecipient != address(token));
+        if (newRecipient == address(token)) return;
 
         // Prerequisite: ensure parties are authorized and unpaused
         if (!_ensureAuthorized(address(token), actor)) return;
@@ -795,7 +795,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         address actor = _selectAuthorizedActor(actorSeed, address(token));
 
         // Actor cannot be the token address (reward recipient cannot be token address)
-        vm.assume(actor != address(token));
+        if (actor == address(token)) return;
 
         // Prerequisite: ensure actor has funds
         uint256 actorBalance = token.balanceOf(actor);
@@ -997,9 +997,9 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
         address actor = _selectAuthorizedActor(actorSeed, address(token));
 
-        vm.assume(_isAuthorized(address(token), actor));
-        vm.assume(_isAuthorized(address(token), address(token)));
-        vm.assume(!token.paused());
+        if (!_isAuthorized(address(token), actor)) return;
+        if (!_isAuthorized(address(token), address(token))) return;
+        if (token.paused()) return;
 
         (,, uint256 rewardBalance) = token.userRewardInfo(actor);
         uint256 actorBalanceBefore = token.balanceOf(actor);
@@ -1061,9 +1061,9 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
         address actor = _selectAuthorizedActor(actorSeed, address(token));
 
-        vm.assume(_isAuthorized(address(token), actor));
-        vm.assume(_isAuthorized(address(token), address(token)));
-        vm.assume(!token.paused());
+        if (!_isAuthorized(address(token), actor)) return;
+        if (!_isAuthorized(address(token), address(token))) return;
+        if (token.paused()) return;
 
         uint256 contractBalance = token.balanceOf(address(token));
         uint256 actorBalanceBefore = token.balanceOf(actor);
@@ -1136,10 +1136,10 @@ contract TIP20InvariantTest is InvariantBaseTest {
         // Ensure target is blacklisted for this test
         uint64 policyId = _tokenPolicyIds[address(token)];
         bool isBlacklisted = !registry.isAuthorized(policyId, target);
-        vm.assume(isBlacklisted);
+        if (!isBlacklisted) return;
 
         uint256 targetBalance = token.balanceOf(target);
-        vm.assume(targetBalance > 0);
+        if (targetBalance == 0) return;
 
         amount = bound(amount, 1, targetBalance);
 
@@ -1230,7 +1230,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
 
         // Ensure attacker doesn't have ISSUER_ROLE
-        vm.assume(!token.hasRole(attacker, _ISSUER_ROLE));
+        if (token.hasRole(attacker, _ISSUER_ROLE)) return;
 
         amount = bound(amount, 1, 1_000_000);
 
@@ -1251,8 +1251,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
 
         // Ensure attacker doesn't have PAUSE_ROLE
-        vm.assume(!token.hasRole(attacker, _PAUSE_ROLE));
-        vm.assume(!token.paused());
+        if (token.hasRole(attacker, _PAUSE_ROLE)) return;
+        if (token.paused()) return;
 
         vm.startPrank(attacker);
         try token.pause() {
@@ -1271,8 +1271,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
 
         // Ensure attacker doesn't have UNPAUSE_ROLE
-        vm.assume(!token.hasRole(attacker, _UNPAUSE_ROLE));
-        vm.assume(token.paused());
+        if (token.hasRole(attacker, _UNPAUSE_ROLE)) return;
+        if (!token.paused()) return;
 
         vm.startPrank(attacker);
         try token.unpause() {
@@ -1297,10 +1297,10 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
 
         // Ensure attacker doesn't have BURN_BLOCKED_ROLE
-        vm.assume(!token.hasRole(attacker, _BURN_BLOCKED_ROLE));
+        if (token.hasRole(attacker, _BURN_BLOCKED_ROLE)) return;
 
         uint256 targetBalance = token.balanceOf(target);
-        vm.assume(targetBalance > 0);
+        if (targetBalance == 0) return;
         amount = bound(amount, 1, targetBalance);
 
         vm.startPrank(attacker);
@@ -1363,7 +1363,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
 
         // Ensure attacker is not admin
-        vm.assume(!token.hasRole(attacker, bytes32(0))); // DEFAULT_ADMIN_ROLE
+        if (token.hasRole(attacker, bytes32(0))) return; // DEFAULT_ADMIN_ROLE
 
         vm.startPrank(attacker);
         try token.changeTransferPolicyId(1) {
@@ -1381,17 +1381,17 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
 
         // Skip pathUSD - it cannot change quote token
-        vm.assume(address(token) != address(pathUSD));
+        if (address(token) == address(pathUSD)) return;
 
         // Select a different token as potential new quote
         TIP20 newQuoteToken = _selectBaseToken(quoteTokenSeed);
-        vm.assume(address(newQuoteToken) != address(token));
+        if (address(newQuoteToken) == address(token)) return;
 
         // For USD tokens, quote must also be USD
         bool isUsdToken = keccak256(bytes(token.currency())) == keccak256(bytes("USD"));
         if (isUsdToken) {
             bool isUsdQuote = keccak256(bytes(newQuoteToken.currency())) == keccak256(bytes("USD"));
-            vm.assume(isUsdQuote);
+            if (!isUsdQuote) return;
         }
 
         vm.startPrank(admin);
@@ -1434,8 +1434,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
         address attacker = _selectActor(actorSeed);
         TIP20 token = _selectBaseToken(tokenSeed);
 
-        vm.assume(address(token) != address(pathUSD));
-        vm.assume(!token.hasRole(attacker, bytes32(0))); // DEFAULT_ADMIN_ROLE
+        if (address(token) == address(pathUSD)) return;
+        if (token.hasRole(attacker, bytes32(0))) return; // DEFAULT_ADMIN_ROLE
 
         vm.startPrank(attacker);
         try token.setNextQuoteToken(ITIP20(address(pathUSD))) {
@@ -1496,7 +1496,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         address attacker = _selectActor(actorSeed);
         TIP20 token = _selectBaseToken(tokenSeed);
 
-        vm.assume(!token.hasRole(attacker, bytes32(0))); // DEFAULT_ADMIN_ROLE
+        if (token.hasRole(attacker, bytes32(0))) return; // DEFAULT_ADMIN_ROLE
 
         vm.startPrank(attacker);
         try token.setSupplyCap(newCap) {
@@ -1514,7 +1514,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
 
         uint256 currentSupply = token.totalSupply();
-        vm.assume(currentSupply > 1);
+        if (currentSupply <= 1) return;
 
         uint256 invalidCap = currentSupply - 1;
 
@@ -1539,15 +1539,15 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
 
         // Only toggle for actors 0-4
-        vm.assume(actorSeed % _actors.length < 5);
+        if (actorSeed % _actors.length >= 5) return;
 
         // Skip if policy is a special policy (0 or 1) which cannot be modified
         uint64 policyId = _getPolicyId(address(token));
-        vm.assume(policyId >= 2);
+        if (policyId < 2) return;
 
         // Ensure we are the policy admin (policy may have changed via changeTransferPolicyId)
         address policyAdmin = _getPolicyAdmin(address(token));
-        vm.assume(policyAdmin == admin || policyAdmin == pathUSDAdmin);
+        if (policyAdmin != admin && policyAdmin != pathUSDAdmin) return;
 
         bool currentlyAuthorized = _isAuthorized(address(token), actor);
 
@@ -1617,10 +1617,10 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
 
         // Only test when token is paused
-        vm.assume(token.paused());
+        if (!token.paused()) return;
 
         uint256 actorBalance = token.balanceOf(actor);
-        vm.assume(actorBalance > 0);
+        if (actorBalance == 0) return;
 
         vm.startPrank(actor);
         try token.transfer(recipient, 1) {
