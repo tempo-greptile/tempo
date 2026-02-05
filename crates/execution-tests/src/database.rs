@@ -844,13 +844,7 @@ mod tests {
     fn test_account_seeding() {
         let mut prestate = Prestate::default();
         let addr = address!("1111111111111111111111111111111111111111");
-        prestate.accounts.insert(
-            addr,
-            AccountState {
-                nonce: 5,
-                ..Default::default()
-            },
-        );
+        prestate.accounts.insert(addr, AccountState { nonce: 5 });
 
         let db = VectorDatabase::from_prestate(&prestate).unwrap();
         let account = db.account(addr).unwrap().unwrap();
@@ -882,7 +876,7 @@ mod tests {
         let addr = address!("3333333333333333333333333333333333333333");
         let code = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xf3]); // PUSH 0, PUSH 0, RETURN
 
-        prestate.code.insert(addr, code.clone());
+        prestate.code.insert(addr, code);
 
         let db = VectorDatabase::from_prestate(&prestate).unwrap();
         let account = db.account(addr).unwrap().unwrap();
@@ -919,7 +913,7 @@ mod tests {
         assert_eq!(currency, expected_usd);
 
         // Check that sender has balance in fee token
-        let sender_str = format!("{:?}", sender);
+        let sender_str = format!("{sender:?}");
         let balance_slot = slot_for("TIP20Token", "balances", &[&sender_str]).unwrap();
         let balance = db.storage(DEFAULT_FEE_TOKEN, balance_slot).unwrap();
         assert_eq!(balance, U256::from(1_000_000_000_000u64));

@@ -187,13 +187,7 @@ mod tests {
         let mut prestate = Prestate::default();
         let addr = address!("1111111111111111111111111111111111111111");
 
-        prestate.accounts.insert(
-            addr,
-            AccountState {
-                nonce: 42,
-                ..Default::default()
-            },
-        );
+        prestate.accounts.insert(addr, AccountState { nonce: 42 });
 
         let db = VectorDatabase::from_prestate(&prestate).unwrap();
 
@@ -355,7 +349,7 @@ mod tests {
             Some(FieldValue::Mapping(m)) => {
                 assert_eq!(m.get(holder), Some(&U256::from(500)));
             }
-            other => panic!("expected Mapping, got {:?}", other),
+            other => panic!("expected Mapping, got {other:?}"),
         }
     }
 
@@ -397,12 +391,12 @@ mod tests {
         let state = PostExecutionState::capture(&db.db, &checks).unwrap();
 
         let precompile = state.precompiles.get(&token_addr).unwrap();
-        let expected_key = format!("{},{}", owner, spender);
+        let expected_key = format!("{owner},{spender}");
         match precompile.fields.get("allowances") {
             Some(FieldValue::Mapping(m)) => {
                 assert_eq!(m.get(&expected_key), Some(&U256::from(1000)));
             }
-            other => panic!("expected Mapping, got {:?}", other),
+            other => panic!("expected Mapping, got {other:?}"),
         }
     }
 

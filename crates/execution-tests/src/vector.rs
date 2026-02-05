@@ -921,7 +921,7 @@ mod tests {
         let child = TestVector {
             extends: Some("parent.json".to_string()),
             name: "child".to_string(),
-            description: "".to_string(), // Empty, should inherit
+            description: String::new(), // Empty, should inherit
 
             prestate: Prestate {
                 accounts: child_accounts,
@@ -956,7 +956,7 @@ mod tests {
         let parent = TestVector {
             extends: None,
             name: "parent".to_string(),
-            description: "".to_string(),
+            description: String::new(),
 
             prestate: Prestate {
                 precompiles: vec![PrecompileState {
@@ -985,7 +985,7 @@ mod tests {
         let child = TestVector {
             extends: Some("parent.json".to_string()),
             name: "child".to_string(),
-            description: "".to_string(),
+            description: String::new(),
 
             prestate: Prestate {
                 precompiles: vec![PrecompileState {
@@ -1031,7 +1031,7 @@ mod tests {
         let parent = TestVector {
             extends: None,
             name: "parent".to_string(),
-            description: "".to_string(),
+            description: String::new(),
 
             prestate: Prestate::default(),
             block: BlockContext {
@@ -1054,7 +1054,7 @@ mod tests {
         let child = TestVector {
             extends: Some("parent.json".to_string()),
             name: "child".to_string(),
-            description: "".to_string(),
+            description: String::new(),
 
             prestate: Prestate::default(),
             block: BlockContext {
@@ -1163,7 +1163,7 @@ mod tests {
         let parent = TestVector {
             extends: None,
             name: "parent".to_string(),
-            description: "".to_string(),
+            description: String::new(),
 
             prestate: Prestate::default(),
             block: BlockContext {
@@ -1183,7 +1183,7 @@ mod tests {
         let child = TestVector {
             extends: Some("parent.json".to_string()),
             name: "child".to_string(),
-            description: "".to_string(),
+            description: String::new(),
 
             prestate: Prestate::default(),
             block: BlockContext {

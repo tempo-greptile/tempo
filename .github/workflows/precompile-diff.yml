@@ -1,10 +1,10 @@
-# Precompile Differential Testing
+# Execution Regression Tests
 #
-# This workflow detects behavioral changes in precompiles by comparing
+# This workflow detects behavioral changes in the execution layer by comparing
 # fingerprints from the main branch against the PR branch. Any difference
 # in execution results (gas, output, state) will cause the workflow to fail.
 
-name: Precompile Differential Testing
+name: Execution Regression Tests
 
 on:
   pull_request:
@@ -29,7 +29,7 @@ env:
 
 jobs:
   diff:
-    name: Precompile Diff
+    name: Execution Regression
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

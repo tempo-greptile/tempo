@@ -627,13 +627,8 @@ mod tests {
             precompiles,
         };
 
-        let fp = Fingerprint::from_execution(
-            "test_with_precompiles",
-            "T1",
-            100,
-            vec![],
-            post_state.clone(),
-        );
+        let fp =
+            Fingerprint::from_execution("test_with_precompiles", "T1", 100, vec![], post_state);
 
         // Verify serialization works
         let json = fp.to_canonical_json();

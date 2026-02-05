@@ -701,7 +701,7 @@ mod tests {
         let transactions = vec![tx1, tx2];
 
         let errors = super::validate_tx_outcomes(&results, &transactions, "T1");
-        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+        assert!(errors.is_empty(), "Expected no errors, got: {errors:?}");
     }
 
     #[test]
@@ -755,7 +755,7 @@ mod tests {
         });
 
         let errors = super::validate_tx_outcomes(&results, &[tx], "T1");
-        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+        assert!(errors.is_empty(), "Expected no errors, got: {errors:?}");
     }
 
     #[test]
@@ -804,7 +804,7 @@ mod tests {
         });
 
         let errors = super::validate_tx_outcomes(&results, &[tx], "T1");
-        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+        assert!(errors.is_empty(), "Expected no errors, got: {errors:?}");
     }
 
     #[test]
