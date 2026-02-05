@@ -3,10 +3,10 @@
 //! This module provides utilities to create an in-memory CacheDB
 //! populated with the prestate defined in a test vector.
 //!
-//! The seeding system uses a generic approach driven by `FieldMetadata` from
-//! the precompile resolver. Most fields are automatically inferred from their
-//! byte size (32 = U256, 20 = Address, etc.), with special cases handled via
-//! an explicit `SeedKind` override table.
+//! The seeding system uses `FieldMetadata.seed` function pointers from the
+//! precompile resolver. Each field type has its own compile-time generated
+//! seed function. Struct types with custom encoding (`AuthorizedKey`, `PolicyData`)
+//! are handled via field-specific overrides.
 
 use crate::vector::{PrecompileState, Prestate};
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -18,57 +18,13 @@ use revm::{
 };
 use tempo_precompiles::{
     account_keychain::AuthorizedKey,
-    resolver::metadata_for,
-    storage::{FromWord, packing::insert_into_word},
+    resolver::{FieldMetadata, SeedError, metadata_for},
     tip403_registry::PolicyData,
 };
 
 /// Marker bytecode for precompile accounts (invalid opcode, won't execute).
 /// TIP20 tokens check `is_initialized()` which requires non-empty code hash.
 const PRECOMPILE_MARKER_BYTECODE: u8 = 0xEF;
-
-/// Maximum length for Solidity short strings.
-const MAX_SHORT_STRING_LEN: usize = 31;
-
-// ============================================================================
-// SeedKind: Override table for special encoding cases
-// ============================================================================
-
-/// Specifies how a field should be encoded when seeding.
-/// Most fields use `DefaultPrimitive`, which infers the type from `meta.bytes`.
-#[derive(Debug, Clone, Copy)]
-enum SeedKind {
-    /// Infer encoding from meta.bytes (32=U256, 20=Address, 8=u64, etc.)
-    DefaultPrimitive,
-    /// Encode as Solidity short string (≤31 bytes, length*2 in LSB)
-    ShortString,
-    /// Store array length only (for Vec fields)
-    ArrayLenOnly,
-    /// Encode AuthorizedKey struct
-    AuthorizedKeyStruct,
-    /// Encode PolicyData struct
-    PolicyDataStruct,
-}
-
-/// Returns the `SeedKind` for a given (contract, field) pair.
-/// Fields not in this table use `DefaultPrimitive`, which infers type from metadata.
-fn seed_kind(contract: &str, field: &str) -> SeedKind {
-    match (contract, field) {
-        // Short string fields (Solidity string encoding)
-        ("TIP20Token", "name" | "symbol" | "currency") => SeedKind::ShortString,
-
-        // Array length-only fields (store length at base slot)
-        ("StablecoinDEX", "book_keys") => SeedKind::ArrayLenOnly,
-        ("ValidatorConfig", "validators_array") => SeedKind::ArrayLenOnly,
-
-        // Complex struct fields with custom encoders
-        ("AccountKeychain", "keys") => SeedKind::AuthorizedKeyStruct,
-        ("TIP403Registry", "policy_data") => SeedKind::PolicyDataStruct,
-
-        // All other fields use default primitive inference
-        _ => SeedKind::DefaultPrimitive,
-    }
-}
 
 /// A database seeded from a test vector's prestate.
 pub struct VectorDatabase {
@@ -135,9 +91,6 @@ impl VectorDatabase {
     }
 
     /// Seeds precompile state from test vector definitions.
-    ///
-    /// For each precompile in the prestate, parses the fields JSON and writes
-    /// the appropriate storage slots using the resolver.
     fn seed_precompiles(&mut self, precompiles: &[PrecompileState]) -> eyre::Result<()> {
         for precompile in precompiles {
             self.seed_precompile(precompile)?;
@@ -180,19 +133,6 @@ impl VectorDatabase {
         field: &str,
         value: &serde_json::Value,
     ) -> eyre::Result<()> {
-        let kind = seed_kind(contract, field);
-
-        // Handle array length fields specially
-        if matches!(kind, SeedKind::ArrayLenOnly) {
-            let arr = value
-                .as_array()
-                .ok_or_else(|| eyre::eyre!("{} must be an array", field))?;
-            let meta = metadata_for(contract, field, &[])?;
-            self.db
-                .insert_account_storage(address, meta.slot, U256::from(arr.len()))?;
-            return Ok(());
-        }
-
         // Check if this is a mapping by trying to get metadata without keys
         let base_meta = metadata_for(contract, field, &[]);
 
@@ -207,7 +147,8 @@ impl VectorDatabase {
             }
             Err(tempo_precompiles::resolver::ResolverError::MissingKey(_)) => {
                 // Needs keys - it's a mapping
-                let meta = metadata_for(contract, field, &["0x0000000000000000000000000000000000000000"])?;
+                let meta =
+                    metadata_for(contract, field, &["0x0000000000000000000000000000000000000000"])?;
                 self.seed_mapping(address, contract, field, value, vec![], meta.nesting_depth)?;
             }
             Err(e) => return Err(eyre::eyre!("field resolution failed: {}", e)),
@@ -255,7 +196,9 @@ impl VectorDatabase {
     }
 
     /// Seeds a scalar value at a specific storage slot.
-    /// Uses `insert_into_word` for packed fields, writing directly for full-slot values.
+    ///
+    /// Uses `meta.seed()` to encode the JSON value, with overrides for struct types
+    /// that have custom encoding (`AuthorizedKey`, `PolicyData`).
     fn seed_scalar(
         &mut self,
         address: Address,
@@ -265,47 +208,64 @@ impl VectorDatabase {
         value: &serde_json::Value,
     ) -> eyre::Result<()> {
         let meta = metadata_for(contract, field, keys)?;
-        let kind = seed_kind(contract, field);
-        let is_packed = meta.offset > 0 || meta.bytes < 32;
 
-        // For packed fields, read current slot value
-        let current = if is_packed {
-            self.db.storage_ref(address, meta.slot).unwrap_or(U256::ZERO)
+        // Try to use the generated seed function, with overrides for struct types
+        let word = self.encode_value(contract, field, &meta, value)?;
+
+        // Handle packing for fields that don't occupy a full slot
+        let final_value = if meta.offset > 0 || meta.bytes < 32 {
+            let current = self.db.storage_ref(address, meta.slot).unwrap_or(U256::ZERO);
+            pack_word(current, word, meta.offset, meta.bytes)?
         } else {
-            U256::ZERO
+            word
         };
 
-        // Encode and optionally pack based on SeedKind
-        let final_value = match kind {
-            SeedKind::ShortString => {
-                let s = value
-                    .as_str()
-                    .ok_or_else(|| eyre::eyre!("{} must be a string", field))?;
-                encode_short_string(s)?
-            }
-            SeedKind::AuthorizedKeyStruct => {
-                let info = value
-                    .as_object()
-                    .ok_or_else(|| eyre::eyre!("{} value must be an object", field))?;
-                encode_authorized_key(info)?
-            }
-            SeedKind::PolicyDataStruct => {
-                let info = value
-                    .as_object()
-                    .ok_or_else(|| eyre::eyre!("{} value must be an object", field))?;
-                encode_policy_data(info)?
-            }
-            SeedKind::ArrayLenOnly => {
-                unreachable!("ArrayLenOnly handled in seed_field")
-            }
-            SeedKind::DefaultPrimitive => {
-                // Use insert_into_word with typed values for proper packing
-                encode_and_pack_by_size(field, meta.bytes, value, current, meta.offset, is_packed)?
-            }
-        };
-
-        self.db.insert_account_storage(address, meta.slot, final_value)?;
+        self.db
+            .insert_account_storage(address, meta.slot, final_value)?;
         Ok(())
+    }
+
+    /// Encodes a JSON value to a U256 word.
+    ///
+    /// Uses the `meta.seed` function for primitives, with overrides for struct types.
+    fn encode_value(
+        &self,
+        contract: &str,
+        field: &str,
+        meta: &FieldMetadata,
+        value: &serde_json::Value,
+    ) -> eyre::Result<U256> {
+        // Try the generated seed function first
+        match (meta.seed)(value) {
+            Ok(word) => Ok(word),
+            Err(SeedError::Parse(msg)) if msg.contains("struct types require") => {
+                // Fallback to struct-specific encoders
+                self.encode_struct(contract, field, value)
+            }
+            Err(e) => Err(eyre::eyre!("seed error for {}.{}: {}", contract, field, e)),
+        }
+    }
+
+    /// Encodes struct types that have custom `encode_to_slot()` methods.
+    fn encode_struct(
+        &self,
+        contract: &str,
+        field: &str,
+        value: &serde_json::Value,
+    ) -> eyre::Result<U256> {
+        let obj = value
+            .as_object()
+            .ok_or_else(|| eyre::eyre!("{}.{} must be an object", contract, field))?;
+
+        match (contract, field) {
+            ("AccountKeychain", "keys") => encode_authorized_key(obj),
+            ("TIP403Registry", "policy_records") => encode_policy_data(obj),
+            _ => Err(eyre::eyre!(
+                "no custom encoder for struct field {}.{}",
+                contract,
+                field
+            )),
+        }
     }
 
     /// Get a reference to the underlying database.
@@ -333,152 +293,23 @@ fn hash_bytes(data: &Bytes) -> B256 {
     alloy_primitives::keccak256(data)
 }
 
-/// Encodes a string as a Solidity short string (≤31 bytes).
-/// Format: left-aligned bytes with (length * 2) in the LSB.
-fn encode_short_string(s: &str) -> eyre::Result<U256> {
-    let bytes = s.as_bytes();
-    if bytes.len() > MAX_SHORT_STRING_LEN {
-        return Err(eyre::eyre!(
-            "string too long for short string encoding: {} bytes",
-            bytes.len()
-        ));
-    }
+/// Pack a word into a slot at the given offset.
+fn pack_word(current: U256, word: U256, offset: usize, bytes: usize) -> eyre::Result<U256> {
+    use tempo_precompiles::storage::packing::create_element_mask;
 
-    let mut buf = [0u8; 32];
-    buf[..bytes.len()].copy_from_slice(bytes);
-    buf[31] = (bytes.len() * 2) as u8;
+    let shift_bits = offset * 8;
+    let mask = create_element_mask(bytes);
 
-    Ok(U256::from_be_bytes(buf))
-}
+    // Clear the bits for this field in the current slot value
+    let clear_mask = !(mask << shift_bits);
+    let cleared = current & clear_mask;
 
-/// Encodes a JSON value based on byte size and packs it using `insert_into_word`.
-/// Uses typed parsing and the precompile packing infrastructure for correctness.
-/// Maps: 32 -> U256, 20 -> Address, 16 -> u128, 8 -> u64, 4 -> u32, 1 -> bool/u8
-fn encode_and_pack_by_size(
-    field: &str,
-    bytes: usize,
-    value: &serde_json::Value,
-    current: U256,
-    offset: usize,
-    is_packed: bool,
-) -> eyre::Result<U256> {
-    // Macro to handle packing vs direct encoding for typed values
-    macro_rules! pack_or_encode {
-        ($v:expr) => {
-            if is_packed {
-                insert_into_word(current, $v, offset, bytes)
-                    .map_err(|e| eyre::eyre!("packing failed: {}", e))
-            } else {
-                Ok($v.to_word())
-            }
-        };
-    }
-
-    match bytes {
-        32 => {
-            // U256 or B256 - full slot, no packing needed
-            if let Some(s) = value.as_str() {
-                if s.starts_with("0x") && s.len() == 66 {
-                    let hash: B256 = s.parse()?;
-                    return Ok(U256::from_be_bytes(hash.0));
-                }
-                parse_u256_str(s)
-            } else {
-                Err(eyre::eyre!("{} must be a string for U256/B256", field))
-            }
-        }
-        20 => {
-            let addr_str = value
-                .as_str()
-                .ok_or_else(|| eyre::eyre!("{} must be an address string", field))?;
-            let addr: Address = addr_str.parse()?;
-            pack_or_encode!(&addr)
-        }
-        16 => {
-            let v = parse_u128_value(value)?;
-            pack_or_encode!(&v)
-        }
-        8 => {
-            let v = parse_u64_value(value)?;
-            pack_or_encode!(&v)
-        }
-        4 => {
-            let v = parse_u64_value(value)?;
-            if v > u32::MAX as u64 {
-                return Err(eyre::eyre!("{} value {} exceeds u32::MAX", field, v));
-            }
-            pack_or_encode!(&(v as u32))
-        }
-        1 => {
-            if let Some(b) = value.as_bool() {
-                pack_or_encode!(&b)
-            } else if let Some(n) = value.as_u64() {
-                if n > u8::MAX as u64 {
-                    return Err(eyre::eyre!("{} value {} exceeds u8::MAX", field, n));
-                }
-                pack_or_encode!(&(n as u8))
-            } else {
-                Err(eyre::eyre!("{} must be a boolean or small integer", field))
-            }
-        }
-        _ => {
-            // Unknown size - try to parse as U256 (fallback for raw packed data)
-            parse_u256_value(value)
-        }
-    }
-}
-
-/// Parses a JSON value as U256 (accepts decimal or hex string).
-fn parse_u256_value(value: &serde_json::Value) -> eyre::Result<U256> {
-    let s = value
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("expected string value for U256"))?;
-    parse_u256_str(s)
-}
-
-/// Parses a string as U256 (accepts decimal or hex).
-fn parse_u256_str(s: &str) -> eyre::Result<U256> {
-    if s.starts_with("0x") || s.starts_with("0X") {
-        U256::from_str_radix(&s[2..], 16).map_err(|e| eyre::eyre!("invalid hex U256: {}", e))
-    } else {
-        U256::from_str_radix(s, 10).map_err(|e| eyre::eyre!("invalid decimal U256: {}", e))
-    }
-}
-
-/// Parses a JSON value as u64 (accepts number or decimal/hex string).
-fn parse_u64_value(value: &serde_json::Value) -> eyre::Result<u64> {
-    if let Some(n) = value.as_u64() {
-        return Ok(n);
-    }
-    let s = value
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("expected number or string for u64"))?;
-    if s.starts_with("0x") || s.starts_with("0X") {
-        u64::from_str_radix(&s[2..], 16).map_err(|e| eyre::eyre!("invalid hex u64: {}", e))
-    } else {
-        s.parse()
-            .map_err(|e| eyre::eyre!("invalid decimal u64: {}", e))
-    }
-}
-
-/// Parses a JSON value as u128 (accepts number or decimal/hex string).
-fn parse_u128_value(value: &serde_json::Value) -> eyre::Result<u128> {
-    if let Some(n) = value.as_u64() {
-        return Ok(n as u128);
-    }
-    let s = value
-        .as_str()
-        .ok_or_else(|| eyre::eyre!("expected number or string for u128"))?;
-    if s.starts_with("0x") || s.starts_with("0X") {
-        u128::from_str_radix(&s[2..], 16).map_err(|e| eyre::eyre!("invalid hex u128: {}", e))
-    } else {
-        s.parse()
-            .map_err(|e| eyre::eyre!("invalid decimal u128: {}", e))
-    }
+    // Position the new value and combine with cleared slot
+    let positioned = (word & mask) << shift_bits;
+    Ok(cleared | positioned)
 }
 
 /// Encodes an AuthorizedKey struct from JSON into a packed U256.
-/// Uses the actual AuthorizedKey::encode_to_slot method for correctness.
 fn encode_authorized_key(info: &serde_json::Map<String, serde_json::Value>) -> eyre::Result<U256> {
     let signature_type = info
         .get("signature_type")
@@ -512,7 +343,6 @@ fn encode_authorized_key(info: &serde_json::Map<String, serde_json::Value>) -> e
 }
 
 /// Encodes a PolicyData struct from JSON into a packed U256.
-/// Uses the actual PolicyData::encode_to_slot method for correctness.
 fn encode_policy_data(info: &serde_json::Map<String, serde_json::Value>) -> eyre::Result<U256> {
     let policy_type = info
         .get("policy_type")
@@ -530,6 +360,22 @@ fn encode_policy_data(info: &serde_json::Map<String, serde_json::Value>) -> eyre
     Ok(data.encode_to_slot())
 }
 
+/// Parses a JSON value as u64 (accepts number or decimal/hex string).
+fn parse_u64_value(value: &serde_json::Value) -> eyre::Result<u64> {
+    if let Some(n) = value.as_u64() {
+        return Ok(n);
+    }
+    let s = value
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("expected number or string for u64"))?;
+    if s.starts_with("0x") || s.starts_with("0X") {
+        u64::from_str_radix(&s[2..], 16).map_err(|e| eyre::eyre!("invalid hex u64: {}", e))
+    } else {
+        s.parse()
+            .map_err(|e| eyre::eyre!("invalid decimal u64: {}", e))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,7 +388,6 @@ mod tests {
     fn test_empty_prestate() {
         let prestate = Prestate::default();
         let db = VectorDatabase::from_prestate(&prestate).unwrap();
-        // Empty prestate should create an empty DB (no precompiles seeded)
         assert!(db.db.cache.accounts.is_empty());
     }
 
@@ -595,7 +440,6 @@ mod tests {
     fn test_precompile_seeding() {
         let mut prestate = Prestate::default();
 
-        // Seed DEFAULT_FEE_TOKEN with USD currency and a balance
         let sender = address!("abcdef0000000000000000000000000000000001");
         prestate.precompiles.push(PrecompileState {
             name: "TIP20Token".to_string(),
@@ -620,45 +464,11 @@ mod tests {
 
         // Check that sender has balance in fee token
         let sender_str = format!("{sender:?}");
-        let balance_slot = metadata_for("TIP20Token", "balances", &[&sender_str]).unwrap().slot;
+        let balance_slot = metadata_for("TIP20Token", "balances", &[&sender_str])
+            .unwrap()
+            .slot;
         let balance = db.storage(DEFAULT_FEE_TOKEN, balance_slot).unwrap();
         assert_eq!(balance, U256::from(1_000_000_000_000u64));
-    }
-
-    #[test]
-    fn test_encode_short_string() {
-        // "USD" should encode as 0x5553440000...000006
-        let encoded = encode_short_string("USD").unwrap();
-        let expected =
-            uint!(0x5553440000000000000000000000000000000000000000000000000000000006_U256);
-        assert_eq!(encoded, expected);
-
-        // Empty string
-        let empty = encode_short_string("").unwrap();
-        assert_eq!(empty, U256::ZERO);
-
-        // Max length (31 bytes)
-        let max = encode_short_string("1234567890123456789012345678901").unwrap();
-        assert!(max != U256::ZERO);
-
-        // Too long should error
-        let too_long = encode_short_string("12345678901234567890123456789012");
-        assert!(too_long.is_err());
-    }
-
-    #[test]
-    fn test_parse_u256_value() {
-        // Decimal
-        let dec = parse_u256_value(&serde_json::json!("1000")).unwrap();
-        assert_eq!(dec, U256::from(1000));
-
-        // Hex
-        let hex = parse_u256_value(&serde_json::json!("0x3e8")).unwrap();
-        assert_eq!(hex, U256::from(1000));
-
-        // Non-string should error
-        let non_str = parse_u256_value(&serde_json::json!(1000));
-        assert!(non_str.is_err());
     }
 
     #[test]
@@ -675,7 +485,9 @@ mod tests {
 
         let db = VectorDatabase::from_prestate(&prestate).unwrap();
 
-        let slot = metadata_for("TIP20Token", "transfer_policy_id", &[]).unwrap().slot;
+        let slot = metadata_for("TIP20Token", "transfer_policy_id", &[])
+            .unwrap()
+            .slot;
         let value = db.storage(DEFAULT_FEE_TOKEN, slot).unwrap();
 
         // Policy ID = 1 shifted left by 160 bits
