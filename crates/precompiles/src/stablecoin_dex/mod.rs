@@ -16,7 +16,7 @@ use crate::{
     STABLECOIN_DEX_ADDRESS,
     error::{Result, TempoPrecompileError},
     stablecoin_dex::orderbook::{MAX_PRICE, MIN_PRICE, compute_book_key},
-    storage::{Handler, Mapping},
+    storage::{Handler, Mapping, StorageCtx},
     tip20::{ITIP20, TIP20Token, is_tip20_prefix, validate_usd_currency},
     tip20_factory::TIP20Factory,
     tip403_registry::{AuthRole, TIP403Registry},
@@ -390,20 +390,23 @@ impl StablecoinDEX {
             return Err(StablecoinDEXError::below_minimum_order_size(amount).into());
         }
 
+        // TIP-1002 (T2+): Prevent crossed orders
         // Re-read book after validate_or_create_pair (may have been created)
-        let book = self.books[book_key].read()?;
+        if StorageCtx.spec().is_t2() {
+            let book = self.books[book_key].read()?;
 
-        // Prevent crossed orders: reject orders that would cross the spread (TIP-1002)
-        // Note: Same-tick orders (tick == best opposite tick) are allowed
-        if is_bid {
-            // For bids: reject if tick > best_ask_tick (when asks exist)
-            if book.best_ask_tick != i16::MAX && tick > book.best_ask_tick {
-                return Err(StablecoinDEXError::order_would_cross().into());
-            }
-        } else {
-            // For asks: reject if tick < best_bid_tick (when bids exist)
-            if book.best_bid_tick != i16::MIN && tick < book.best_bid_tick {
-                return Err(StablecoinDEXError::order_would_cross().into());
+            // Prevent crossed orders: reject orders that would cross the spread
+            // Note: Same-tick orders (tick == best opposite tick) are allowed
+            if is_bid {
+                // For bids: reject if tick > best_ask_tick (when asks exist)
+                if book.best_ask_tick != i16::MAX && tick > book.best_ask_tick {
+                    return Err(StablecoinDEXError::order_would_cross().into());
+                }
+            } else {
+                // For asks: reject if tick < best_bid_tick (when bids exist)
+                if book.best_bid_tick != i16::MIN && tick < book.best_bid_tick {
+                    return Err(StablecoinDEXError::order_would_cross().into());
+                }
             }
         }
 
@@ -546,8 +549,14 @@ impl StablecoinDEX {
             return Err(StablecoinDEXError::invalid_flip_tick().into());
         }
 
-        // Validate flip_tick relationship to tick based on order side (same-tick allowed per TIP-1002)
-        if (is_bid && flip_tick < tick) || (!is_bid && flip_tick > tick) {
+        // Validate flip_tick relationship to tick based on order side
+        // TIP-1002 (T2+): Same-tick flip orders are allowed
+        // Pre-T2: flip_tick must be strictly beyond tick
+        if StorageCtx.spec().is_t2() {
+            if (is_bid && flip_tick < tick) || (!is_bid && flip_tick > tick) {
+                return Err(StablecoinDEXError::invalid_flip_tick().into());
+            }
+        } else if (is_bid && flip_tick <= tick) || (!is_bid && flip_tick >= tick) {
             return Err(StablecoinDEXError::invalid_flip_tick().into());
         }
 
@@ -556,20 +565,23 @@ impl StablecoinDEX {
             return Err(StablecoinDEXError::below_minimum_order_size(amount).into());
         }
 
+        // TIP-1002 (T2+): Prevent crossed orders
         // Re-read book after validate_or_create_pair (may have been created)
-        let book = self.books[book_key].read()?;
+        if StorageCtx.spec().is_t2() {
+            let book = self.books[book_key].read()?;
 
-        // Prevent crossed orders: reject orders that would cross the spread (TIP-1002)
-        // Note: Same-tick orders (tick == best opposite tick) are allowed
-        if is_bid {
-            // For bids: reject if tick > best_ask_tick (when asks exist)
-            if book.best_ask_tick != i16::MAX && tick > book.best_ask_tick {
-                return Err(StablecoinDEXError::order_would_cross().into());
-            }
-        } else {
-            // For asks: reject if tick < best_bid_tick (when bids exist)
-            if book.best_bid_tick != i16::MIN && tick < book.best_bid_tick {
-                return Err(StablecoinDEXError::order_would_cross().into());
+            // Prevent crossed orders: reject orders that would cross the spread
+            // Note: Same-tick orders (tick == best opposite tick) are allowed
+            if is_bid {
+                // For bids: reject if tick > best_ask_tick (when asks exist)
+                if book.best_ask_tick != i16::MAX && tick > book.best_ask_tick {
+                    return Err(StablecoinDEXError::order_would_cross().into());
+                }
+            } else {
+                // For asks: reject if tick < best_bid_tick (when bids exist)
+                if book.best_bid_tick != i16::MIN && tick < book.best_bid_tick {
+                    return Err(StablecoinDEXError::order_would_cross().into());
+                }
             }
         }
 
@@ -4214,7 +4226,7 @@ mod tests {
     /// Test that placing a bid that would cross an existing ask is rejected (TIP-1002)
     #[test]
     fn test_tip1002_bid_crossing_ask_rejected() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T2);
         StorageCtx::enter(&mut storage, || {
             let mut exchange = StablecoinDEX::new();
             exchange.initialize()?;
@@ -4264,7 +4276,7 @@ mod tests {
     /// Test that placing an ask that would cross an existing bid is rejected (TIP-1002)
     #[test]
     fn test_tip1002_ask_crossing_bid_rejected() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T2);
         StorageCtx::enter(&mut storage, || {
             let mut exchange = StablecoinDEX::new();
             exchange.initialize()?;
@@ -4311,7 +4323,7 @@ mod tests {
     /// Test that same-tick orders are allowed (bid at same tick as best ask) (TIP-1002)
     #[test]
     fn test_tip1002_same_tick_orders_allowed() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T2);
         StorageCtx::enter(&mut storage, || {
             let mut exchange = StablecoinDEX::new();
             exchange.initialize()?;
@@ -4361,7 +4373,7 @@ mod tests {
     /// Test that same-tick flip orders can be placed (TIP-1002)
     #[test]
     fn test_tip1002_same_tick_flip_order_placement() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T2);
         StorageCtx::enter(&mut storage, || {
             let mut exchange = StablecoinDEX::new();
             exchange.initialize()?;
@@ -4400,7 +4412,7 @@ mod tests {
     /// Test that same-tick flip orders execute correctly (TIP-1002)
     #[test]
     fn test_tip1002_same_tick_flip_order_execution() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T2);
         StorageCtx::enter(&mut storage, || {
             let mut exchange = StablecoinDEX::new();
             exchange.initialize()?;
@@ -4461,7 +4473,7 @@ mod tests {
     /// Test that same-tick flip orders can flip back and forth (TIP-1002)
     #[test]
     fn test_tip1002_same_tick_flip_order_round_trip() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T2);
         StorageCtx::enter(&mut storage, || {
             let mut exchange = StablecoinDEX::new();
             exchange.initialize()?;
@@ -4554,7 +4566,7 @@ mod tests {
     /// Test that flip orders work correctly when there are other orders at the same tick (TIP-1002)
     #[test]
     fn test_tip1002_same_tick_flip_with_other_orders() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T2);
         StorageCtx::enter(&mut storage, || {
             let mut exchange = StablecoinDEX::new();
             exchange.initialize()?;
@@ -4607,7 +4619,7 @@ mod tests {
     /// Test that placeFlip also rejects crossing orders (TIP-1002)
     #[test]
     fn test_tip1002_place_flip_crossing_rejected() -> eyre::Result<()> {
-        let mut storage = HashMapStorageProvider::new(1);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::T2);
         StorageCtx::enter(&mut storage, || {
             let mut exchange = StablecoinDEX::new();
             exchange.initialize()?;
