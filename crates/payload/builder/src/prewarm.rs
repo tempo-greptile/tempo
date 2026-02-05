@@ -237,7 +237,7 @@ mod tests {
     mod buggy_pattern {
         use std::{
             collections::HashMap,
-            sync::{mpsc, RwLock},
+            sync::{RwLock, mpsc},
         };
 
         pub(super) struct BuggyCache {
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn test_buggy_pattern_causes_stall() {
         use buggy_pattern::BuggyCache;
-        use std::sync::{mpsc, Arc};
+        use std::sync::{Arc, mpsc};
 
         let cache = Arc::new(BuggyCache::new());
         let (tx, rx) = mpsc::channel();
@@ -292,9 +292,7 @@ mod tests {
         let cache_clone = Arc::clone(&cache);
 
         // Thread 1: Will hold the write lock waiting for rx.recv()
-        let handle1 = thread::spawn(move || {
-            cache_clone.get_or_compute_buggy(1, rx)
-        });
+        let handle1 = thread::spawn(move || cache_clone.get_or_compute_buggy(1, rx));
 
         // Give thread 1 time to acquire the lock
         thread::sleep(Duration::from_millis(50));
