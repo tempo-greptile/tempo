@@ -585,7 +585,7 @@ mod tests {
         let mut fields = BTreeMap::new();
         fields.insert(
             "total_supply".to_string(),
-            FieldValue::Simple(U256::from(1000000)),
+            FieldValue::Simple(Bytes::copy_from_slice(&U256::from(1000000).to_be_bytes::<32>())),
         );
         fields.insert(
             "balances".to_string(),
@@ -593,7 +593,7 @@ mod tests {
                 let mut m = BTreeMap::new();
                 m.insert(
                     "0x1111111111111111111111111111111111111111".to_string(),
-                    U256::from(500),
+                    Bytes::copy_from_slice(&U256::from(500).to_be_bytes::<32>()),
                 );
                 m
             }),

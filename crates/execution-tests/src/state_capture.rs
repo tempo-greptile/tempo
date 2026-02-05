@@ -4,11 +4,14 @@
 //! to include in the execution fingerprint.
 
 use crate::vector::{Checks, FieldKey, FieldSpec};
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use revm::DatabaseRef;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use tempo_precompiles::resolver::metadata_for;
+use tempo_precompiles::{
+    resolver::{metadata_for, FieldMetadata},
+    storage::packing::extract_from_word,
+};
 
 /// Captured precompile field values
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -19,14 +22,17 @@ pub struct PrecompileFieldValues {
     pub fields: BTreeMap<String, FieldValue>,
 }
 
-/// A captured field value
+/// A captured field value.
+///
+/// Values are stored as `Bytes` to support fields of any size (packed fields,
+/// full slots, or multi-slot types like structs).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum FieldValue {
-    /// Simple field value
-    Simple(U256),
+    /// Simple field value (non-mapping)
+    Simple(Bytes),
     /// Mapping values by key(s)
-    Mapping(BTreeMap<String, U256>),
+    Mapping(BTreeMap<String, Bytes>),
 }
 
 /// Captured post-execution state
@@ -42,6 +48,75 @@ pub struct PostExecutionState {
 }
 
 // Note: Native balances are not tracked - Tempo uses TIP20 tokens instead
+
+/// Convert U256 to Bytes (full 32-byte big-endian representation).
+fn u256_to_bytes(value: U256) -> Bytes {
+    Bytes::copy_from_slice(&value.to_be_bytes::<32>())
+}
+
+/// Convert U256 to Bytes with specific byte count (right-aligned extraction).
+fn u256_to_bytes_sized(value: U256, size: usize) -> Bytes {
+    let full = value.to_be_bytes::<32>();
+    let start = 32 - size;
+    Bytes::copy_from_slice(&full[start..])
+}
+
+/// Read a field value from storage using the field metadata.
+///
+/// This function handles:
+/// - Packed fields: extracts the correct portion of a slot based on offset and bytes
+/// - Full-slot fields: returns the entire slot value
+/// - Multi-slot fields: reads and concatenates consecutive slots
+///
+/// Returns the value as `Bytes` with exactly `metadata.bytes` length.
+fn read_field_value<DB>(
+    db: &DB,
+    address: Address,
+    metadata: &FieldMetadata,
+) -> eyre::Result<Bytes>
+where
+    DB: DatabaseRef,
+    DB::Error: std::fmt::Debug,
+{
+    let num_slots = metadata.bytes.div_ceil(32);
+
+    // Read all required slots
+    let mut slot_values = Vec::with_capacity(num_slots);
+    for i in 0..num_slots {
+        let slot_addr = metadata.slot + U256::from(i);
+        let value = db.storage_ref(address, slot_addr).map_err(|e| {
+            eyre::eyre!(
+                "storage read failed for {:?} slot {:?}: {:?}",
+                address,
+                slot_addr,
+                e
+            )
+        })?;
+        slot_values.push(value);
+    }
+
+    // For packed fields within a single slot, extract the relevant bytes
+    if num_slots == 1 && (metadata.offset > 0 || metadata.bytes < 32) {
+        let extracted =
+            extract_from_word::<U256>(slot_values[0], metadata.offset, metadata.bytes)
+                .map_err(|e| eyre::eyre!("extract_from_word failed: {:?}", e))?;
+        return Ok(u256_to_bytes_sized(extracted, metadata.bytes));
+    }
+
+    // For full slots or multi-slot values, concatenate and trim to exact size
+    if num_slots == 1 {
+        return Ok(u256_to_bytes(slot_values[0]));
+    }
+
+    // Multi-slot: concatenate all slots
+    let mut result = Vec::with_capacity(num_slots * 32);
+    for slot_value in &slot_values {
+        result.extend_from_slice(&slot_value.to_be_bytes::<32>());
+    }
+    // Trim to exact byte count (last slot may have padding)
+    result.truncate(metadata.bytes);
+    Ok(Bytes::from(result))
+}
 
 impl PostExecutionState {
     /// Capture state from a database according to the specified checks
@@ -89,17 +164,15 @@ impl PostExecutionState {
             for spec in &check.fields {
                 match spec {
                     FieldSpec::Simple(field_name) => {
-                        let slot = metadata_for(&check.name, field_name, &[]).map_err(|e| {
-                            eyre::eyre!("metadata_for failed for {}.{}: {:?}", check.name, field_name, e)
-                        })?.slot;
-                        let value = db.storage_ref(check.address, slot).map_err(|e| {
+                        let metadata = metadata_for(&check.name, field_name, &[]).map_err(|e| {
                             eyre::eyre!(
-                                "storage read failed for {:?} slot {:?}: {:?}",
-                                check.address,
-                                slot,
+                                "metadata_for failed for {}.{}: {:?}",
+                                check.name,
+                                field_name,
                                 e
                             )
                         })?;
+                        let value = read_field_value(db, check.address, &metadata)?;
                         field_values.insert(field_name.clone(), FieldValue::Simple(value));
                     }
                     FieldSpec::WithKeys { field, keys } => {
@@ -109,23 +182,17 @@ impl PostExecutionState {
                                 FieldKey::Single(k) => vec![k.as_str()],
                                 FieldKey::Tuple(ks) => ks.iter().map(|s| s.as_str()).collect(),
                             };
-                            let slot = metadata_for(&check.name, field, &key_strs).map_err(|e| {
-                                eyre::eyre!(
-                                    "metadata_for failed for {}.{} with keys {:?}: {:?}",
-                                    check.name,
-                                    field,
-                                    key_strs,
-                                    e
-                                )
-                            })?.slot;
-                            let value = db.storage_ref(check.address, slot).map_err(|e| {
-                                eyre::eyre!(
-                                    "storage read failed for {:?} slot {:?}: {:?}",
-                                    check.address,
-                                    slot,
-                                    e
-                                )
-                            })?;
+                            let metadata =
+                                metadata_for(&check.name, field, &key_strs).map_err(|e| {
+                                    eyre::eyre!(
+                                        "metadata_for failed for {}.{} with keys {:?}: {:?}",
+                                        check.name,
+                                        field,
+                                        key_strs,
+                                        e
+                                    )
+                                })?;
+                            let value = read_field_value(db, check.address, &metadata)?;
                             let key_str = match key {
                                 FieldKey::Single(k) => k.clone(),
                                 FieldKey::Tuple(ks) => ks.join(","),
@@ -315,7 +382,7 @@ mod tests {
         assert_eq!(precompile.name, "TIP20Token");
         assert_eq!(
             precompile.fields.get("total_supply"),
-            Some(&FieldValue::Simple(U256::from(1_000_000)))
+            Some(&FieldValue::Simple(u256_to_bytes(U256::from(1_000_000))))
         );
     }
 
@@ -355,7 +422,7 @@ mod tests {
         let precompile = state.precompiles.get(&token_addr).unwrap();
         match precompile.fields.get("balances") {
             Some(FieldValue::Mapping(m)) => {
-                assert_eq!(m.get(holder), Some(&U256::from(500)));
+                assert_eq!(m.get(holder), Some(&u256_to_bytes(U256::from(500))));
             }
             other => panic!("expected Mapping, got {other:?}"),
         }
@@ -402,7 +469,7 @@ mod tests {
         let expected_key = format!("{owner},{spender}");
         match precompile.fields.get("allowances") {
             Some(FieldValue::Mapping(m)) => {
-                assert_eq!(m.get(&expected_key), Some(&U256::from(1000)));
+                assert_eq!(m.get(&expected_key), Some(&u256_to_bytes(U256::from(1000))));
             }
             other => panic!("expected Mapping, got {other:?}"),
         }
@@ -415,13 +482,13 @@ mod tests {
         let mut fields = BTreeMap::new();
         fields.insert(
             "total_supply".to_string(),
-            FieldValue::Simple(U256::from(1_000_000)),
+            FieldValue::Simple(u256_to_bytes(U256::from(1_000_000))),
         );
 
         let mut mapping = BTreeMap::new();
         mapping.insert(
             "0x1111111111111111111111111111111111111111".to_string(),
-            U256::from(500),
+            u256_to_bytes(U256::from(500)),
         );
         fields.insert("balances".to_string(), FieldValue::Mapping(mapping));
 
@@ -444,5 +511,222 @@ mod tests {
         let parsed: PostExecutionState = serde_json::from_str(&json).unwrap();
 
         assert_eq!(state, parsed);
+    }
+
+    #[test]
+    fn test_read_field_value_full_slot() {
+        use tempo_precompiles::resolver::FieldMetadata;
+
+        let addr = address!("20C0000000000000000000000000000000000001");
+        let mut prestate = Prestate::default();
+        let mut slots = BTreeMap::new();
+        slots.insert(U256::from(5), U256::from(0x1234567890ABCDEF_u64));
+        prestate.storage.insert(addr, slots);
+
+        let db = VectorDatabase::from_prestate(&prestate).unwrap();
+
+        // Full 32-byte field at offset 0
+        let metadata = FieldMetadata {
+            slot: U256::from(5),
+            offset: 0,
+            bytes: 32,
+            is_mapping: false,
+            nesting_depth: 0,
+        };
+
+        let value = super::read_field_value(&db.db, addr, &metadata).unwrap();
+        assert_eq!(
+            value,
+            u256_to_bytes(U256::from(0x1234567890ABCDEF_u64))
+        );
+    }
+
+    #[test]
+    fn test_read_field_value_packed_u8() {
+        use tempo_precompiles::resolver::FieldMetadata;
+
+        let addr = address!("20C0000000000000000000000000000000000001");
+        let mut prestate = Prestate::default();
+
+        // Pack three u8 values into a slot:
+        // offset 0: 0xAA (170)
+        // offset 1: 0xBB (187)
+        // offset 2: 0xCC (204)
+        let packed_value = U256::from(0xCCBBAA_u32);
+
+        let mut slots = BTreeMap::new();
+        slots.insert(U256::from(10), packed_value);
+        prestate.storage.insert(addr, slots);
+
+        let db = VectorDatabase::from_prestate(&prestate).unwrap();
+
+        // Read first byte at offset 0
+        let metadata0 = FieldMetadata {
+            slot: U256::from(10),
+            offset: 0,
+            bytes: 1,
+            is_mapping: false,
+            nesting_depth: 0,
+        };
+        assert_eq!(
+            super::read_field_value(&db.db, addr, &metadata0).unwrap(),
+            Bytes::from(vec![0xAA])
+        );
+
+        // Read second byte at offset 1
+        let metadata1 = FieldMetadata {
+            slot: U256::from(10),
+            offset: 1,
+            bytes: 1,
+            is_mapping: false,
+            nesting_depth: 0,
+        };
+        assert_eq!(
+            super::read_field_value(&db.db, addr, &metadata1).unwrap(),
+            Bytes::from(vec![0xBB])
+        );
+
+        // Read third byte at offset 2
+        let metadata2 = FieldMetadata {
+            slot: U256::from(10),
+            offset: 2,
+            bytes: 1,
+            is_mapping: false,
+            nesting_depth: 0,
+        };
+        assert_eq!(
+            super::read_field_value(&db.db, addr, &metadata2).unwrap(),
+            Bytes::from(vec![0xCC])
+        );
+    }
+
+    #[test]
+    fn test_read_field_value_packed_mixed_types() {
+        use tempo_precompiles::resolver::FieldMetadata;
+
+        let addr = address!("20C0000000000000000000000000000000000001");
+        let mut prestate = Prestate::default();
+
+        // Pack a u8 (1 byte) followed by a u64 (8 bytes):
+        // offset 0: u8 = 0x42 (66)
+        // offset 1-8: u64 = 0x123456789ABCDEF0
+        let u8_val = U256::from(0x42_u8);
+        let u64_val = U256::from(0x123456789ABCDEF0_u64) << 8; // shift left by 1 byte (8 bits)
+        let packed_value = u8_val | u64_val;
+
+        let mut slots = BTreeMap::new();
+        slots.insert(U256::from(20), packed_value);
+        prestate.storage.insert(addr, slots);
+
+        let db = VectorDatabase::from_prestate(&prestate).unwrap();
+
+        // Read u8 at offset 0
+        let metadata_u8 = FieldMetadata {
+            slot: U256::from(20),
+            offset: 0,
+            bytes: 1,
+            is_mapping: false,
+            nesting_depth: 0,
+        };
+        assert_eq!(
+            super::read_field_value(&db.db, addr, &metadata_u8).unwrap(),
+            Bytes::from(vec![0x42])
+        );
+
+        // Read u64 at offset 1
+        let metadata_u64 = FieldMetadata {
+            slot: U256::from(20),
+            offset: 1,
+            bytes: 8,
+            is_mapping: false,
+            nesting_depth: 0,
+        };
+        assert_eq!(
+            super::read_field_value(&db.db, addr, &metadata_u64).unwrap(),
+            u256_to_bytes_sized(U256::from(0x123456789ABCDEF0_u64), 8)
+        );
+    }
+
+    #[test]
+    fn test_read_field_value_address_packed_with_bool() {
+        use tempo_precompiles::resolver::FieldMetadata;
+
+        let addr = address!("20C0000000000000000000000000000000000001");
+        let mut prestate = Prestate::default();
+
+        // Pack an Address (20 bytes) followed by a bool (1 byte):
+        // offset 0-19: Address = 0x1111111111111111111111111111111111111111
+        // offset 20: bool = true (0x01)
+        let test_address = address!("1111111111111111111111111111111111111111");
+        let address_val = U256::from_be_slice(&test_address.0[..]);
+        let bool_val = U256::from(1) << (20 * 8); // shift left by 20 bytes
+        let packed_value = address_val | bool_val;
+
+        let mut slots = BTreeMap::new();
+        slots.insert(U256::from(30), packed_value);
+        prestate.storage.insert(addr, slots);
+
+        let db = VectorDatabase::from_prestate(&prestate).unwrap();
+
+        // Read address at offset 0
+        let metadata_addr = FieldMetadata {
+            slot: U256::from(30),
+            offset: 0,
+            bytes: 20,
+            is_mapping: false,
+            nesting_depth: 0,
+        };
+        let read_addr = super::read_field_value(&db.db, addr, &metadata_addr).unwrap();
+        assert_eq!(read_addr, Bytes::copy_from_slice(&test_address.0[..]));
+
+        // Read bool at offset 20
+        let metadata_bool = FieldMetadata {
+            slot: U256::from(30),
+            offset: 20,
+            bytes: 1,
+            is_mapping: false,
+            nesting_depth: 0,
+        };
+        assert_eq!(
+            super::read_field_value(&db.db, addr, &metadata_bool).unwrap(),
+            Bytes::from(vec![0x01])
+        );
+    }
+
+    #[test]
+    fn test_read_field_value_multi_slot() {
+        use tempo_precompiles::resolver::FieldMetadata;
+
+        let addr = address!("20C0000000000000000000000000000000000001");
+        let mut prestate = Prestate::default();
+
+        // Store two consecutive slots for a 64-byte value
+        let slot0_val = U256::from(0x1111111111111111_u64);
+        let slot1_val = U256::from(0x2222222222222222_u64);
+
+        let mut slots = BTreeMap::new();
+        slots.insert(U256::from(100), slot0_val);
+        slots.insert(U256::from(101), slot1_val);
+        prestate.storage.insert(addr, slots);
+
+        let db = VectorDatabase::from_prestate(&prestate).unwrap();
+
+        // Read a 64-byte field spanning 2 slots
+        let metadata = FieldMetadata {
+            slot: U256::from(100),
+            offset: 0,
+            bytes: 64,
+            is_mapping: false,
+            nesting_depth: 0,
+        };
+
+        let value = super::read_field_value(&db.db, addr, &metadata).unwrap();
+        assert_eq!(value.len(), 64);
+
+        // First 32 bytes should be slot0, next 32 should be slot1
+        let mut expected = Vec::with_capacity(64);
+        expected.extend_from_slice(&slot0_val.to_be_bytes::<32>());
+        expected.extend_from_slice(&slot1_val.to_be_bytes::<32>());
+        assert_eq!(value, Bytes::from(expected));
     }
 }
