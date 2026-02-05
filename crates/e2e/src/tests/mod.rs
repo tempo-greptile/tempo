@@ -6,6 +6,7 @@ use crate::{ExecutionRuntime, execution_runtime::chainspec};
 mod backfill;
 mod consensus_rpc;
 mod dkg;
+mod follow_mode;
 mod linkage;
 mod metrics;
 mod restart;

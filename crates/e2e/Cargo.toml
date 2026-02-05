@@ -38,7 +38,9 @@ reth-network-peers.workspace = true
 reth-node-builder.workspace = true
 reth-node-core.workspace = true
 reth-node-metrics.workspace = true
+reth-primitives-traits.workspace = true
 reth-rpc-builder.workspace = true
+reth-consensus-debug-client.workspace = true
 
 tempo-chainspec.workspace = true
 tempo-dkg-onchain-artifacts.workspace = true

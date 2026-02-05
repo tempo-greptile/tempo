@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 tempo-alloy = { workspace = true, features = ["tempo-compat"] }
+tempo-dkg-onchain-artifacts.workspace = true
 tempo-evm = { workspace = true, features = ["rpc", "engine"] }
 tempo-transaction-pool.workspace = true
 tempo-chainspec.workspace = true
@@ -40,23 +41,36 @@ reth-node-api.workspace = true
 reth-rpc-eth-types.workspace = true
 reth-node-ethereum.workspace = true
 reth-engine-local.workspace = true
+reth-consensus-debug-client.workspace = true
 
+alloy-consensus.workspace = true
 alloy-serde.workspace = true
 alloy-eips.workspace = true
 alloy-rpc-types-eth.workspace = true
-alloy.workspace = true
+alloy = { workspace = true, features = ["providers"] }
 alloy-primitives.workspace = true
+bytes.workspace = true
 
 async-trait.workspace = true
 clap.workspace = true
+commonware-codec.workspace = true
+commonware-consensus.workspace = true
+commonware-cryptography.workspace = true
+commonware-math.workspace = true
+commonware-parallel.workspace = true
 commonware-runtime = { workspace = true, features = ["external"] }
+commonware-utils.workspace = true
+const-hex.workspace = true
 eyre.workspace = true
+rand.workspace = true
+rand_core.workspace = true
 futures.workspace = true
 jiff = { workspace = true, features = ["std"] }
 reqwest.workspace = true
 tokio.workspace = true
 url.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 jsonrpsee.workspace = true
 
 [dev-dependencies]

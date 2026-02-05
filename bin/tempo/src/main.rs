@@ -40,6 +40,7 @@ use tempo_faucet::{
 };
 use tempo_node::{
     TempoFullNode, TempoNodeArgs,
+    follow::CertifiedBlockProvider,
     node::TempoNode,
     rpc::consensus::{TempoConsensusApiServer, TempoConsensusRpc},
     telemetry::{PrometheusMetricsConfig, install_prometheus_metrics},
@@ -293,28 +294,35 @@ fn main() -> eyre::Result<()> {
             None
         };
 
-        let NodeHandle {
-            node,
-            node_exit_future,
-        } = builder
+        // Resolve the follow URL if in follow mode
+        let follow_url = args.follow.as_ref().and_then(|follow| {
+            if follow == "auto" {
+                builder.config().chain.default_follow_url().map(|s| s.to_string())
+            } else {
+                Some(follow.clone())
+            }
+        });
+
+        // Create certified block provider for follow mode
+        let certified_provider = if let Some(ref url) = follow_url {
+            let (provider, feed_state) = CertifiedBlockProvider::new(url)
+                .await
+                .wrap_err("failed to create certified block provider")?;
+            Some((provider, feed_state))
+        } else {
+            None
+        };
+
+        // Extract feed state if we have a certified provider
+        let follow_feed_state = certified_provider.as_ref().map(|(_, fs)| fs.clone());
+
+        let node_builder = builder
             .node(TempoNode::new(&args.node_args, validator_key))
             .apply(|mut builder: WithLaunchContext<_>| {
-                // Resolve the follow URL:
-                // --follow or --follow=auto -> use chain-specific default
-                // --follow=URL -> use provided URL
-                if let Some(follow) = &args.follow {
-                    let follow_url = if follow == "auto" {
-                        builder
-                            .config()
-                            .chain
-                            .default_follow_url()
-                            .map(|s| s.to_string())
-                    } else {
-                        Some(follow.clone())
-                    };
-                    builder.config_mut().debug.rpc_consensus_url = follow_url;
+                // Set the follow URL in config (for non-certified fallback)
+                if let Some(ref url) = follow_url {
+                    builder.config_mut().debug.rpc_consensus_url = Some(url.clone());
                 }
-
                 builder
             })
             .extend_rpc_modules(move |ctx| {
@@ -328,16 +336,36 @@ fn main() -> eyre::Result<()> {
                     ctx.modules.merge_configured(ext.into_rpc())?;
                 }
 
+                // Enable consensus RPC for validators (using commonware feed)
                 if validator_key.is_some() {
                     ctx.modules
                         .merge_configured(TempoConsensusRpc::new(cl_feed_state).into_rpc())?;
                 }
+                // Enable consensus RPC for follow mode (using follow feed)
+                else if let Some(ref feed_state) = follow_feed_state {
+                    ctx.modules
+                        .merge_configured(TempoConsensusRpc::new(feed_state.clone()).into_rpc())?;
+                }
 
                 Ok(())
-            })
-            .launch_with_debug_capabilities()
-            .await
-            .wrap_err("failed launching execution node")?;
+            });
+
+        // Launch with certified block provider if in follow mode, otherwise use default
+        let NodeHandle {
+            node,
+            node_exit_future,
+        } = if let Some((provider, _)) = certified_provider {
+            node_builder
+                .launch_with_debug_capabilities()
+                .with_debug_block_provider(provider)
+                .await
+                .wrap_err("failed launching execution node with certified block provider")?
+        } else {
+            node_builder
+                .launch_with_debug_capabilities()
+                .await
+                .wrap_err("failed launching execution node")?
+        };
 
         let _ = args_and_node_handle_tx.send((node, args));
 

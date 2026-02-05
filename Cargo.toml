@@ -128,6 +128,7 @@ reth-cli-util = { git = "https://github.com/paradigmxyz/reth", rev = "c59a120" }
 reth-codecs = { git = "https://github.com/paradigmxyz/reth", rev = "c59a120" }
 reth-consensus = { git = "https://github.com/paradigmxyz/reth", rev = "c59a120" }
 reth-consensus-common = { git = "https://github.com/paradigmxyz/reth", rev = "c59a120" }
+reth-consensus-debug-client = { git = "https://github.com/paradigmxyz/reth", rev = "c59a120" }
 reth-db = { git = "https://github.com/paradigmxyz/reth", rev = "c59a120" }
 reth-db-api = { git = "https://github.com/paradigmxyz/reth", rev = "c59a120" }
 reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", rev = "c59a120" }
@@ -270,6 +271,7 @@ reth-e2e-test-utils = { path = "../reth/crates/e2e-test-utils" }
 reth-engine-local = { path = "../reth/crates/engine/local" }
 reth-engine-primitives = { path = "../reth/crates/engine/primitives" }
 reth-engine-tree = { path = "../reth/crates/engine/tree" }
+reth-consensus-debug-client = { path = "../reth/crates/consensus/debug-client" }
 reth-errors = { path = "../reth/crates/errors" }
 reth-eth-wire-types = { path = "../reth/crates/net/eth-wire-types" }
 reth-ethereum = { path = "../reth/crates/ethereum/reth" }
