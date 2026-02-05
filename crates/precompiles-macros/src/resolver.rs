@@ -8,7 +8,7 @@ use crate::{
     packing::{LayoutField, PackingConstants},
 };
 use quote::{format_ident, quote};
-use syn::{Ident, Type};
+use syn::Ident;
 
 /// Generate a `metadata_for` method for resolving storage field metadata by field name.
 ///
@@ -26,8 +26,7 @@ pub(crate) fn gen_metadata_for_fn(
         let bytes_const = format_ident!("{}_BYTES", slot_const);
 
         match &field.kind {
-            FieldKind::Direct(ty) => {
-                let seed_fn = gen_seed_fn_expr(ty);
+            FieldKind::Direct(_ty) => {
                 quote! {
                     #field_name => Ok(crate::resolver::FieldMetadata {
                         slot: slots::#slot_const,
@@ -35,7 +34,6 @@ pub(crate) fn gen_metadata_for_fn(
                         bytes: slots::#bytes_const,
                         is_mapping: false,
                         nesting_depth: 0,
-                        seed: #seed_fn,
                     }),
                 }
             }
@@ -65,66 +63,6 @@ pub(crate) fn gen_metadata_for_fn(
     }
 }
 
-/// Generate a seed function expression for a given type.
-///
-/// Returns the appropriate seed function based on the type:
-/// - `String` -> `ShortString::seed`
-/// - `Vec<T>` -> `VecLen::seed`
-/// - `[T; N]` (arrays) -> `struct_seed_unsupported`
-/// - All other types -> `<T as Seedable>::seed_fn()`
-///
-/// The `Seedable` trait has a blanket impl for primitives (types implementing
-/// `SeedFromJson + FromWord`) and is explicitly implemented for structs via
-/// the `#[derive(Storable)]` macro.
-fn gen_seed_fn_expr(ty: &Type) -> proc_macro2::TokenStream {
-    if is_string_type(ty) {
-        quote! { crate::resolver::ShortString::seed }
-    } else if is_vec_type(ty) {
-        quote! { crate::resolver::VecLen::seed }
-    } else if is_array_type(ty) {
-        // Arrays don't implement Seedable - use the fallback
-        quote! { crate::resolver::struct_seed_unsupported }
-    } else {
-        // Use the Seedable trait - primitives get the blanket impl,
-        // structs get the impl from #[derive(Storable)]
-        quote! { <#ty as crate::resolver::Seedable>::seed_fn() }
-    }
-}
-
-/// Check if a type is a fixed-size array `[T; N]`.
-fn is_array_type(ty: &Type) -> bool {
-    matches!(ty, Type::Array(_))
-}
-
-/// Check if a type is `String`.
-fn is_string_type(ty: &Type) -> bool {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            return segment.ident == "String";
-        }
-    }
-    false
-}
-
-/// Check if a type is `Vec<T>`.
-fn is_vec_type(ty: &Type) -> bool {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            return segment.ident == "Vec";
-        }
-    }
-    false
-}
-
-/// Get the innermost value type of a possibly nested mapping.
-fn get_innermost_value_type(ty: &Type) -> &Type {
-    if let Some((_, inner_value)) = crate::utils::extract_mapping_types(ty) {
-        get_innermost_value_type(inner_value)
-    } else {
-        ty
-    }
-}
-
 /// Generate the match arm for a mapping field, handling nested mappings recursively.
 fn gen_mapping_metadata_arm(
     field_name: &str,
@@ -136,8 +74,6 @@ fn gen_mapping_metadata_arm(
 ) -> proc_macro2::TokenStream {
     let nesting_depth = count_mapping_nesting(value_ty);
     let nesting_depth_u8 = nesting_depth as u8;
-    let innermost_ty = get_innermost_value_type(value_ty);
-    let seed_fn = gen_seed_fn_expr(innermost_ty);
 
     if nesting_depth == 1 {
         quote! {
@@ -153,7 +89,6 @@ fn gen_mapping_metadata_arm(
                     bytes: slots::#bytes_const,
                     is_mapping: true,
                     nesting_depth: #nesting_depth_u8,
-                    seed: #seed_fn,
                 })
             }
         }
@@ -189,7 +124,6 @@ fn gen_mapping_metadata_arm(
                     bytes: slots::#bytes_const,
                     is_mapping: true,
                     nesting_depth: #nesting_depth_u8,
-                    seed: #seed_fn,
                 })
             }
         }
