@@ -104,25 +104,25 @@ contract CrossChainAccount {
     /// @notice Execute a batch of calls
     /// @param targets The target addresses
     /// @param values The ETH values to send
-    /// @param datas The calldatas
+    /// @param callData The calldata for each call
     function executeBatch(
         address[] calldata targets,
         uint256[] calldata values,
-        bytes[] calldata datas
+        bytes[] calldata callData
     )
         external
         onlyAuthorized
         returns (bytes[] memory results)
     {
-        require(targets.length == values.length && values.length == datas.length, "Length mismatch");
+        require(targets.length == values.length && values.length == callData.length, "Length mismatch");
         results = new bytes[](targets.length);
         for (uint256 i = 0; i < targets.length; i++) {
-            (bool success, bytes memory result) = targets[i].call{ value: values[i] }(datas[i]);
+            (bool success, bytes memory result) = targets[i].call{ value: values[i] }(callData[i]);
             if (!success) {
                 revert ExecutionFailed();
             }
             results[i] = result;
-            emit Executed(targets[i], values[i], datas[i]);
+            emit Executed(targets[i], values[i], callData[i]);
         }
     }
 

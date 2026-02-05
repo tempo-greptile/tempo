@@ -214,12 +214,12 @@ contract CrossChainAccountTest is Test {
         values[0] = 0.5 ether;
         values[1] = 0.3 ether;
 
-        bytes[] memory datas = new bytes[](2);
-        datas[0] = "";
-        datas[1] = "";
+        bytes[] memory callData = new bytes[](2);
+        callData[0] = "";
+        callData[1] = "";
 
         vm.prank(accountKeychain);
-        account.executeBatch(targets, values, datas);
+        account.executeBatch(targets, values, callData);
 
         assertEq(targets[0].balance, 0.5 ether);
         assertEq(targets[1].balance, 0.3 ether);
