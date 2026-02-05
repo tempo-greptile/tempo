@@ -5838,7 +5838,7 @@ dependencies = [
  "metrics",
  "once_cell",
  "procfs 0.18.0",
- "rlimit 0.11.0",
+ "rlimit",
  "windows 0.62.2",
 ]
 
@@ -10644,15 +10644,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rlimit"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f35ee2729c56bb610f6dba436bf78135f728b7373bdffae2ec815b2d3eb98cc3"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "rlp"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11865,7 +11856,7 @@ dependencies = [
  "rand 0.9.2",
  "rayon",
  "reth-tracing",
- "rlimit 0.10.2",
+ "rlimit",
  "serde",
  "serde_json",
  "tempo-alloy",
@@ -12077,7 +12068,7 @@ dependencies = [
 
 [[package]]
 name = "tempo-execution-tests"
-version = "1.0.2"
+version = "1.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
