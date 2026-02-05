@@ -1,6 +1,6 @@
 # execution-tests
 
-Differential testing framework for the Tempo execution layer.
+Regression testing framework for the Tempo's execution layer.
 
 Executes test vectors against the EVM, validates transaction outcomes, and generates fingerprints for regression detection. Supports all transaction types (legacy, EIP-1559, Tempo AA), arbitrary prestate setup, and post-execution assertions.
 
@@ -8,13 +8,13 @@ Executes test vectors against the EVM, validates transaction outcomes, and gener
 
 ```bash
 # Run all vectors
-cargo run -p tempo-execution-tests -- run -d crates/tempo-execution-tests/vectors
+cargo run -p tempo-execution-tests -- run -d crates/execution-tests/vectors
 
 # Run a single vector
-cargo run -p tempo-execution-tests -- run -f crates/tempo-execution-tests/vectors/tip20_factory/create_token.json
+cargo run -p tempo-execution-tests -- run -f crates/execution-tests/vectors/tip20_factory/create_token.json
 
 # List available vectors
-cargo run -p tempo-execution-tests -- list -d crates/tempo-execution-tests/vectors
+cargo run -p tempo-execution-tests -- list -d crates/execution-tests/vectors
 ```
 
 ## Commands
@@ -193,7 +193,7 @@ Fingerprints enable differential testing: if the hash changes between versions, 
 
 ```yaml
 - name: Run execution tests
-  run: cargo run -p tempo-execution-tests -- run -d crates/tempo-execution-tests/vectors
+  run: cargo run -p tempo-execution-tests -- run -d crates/execution-tests/vectors
 
 - name: Regression check
   run: |
@@ -201,5 +201,5 @@ Fingerprints enable differential testing: if the hash changes between versions, 
     cp target/release/tempo-execution-tests /tmp/current
     git checkout main
     cargo build -p tempo-execution-tests --release
-    /tmp/current diff --baseline-binary target/release/tempo-execution-tests -d crates/tempo-execution-tests/vectors
+    /tmp/current diff --baseline-binary target/release/tempo-execution-tests -d crates/execution-tests/vectors
 ```

@@ -15,6 +15,14 @@ use tempo_precompiles::{
     account_keychain::AuthorizedKey, resolver::slot_for, tip403_registry::PolicyData,
 };
 
+/// Marker bytecode for precompile accounts (invalid opcode, won't execute).
+/// TIP20 tokens check `is_initialized()` which requires non-empty code hash.
+const PRECOMPILE_MARKER_BYTECODE: u8 = 0xEF;
+
+/// Bit offset for transfer_policy_id in TIP20Token packed storage slot 7.
+/// The u64 policy ID is stored at bytes 20-27 (bit position 160).
+const POLICY_ID_BIT_OFFSET: usize = 160;
+
 /// A database seeded from a test vector's prestate.
 pub struct VectorDatabase {
     /// The underlying CacheDB
@@ -31,7 +39,7 @@ impl VectorDatabase {
             let code_hash = prestate
                 .code
                 .get(address)
-                .map(keccak256)
+                .map(hash_bytes)
                 .unwrap_or(KECCAK_EMPTY);
 
             let info = AccountInfo {
@@ -54,7 +62,7 @@ impl VectorDatabase {
                 let info = AccountInfo {
                     balance: U256::ZERO,
                     nonce: 0,
-                    code_hash: keccak256(code),
+                    code_hash: hash_bytes(code),
                     code: Some(Bytecode::new_raw(code.clone())),
                     ..Default::default()
                 };
@@ -96,11 +104,9 @@ impl VectorDatabase {
         let name = &precompile.name;
 
         // Ensure the precompile account exists with bytecode.
-        // TIP20 tokens check `is_initialized()` which requires non-empty code hash.
-        // We use 0xEF as a marker bytecode (invalid opcode, won't execute).
-        let marker_code = Bytecode::new_raw(Bytes::from_static(&[0xEF]));
+        let marker_code = Bytecode::new_raw(Bytes::from_static(&[PRECOMPILE_MARKER_BYTECODE]));
         let info = AccountInfo {
-            code_hash: alloy_primitives::keccak256([0xEF]),
+            code_hash: alloy_primitives::keccak256([PRECOMPILE_MARKER_BYTECODE]),
             code: Some(marker_code),
             ..Default::default()
         };
@@ -165,10 +171,10 @@ impl VectorDatabase {
                 let current = self.db.storage_ref(address, slot).unwrap_or(U256::ZERO);
 
                 // Clear the u64 at offset 20 (bytes 20-27 from the right in big-endian)
-                // and set the new value. The u64 is at bit position 160.
-                let mask: U256 = U256::from(u64::MAX) << 160;
+                // and set the new value.
+                let mask: U256 = U256::from(u64::MAX) << POLICY_ID_BIT_OFFSET;
                 let cleared = current & !mask;
-                let new_value = cleared | (U256::from(policy_id) << 160);
+                let new_value = cleared | (U256::from(policy_id) << POLICY_ID_BIT_OFFSET);
 
                 self.db.insert_account_storage(address, slot, new_value)?;
             }
@@ -297,10 +303,16 @@ impl VectorDatabase {
             }
             // Simple u32 field
             "expiring_nonce_ring_ptr" => {
-                let v = parse_u64_value(value)? as u32;
+                let v = parse_u64_value(value)?;
+                if v > u32::MAX as u64 {
+                    return Err(eyre::eyre!(
+                        "expiring_nonce_ring_ptr value {} exceeds u32::MAX",
+                        v
+                    ));
+                }
                 let slot = slot_for("NonceManager", field_name, &[])?;
                 self.db
-                    .insert_account_storage(address, slot, U256::from(v))?;
+                    .insert_account_storage(address, slot, U256::from(v as u32))?;
             }
             _ => {
                 return Err(eyre::eyre!("unknown NonceManager field: {}", field_name));
@@ -678,11 +690,6 @@ impl VectorDatabase {
         &self.db
     }
 
-    /// Get a mutable reference to the underlying database.
-    pub fn inner_mut(&mut self) -> &mut CacheDB<EmptyDB> {
-        &mut self.db
-    }
-
     /// Read a storage slot from the database.
     pub fn storage(&self, address: Address, slot: U256) -> eyre::Result<U256> {
         self.db
@@ -699,7 +706,7 @@ impl VectorDatabase {
 }
 
 /// Compute keccak256 hash of bytes
-fn keccak256(data: &Bytes) -> B256 {
+fn hash_bytes(data: &Bytes) -> B256 {
     alloy_primitives::keccak256(data)
 }
 

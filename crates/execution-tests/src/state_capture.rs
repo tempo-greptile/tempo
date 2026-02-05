@@ -89,8 +89,9 @@ impl PostExecutionState {
             for spec in &check.fields {
                 match spec {
                     FieldSpec::Simple(field_name) => {
-                        let slot = slot_for(&check.name, field_name, &[])
-                            .map_err(|e| eyre::eyre!("slot_for failed: {:?}", e))?;
+                        let slot = slot_for(&check.name, field_name, &[]).map_err(|e| {
+                            eyre::eyre!("slot_for failed for {}.{}: {:?}", check.name, field_name, e)
+                        })?;
                         let value = db.storage_ref(check.address, slot).map_err(|e| {
                             eyre::eyre!(
                                 "storage read failed for {:?} slot {:?}: {:?}",
@@ -108,8 +109,15 @@ impl PostExecutionState {
                                 FieldKey::Single(k) => vec![k.as_str()],
                                 FieldKey::Tuple(ks) => ks.iter().map(|s| s.as_str()).collect(),
                             };
-                            let slot = slot_for(&check.name, field, &key_strs)
-                                .map_err(|e| eyre::eyre!("slot_for failed: {:?}", e))?;
+                            let slot = slot_for(&check.name, field, &key_strs).map_err(|e| {
+                                eyre::eyre!(
+                                    "slot_for failed for {}.{} with keys {:?}: {:?}",
+                                    check.name,
+                                    field,
+                                    key_strs,
+                                    e
+                                )
+                            })?;
                             let value = db.storage_ref(check.address, slot).map_err(|e| {
                                 eyre::eyre!(
                                     "storage read failed for {:?} slot {:?}: {:?}",

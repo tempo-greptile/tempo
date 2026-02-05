@@ -1,6 +1,7 @@
-//! Precompile test framework for Tempo.
+//! Regression testing framework for the Tempo execution layer.
 //!
-//! This crate provides a framework for testing precompiles using JSON test vectors.
+//! Executes test vectors against the EVM, validates transaction outcomes, and generates
+//! fingerprints for regression detection.
 
 pub mod database;
 pub mod executor;
@@ -10,7 +11,7 @@ pub mod vector;
 
 pub use database::VectorDatabase;
 pub use executor::{
-    ExecutionResult_, Log, TxExecutionResult, VectorExecutor, validate_tx_outcomes,
+    Log, TxExecutionResult, VectorExecutionResult, VectorExecutor, validate_tx_outcomes,
 };
 pub use fingerprint::{Fingerprint, LogFingerprint, TxFingerprint};
 pub use state_capture::{FieldValue, PostExecutionState, PrecompileFieldValues};

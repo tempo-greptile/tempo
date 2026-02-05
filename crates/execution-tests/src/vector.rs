@@ -119,7 +119,7 @@ pub struct Transaction {
     /// Calls for Tempo transactions (multi-call support)
     /// If non-empty, this is treated as a Tempo AA transaction
     #[serde(default)]
-    pub calls: Vec<Call>,
+    pub calls: Vec<VectorCall>,
     /// Nonce key for 2D nonce system (Tempo AA)
     #[serde(default, with = "u256_dec_or_hex")]
     pub nonce_key: U256,
@@ -216,8 +216,13 @@ impl TxOutcome {
     /// Compute the 4-byte selector for a custom error.
     /// If error starts with "0x" and is 10 chars, treat as raw selector.
     /// Otherwise, derive selector from signature via keccak256.
+    /// Returns None for "0x" (empty revert).
     pub fn error_selector(&self) -> Option<[u8; 4]> {
         self.error.as_ref().and_then(|err| {
+            // "0x" means empty revert data, no selector
+            if err == "0x" {
+                return None;
+            }
             // Check if it's a raw selector (0x + 8 hex chars = 10 chars)
             if err.starts_with("0x") && err.len() == 10 {
                 let hex_str = &err[2..];
@@ -237,7 +242,7 @@ impl TxOutcome {
 
 /// A call within a Tempo transaction
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Call {
+pub struct VectorCall {
     /// Call target (None for contract creation)
     #[serde(default)]
     pub to: Option<Address>,
@@ -394,13 +399,6 @@ mod u256_dec_or_hex {
 }
 
 impl TestVector {
-    /// Load a vector from a JSON file
-    pub fn from_file(path: impl AsRef<Path>) -> eyre::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let vector: Self = serde_json::from_str(&content)?;
-        Ok(vector)
-    }
-
     /// Load a vector from a JSON file, resolving any template inheritance.
     ///
     /// If the vector has an `extends` field, the template is loaded first
@@ -455,7 +453,15 @@ impl TestVector {
             if !tx.outcomes.is_empty() {
                 // Collect all hardforks covered by outcomes
                 let mut covered: HashSet<&str> = HashSet::new();
-                for ho in &tx.outcomes {
+                for (j, ho) in tx.outcomes.iter().enumerate() {
+                    if ho.hardforks.is_empty() {
+                        return Err(eyre::eyre!(
+                            "vector '{}' tx {} outcome {}: hardforks array cannot be empty",
+                            vector.name,
+                            i,
+                            j
+                        ));
+                    }
                     if let Err(e) = ho.outcome.validate() {
                         return Err(eyre::eyre!(
                             "vector '{}' tx {} (hardforks {:?}): {}",
@@ -578,6 +584,22 @@ fn merge_storage(
     parent
 }
 
+/// Merge storage checks: concatenate slot lists for the same address, deduplicating.
+fn merge_storage_checks(
+    mut parent: BTreeMap<Address, Vec<U256>>,
+    child: BTreeMap<Address, Vec<U256>>,
+) -> BTreeMap<Address, Vec<U256>> {
+    for (addr, child_slots) in child {
+        let entry = parent.entry(addr).or_default();
+        for slot in child_slots {
+            if !entry.contains(&slot) {
+                entry.push(slot);
+            }
+        }
+    }
+    parent
+}
+
 /// Merge two vectors: child overrides parent.
 /// - Simple fields (name, description, hardfork): child wins if set
 /// - prestate.accounts: merge maps (child wins on conflict)
@@ -607,7 +629,7 @@ fn merge_vectors(parent: TestVector, child: TestVector) -> TestVector {
             precompiles.extend(child.checks.precompiles);
             precompiles
         },
-        storage: merge_btreemaps(parent.checks.storage, child.checks.storage),
+        storage: merge_storage_checks(parent.checks.storage, child.checks.storage),
         nonces: {
             // Concatenate and deduplicate
             let mut nonces = parent.checks.nonces;
@@ -1206,5 +1228,30 @@ mod tests {
         assert_eq!(merged.transactions.len(), 2);
         assert_eq!(merged.transactions[0].value, U256::from(100)); // Parent's tx
         assert_eq!(merged.transactions[1].value, U256::from(200)); // Child's tx
+    }
+
+    #[test]
+    fn test_merge_storage_checks_concatenate() {
+        let addr: Address = "0x1111111111111111111111111111111111111111"
+            .parse()
+            .unwrap();
+        let slot1 = U256::from(1);
+        let slot2 = U256::from(2);
+        let slot3 = U256::from(3);
+
+        let mut parent_storage = BTreeMap::new();
+        parent_storage.insert(addr, vec![slot1, slot2]);
+
+        let mut child_storage = BTreeMap::new();
+        child_storage.insert(addr, vec![slot2, slot3]); // slot2 overlaps
+
+        let merged = super::merge_storage_checks(parent_storage, child_storage);
+
+        let slots = merged.get(&addr).unwrap();
+        // Should have slot1, slot2, slot3 (slot2 not duplicated)
+        assert_eq!(slots.len(), 3);
+        assert!(slots.contains(&slot1));
+        assert!(slots.contains(&slot2));
+        assert!(slots.contains(&slot3));
     }
 }
