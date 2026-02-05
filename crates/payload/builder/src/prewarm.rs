@@ -106,7 +106,10 @@ impl PayloadExecutionCache {
     /// This method is carefully designed to avoid holding the write lock across
     /// blocking operations. The waiter is cloned (Arc) and returned so the caller
     /// can wait **outside** the critical section.
-    pub fn get_or_start(&self, key: u64) -> Result<Option<PayloadExecutionResult>, Arc<SharedWaiter>> {
+    pub fn get_or_start(
+        &self,
+        key: u64,
+    ) -> Result<Option<PayloadExecutionResult>, Arc<SharedWaiter>> {
         // Phase 1: Check cache and potentially start execution (short critical section)
         let mut cache = self.inner.write().unwrap();
 
@@ -184,7 +187,11 @@ impl PayloadExecutionCache {
 ///     }
 /// });
 /// ```
-pub fn execute_with_cache<F>(cache: &PayloadExecutionCache, key: u64, execute: F) -> PayloadExecutionResult
+pub fn execute_with_cache<F>(
+    cache: &PayloadExecutionCache,
+    key: u64,
+    execute: F,
+) -> PayloadExecutionResult
 where
     F: FnOnce() -> PayloadExecutionResult,
 {
