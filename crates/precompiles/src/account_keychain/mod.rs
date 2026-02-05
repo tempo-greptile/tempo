@@ -1105,8 +1105,7 @@ mod tests {
     #[test]
     fn test_authorize_key_rejects_existing_key_boundary() -> eyre::Result<()> {
         // Use pre-T0 to avoid expiry validation (focus on existence check)
-        let mut storage =
-            HashMapStorageProvider::new_with_spec(1, TempoHardfork::Genesis);
+        let mut storage = HashMapStorageProvider::new_with_spec(1, TempoHardfork::Genesis);
         let account = Address::random();
         let key_id = Address::random();
         StorageCtx::enter(&mut storage, || {
@@ -1125,7 +1124,10 @@ mod tests {
             keychain.authorize_key(account, auth_call.clone())?;
 
             // Verify key exists with expiry = 1
-            let key_info = keychain.get_key(getKeyCall { account, keyId: key_id })?;
+            let key_info = keychain.get_key(getKeyCall {
+                account,
+                keyId: key_id,
+            })?;
             assert_eq!(key_info.expiry, 1, "Key should have expiry = 1");
 
             // Try to re-authorize - should fail because expiry > 0
@@ -1161,16 +1163,25 @@ mod tests {
 
         // Different accounts should produce different hashes
         let hash2 = AccountKeychain::spending_limit_key(account2, key_id1);
-        assert_ne!(hash1a, hash2, "Different accounts must produce different hashes");
+        assert_ne!(
+            hash1a, hash2,
+            "Different accounts must produce different hashes"
+        );
 
         // Different key_ids should produce different hashes
         let hash3 = AccountKeychain::spending_limit_key(account1, key_id2);
-        assert_ne!(hash1a, hash3, "Different key_ids must produce different hashes");
+        assert_ne!(
+            hash1a, hash3,
+            "Different key_ids must produce different hashes"
+        );
 
         // Order matters: (account1, key_id2) != (key_id2, account1) if we swap
         // But since the types are the same, let's verify swapping produces different result
         let hash_swapped = AccountKeychain::spending_limit_key(key_id1, account1);
-        assert_ne!(hash1a, hash_swapped, "Swapped order must produce different hash");
+        assert_ne!(
+            hash1a, hash_swapped,
+            "Swapped order must produce different hash"
+        );
 
         // Verify hash is not default/zero
         assert_ne!(hash1a, B256::ZERO, "Hash should not be zero");
@@ -1204,7 +1215,10 @@ mod tests {
             keychain.authorize_key(account, auth_call)?;
 
             // Verify key was stored
-            let key_info = keychain.get_key(getKeyCall { account, keyId: key_id })?;
+            let key_info = keychain.get_key(getKeyCall {
+                account,
+                keyId: key_id,
+            })?;
             assert_eq!(key_info.expiry, u64::MAX, "Key should be stored after init");
 
             Ok(())
@@ -1234,7 +1248,10 @@ mod tests {
             keychain.authorize_key(account, auth_call)?;
 
             // Verify key was stored with WebAuthn type (value = 2)
-            let key_info = keychain.get_key(getKeyCall { account, keyId: key_id })?;
+            let key_info = keychain.get_key(getKeyCall {
+                account,
+                keyId: key_id,
+            })?;
             assert_eq!(
                 key_info.signatureType,
                 SignatureType::WebAuthn,
@@ -1243,7 +1260,10 @@ mod tests {
 
             // Verify via validation that signature type 2 is accepted
             let result = keychain.validate_keychain_authorization(account, key_id, 0, Some(2));
-            assert!(result.is_ok(), "WebAuthn (type 2) validation should succeed");
+            assert!(
+                result.is_ok(),
+                "WebAuthn (type 2) validation should succeed"
+            );
 
             // Verify signature type mismatch is rejected
             let mismatch = keychain.validate_keychain_authorization(account, key_id, 0, Some(0));
@@ -1272,7 +1292,10 @@ mod tests {
                 signatureType: SignatureType::Secp256k1,
                 expiry: u64::MAX,
                 enforceLimits: true,
-                limits: vec![TokenLimit { token, amount: U256::from(100) }],
+                limits: vec![TokenLimit {
+                    token,
+                    amount: U256::from(100),
+                }],
             };
             keychain.authorize_key(account, auth_call)?;
 
@@ -1283,7 +1306,11 @@ mod tests {
                 newLimit: U256::from(200),
             };
             let result = keychain.update_spending_limit(account, update_call);
-            assert!(result.is_ok(), "Update should succeed when key not expired: {:?}", result);
+            assert!(
+                result.is_ok(),
+                "Update should succeed when key not expired: {:?}",
+                result
+            );
 
             // Verify the limit was updated
             let limit = keychain.get_remaining_limit(getRemainingLimitCall {
@@ -1321,8 +1348,14 @@ mod tests {
             keychain.authorize_key(account, auth_call)?;
 
             // Verify key has enforce_limits = false
-            let key_before = keychain.get_key(getKeyCall { account, keyId: key_id })?;
-            assert!(!key_before.enforceLimits, "Key should start with enforce_limits=false");
+            let key_before = keychain.get_key(getKeyCall {
+                account,
+                keyId: key_id,
+            })?;
+            assert!(
+                !key_before.enforceLimits,
+                "Key should start with enforce_limits=false"
+            );
 
             // Update spending limit - this should toggle enforce_limits to true
             let update_call = updateSpendingLimitCall {
@@ -1333,8 +1366,14 @@ mod tests {
             keychain.update_spending_limit(account, update_call)?;
 
             // Verify enforce_limits is now true
-            let key_after = keychain.get_key(getKeyCall { account, keyId: key_id })?;
-            assert!(key_after.enforceLimits, "enforce_limits should be true after update");
+            let key_after = keychain.get_key(getKeyCall {
+                account,
+                keyId: key_id,
+            })?;
+            assert!(
+                key_after.enforceLimits,
+                "enforce_limits should be true after update"
+            );
 
             // Verify the spending limit was set
             let limit = keychain.get_remaining_limit(getRemainingLimitCall {
@@ -1371,7 +1410,12 @@ mod tests {
                 limits: vec![],
             };
             keychain.authorize_key(account, auth_call)?;
-            keychain.revoke_key(account, revokeKeyCall { keyId: key_id_revoked })?;
+            keychain.revoke_key(
+                account,
+                revokeKeyCall {
+                    keyId: key_id_revoked,
+                },
+            )?;
 
             // Setup: Create a valid key
             let auth_valid = authorizeKeyCall {
@@ -1384,19 +1428,49 @@ mod tests {
             keychain.authorize_key(account, auth_valid)?;
 
             // Test 1: Revoked key (expiry=0, is_revoked=true) - should return empty with isRevoked=true
-            let revoked_info = keychain.get_key(getKeyCall { account, keyId: key_id_revoked })?;
-            assert_eq!(revoked_info.keyId, Address::ZERO, "Revoked key should return zero keyId");
-            assert!(revoked_info.isRevoked, "Revoked key should have isRevoked=true");
+            let revoked_info = keychain.get_key(getKeyCall {
+                account,
+                keyId: key_id_revoked,
+            })?;
+            assert_eq!(
+                revoked_info.keyId,
+                Address::ZERO,
+                "Revoked key should return zero keyId"
+            );
+            assert!(
+                revoked_info.isRevoked,
+                "Revoked key should have isRevoked=true"
+            );
 
             // Test 2: Never existed key (expiry=0, is_revoked=false) - should return empty
-            let never_info = keychain.get_key(getKeyCall { account, keyId: key_id_never_existed })?;
-            assert_eq!(never_info.keyId, Address::ZERO, "Non-existent key should return zero keyId");
-            assert_eq!(never_info.expiry, 0, "Non-existent key should have expiry=0");
+            let never_info = keychain.get_key(getKeyCall {
+                account,
+                keyId: key_id_never_existed,
+            })?;
+            assert_eq!(
+                never_info.keyId,
+                Address::ZERO,
+                "Non-existent key should return zero keyId"
+            );
+            assert_eq!(
+                never_info.expiry, 0,
+                "Non-existent key should have expiry=0"
+            );
 
             // Test 3: Valid key (expiry>0, is_revoked=false) - should return actual key info
-            let valid_info = keychain.get_key(getKeyCall { account, keyId: key_id_valid })?;
-            assert_eq!(valid_info.keyId, key_id_valid, "Valid key should return actual keyId");
-            assert_eq!(valid_info.expiry, u64::MAX, "Valid key should have correct expiry");
+            let valid_info = keychain.get_key(getKeyCall {
+                account,
+                keyId: key_id_valid,
+            })?;
+            assert_eq!(
+                valid_info.keyId, key_id_valid,
+                "Valid key should return actual keyId"
+            );
+            assert_eq!(
+                valid_info.expiry,
+                u64::MAX,
+                "Valid key should have correct expiry"
+            );
             assert!(!valid_info.isRevoked, "Valid key should not be revoked");
 
             Ok(())
@@ -1418,39 +1492,69 @@ mod tests {
             keychain.set_transaction_key(Address::ZERO)?;
 
             // Create keys with each signature type
-            keychain.authorize_key(account, authorizeKeyCall {
-                keyId: key_secp,
-                signatureType: SignatureType::Secp256k1, // type 0
-                expiry: u64::MAX,
-                enforceLimits: false,
-                limits: vec![],
-            })?;
+            keychain.authorize_key(
+                account,
+                authorizeKeyCall {
+                    keyId: key_secp,
+                    signatureType: SignatureType::Secp256k1, // type 0
+                    expiry: u64::MAX,
+                    enforceLimits: false,
+                    limits: vec![],
+                },
+            )?;
 
-            keychain.authorize_key(account, authorizeKeyCall {
-                keyId: key_p256,
-                signatureType: SignatureType::P256, // type 1
-                expiry: u64::MAX,
-                enforceLimits: false,
-                limits: vec![],
-            })?;
+            keychain.authorize_key(
+                account,
+                authorizeKeyCall {
+                    keyId: key_p256,
+                    signatureType: SignatureType::P256, // type 1
+                    expiry: u64::MAX,
+                    enforceLimits: false,
+                    limits: vec![],
+                },
+            )?;
 
-            keychain.authorize_key(account, authorizeKeyCall {
-                keyId: key_webauthn,
-                signatureType: SignatureType::WebAuthn, // type 2
-                expiry: u64::MAX,
-                enforceLimits: false,
-                limits: vec![],
-            })?;
+            keychain.authorize_key(
+                account,
+                authorizeKeyCall {
+                    keyId: key_webauthn,
+                    signatureType: SignatureType::WebAuthn, // type 2
+                    expiry: u64::MAX,
+                    enforceLimits: false,
+                    limits: vec![],
+                },
+            )?;
 
             // Verify each key returns the correct signature type
-            let secp_info = keychain.get_key(getKeyCall { account, keyId: key_secp })?;
-            assert_eq!(secp_info.signatureType, SignatureType::Secp256k1, "Secp256k1 key should return Secp256k1");
+            let secp_info = keychain.get_key(getKeyCall {
+                account,
+                keyId: key_secp,
+            })?;
+            assert_eq!(
+                secp_info.signatureType,
+                SignatureType::Secp256k1,
+                "Secp256k1 key should return Secp256k1"
+            );
 
-            let p256_info = keychain.get_key(getKeyCall { account, keyId: key_p256 })?;
-            assert_eq!(p256_info.signatureType, SignatureType::P256, "P256 key should return P256");
+            let p256_info = keychain.get_key(getKeyCall {
+                account,
+                keyId: key_p256,
+            })?;
+            assert_eq!(
+                p256_info.signatureType,
+                SignatureType::P256,
+                "P256 key should return P256"
+            );
 
-            let webauthn_info = keychain.get_key(getKeyCall { account, keyId: key_webauthn })?;
-            assert_eq!(webauthn_info.signatureType, SignatureType::WebAuthn, "WebAuthn key should return WebAuthn");
+            let webauthn_info = keychain.get_key(getKeyCall {
+                account,
+                keyId: key_webauthn,
+            })?;
+            assert_eq!(
+                webauthn_info.signatureType,
+                SignatureType::WebAuthn,
+                "WebAuthn key should return WebAuthn"
+            );
 
             // Verify they are all distinct
             assert_ne!(secp_info.signatureType, p256_info.signatureType);
