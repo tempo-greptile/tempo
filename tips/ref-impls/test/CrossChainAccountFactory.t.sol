@@ -4,11 +4,11 @@ pragma solidity >=0.8.28 <0.9.0;
 import { CrossChainAccount } from "../src/CrossChainAccount.sol";
 import { CrossChainAccountFactory } from "../src/CrossChainAccountFactory.sol";
 import { Test, console } from "forge-std/Test.sol";
+import { WebAuthn } from "solady/utils/WebAuthn.sol";
 
 contract CrossChainAccountFactoryTest is Test {
 
     CrossChainAccountFactory factory;
-    address accountKeychain = address(0xaAAAaaAA00000000000000000000000000000000);
 
     // Test passkey coordinates (would be real P-256 coords in production)
     bytes32 passkeyX =
@@ -17,7 +17,7 @@ contract CrossChainAccountFactoryTest is Test {
         bytes32(uint256(0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321));
 
     function setUp() public {
-        factory = new CrossChainAccountFactory(accountKeychain);
+        factory = new CrossChainAccountFactory();
     }
 
     function test_getAddress_isDeterministic() public view {
@@ -52,8 +52,7 @@ contract CrossChainAccountFactoryTest is Test {
 
         assertEq(account.ownerX(), passkeyX, "Owner X should be set");
         assertEq(account.ownerY(), passkeyY, "Owner Y should be set");
-        assertEq(account.accountKeychain(), accountKeychain, "AccountKeychain should be set");
-        assertTrue(account.isAuthorizedKey(passkeyX, passkeyY), "Owner key should be authorized");
+        assertTrue(account.isAuthorizedKey(account.ownerKeyHash()), "Owner key should be authorized");
         assertTrue(account.initialized(), "Account should be initialized");
     }
 
@@ -97,12 +96,14 @@ contract CrossChainAccountFactoryTest is Test {
     }
 
     function test_crossChainAddressDeterminism() public {
-        // Simulate two factories on different chains with different accountKeychains
-        CrossChainAccountFactory factoryChain1 = new CrossChainAccountFactory(address(0x1111));
-        CrossChainAccountFactory factoryChain2 = new CrossChainAccountFactory(address(0x2222));
+        // Simulate two factories on different chains
+        // Since factory has no constructor args, they will produce identical addresses
+        CrossChainAccountFactory factoryChain1 = new CrossChainAccountFactory();
+        CrossChainAccountFactory factoryChain2 = new CrossChainAccountFactory();
 
-        // Note: In this test, factory addresses differ, so addresses will differ.
-        // In production, use deterministic deployment to ensure factory addresses match.
+        // Note: In this test, factory addresses differ due to nonce, so addresses will differ.
+        // In production, use deterministic deployment (CREATE2 for factory) to ensure
+        // factory addresses match across chains → wallet addresses will match.
         address addr1 = factoryChain1.getAddress(passkeyX, passkeyY);
         address addr2 = factoryChain2.getAddress(passkeyX, passkeyY);
 
@@ -122,131 +123,182 @@ contract CrossChainAccountFactoryTest is Test {
         factory.createAccount(passkeyX, passkeyY);
     }
 
+    function test_noPrecompileDependency() public {
+        // This test documents that the account has no chain-specific precompile dependencies.
+        // The account uses Solady's pure Solidity P256 and WebAuthn verification,
+        // making it deployable and functional on ANY EVM chain.
+        CrossChainAccount account = factory.createAccount(passkeyX, passkeyY);
+
+        // Verify the account is properly initialized without needing any precompile
+        assertTrue(account.initialized(), "Account should initialize without precompiles");
+        assertEq(account.ownerX(), passkeyX, "Owner should be set");
+
+        // The account's signature verification uses Solady libraries, not precompiles
+        // This is verifiable by checking the contract has no external calls to
+        // precompile addresses (0x01-0xFF range for special contracts)
+    }
 }
 
 contract CrossChainAccountTest is Test {
 
     CrossChainAccountFactory factory;
     CrossChainAccount account;
-    address accountKeychain = address(0xaAAAaaAA00000000000000000000000000000000);
 
     bytes32 passkeyX = bytes32(uint256(0x1234));
     bytes32 passkeyY = bytes32(uint256(0x5678));
-    bytes32 secondKeyX = bytes32(uint256(0xaaaa));
-    bytes32 secondKeyY = bytes32(uint256(0xbbbb));
+
+    // EOA for secp256k1 tests
+    uint256 eoaPrivateKey = 0xBEEF;
+    address eoaAddress;
 
     function setUp() public {
-        factory = new CrossChainAccountFactory(accountKeychain);
+        factory = new CrossChainAccountFactory();
         account = factory.createAccount(passkeyX, passkeyY);
+        eoaAddress = vm.addr(eoaPrivateKey);
     }
 
-    function test_addKey() public {
-        vm.prank(accountKeychain);
-        account.addKey(secondKeyX, secondKeyY);
+    function test_isValidSignature_invalidKeyHash() public view {
+        bytes32 digest = keccak256("test");
+        bytes32 fakeKeyHash = bytes32(uint256(0xdead));
+        bytes memory signature = abi.encodePacked(fakeKeyHash, bytes("fake"));
 
-        assertTrue(account.isAuthorizedKey(secondKeyX, secondKeyY), "New key should be authorized");
+        bytes4 result = account.isValidSignature(digest, signature);
+        assertEq(result, bytes4(0xffffffff), "Should return invalid for unknown key");
     }
 
-    function test_addKey_revertsIfNotAuthorized() public {
+    function test_addKey_viaExecuteTrusted() public {
+        bytes32 newKeyHash = keccak256("newkey");
+        bytes memory newPublicKey = abi.encode(eoaAddress);
+
+        // Simulate a call from the account itself (after signature validation)
+        vm.prank(address(account));
+        account.addKey(
+            newKeyHash,
+            CrossChainAccount.KeyType.Secp256k1,
+            0, // no expiry
+            newPublicKey
+        );
+
+        assertTrue(account.isAuthorizedKey(newKeyHash), "New key should be authorized");
+    }
+
+    function test_addKey_revertsIfNotSelf() public {
+        bytes32 newKeyHash = keccak256("newkey");
+        bytes memory newPublicKey = abi.encode(eoaAddress);
+
         vm.expectRevert(CrossChainAccount.NotAuthorized.selector);
-        account.addKey(secondKeyX, secondKeyY);
+        account.addKey(
+            newKeyHash,
+            CrossChainAccount.KeyType.Secp256k1,
+            0,
+            newPublicKey
+        );
     }
 
     function test_addKey_revertsOnInvalidKey() public {
-        vm.prank(accountKeychain);
+        vm.prank(address(account));
         vm.expectRevert(CrossChainAccount.InvalidKey.selector);
-        account.addKey(bytes32(0), secondKeyY);
+        account.addKey(
+            bytes32(0),
+            CrossChainAccount.KeyType.Secp256k1,
+            0,
+            abi.encode(eoaAddress)
+        );
     }
 
     function test_addKey_revertsIfKeyExists() public {
-        vm.startPrank(accountKeychain);
-        account.addKey(secondKeyX, secondKeyY);
+        bytes32 newKeyHash = keccak256("newkey");
+        bytes memory newPublicKey = abi.encode(eoaAddress);
+
+        vm.startPrank(address(account));
+        account.addKey(newKeyHash, CrossChainAccount.KeyType.Secp256k1, 0, newPublicKey);
 
         vm.expectRevert(CrossChainAccount.KeyAlreadyExists.selector);
-        account.addKey(secondKeyX, secondKeyY);
+        account.addKey(newKeyHash, CrossChainAccount.KeyType.Secp256k1, 0, newPublicKey);
         vm.stopPrank();
     }
 
     function test_removeKey() public {
-        vm.startPrank(accountKeychain);
-        account.addKey(secondKeyX, secondKeyY);
-        account.removeKey(secondKeyX, secondKeyY);
+        bytes32 newKeyHash = keccak256("newkey");
+        bytes memory newPublicKey = abi.encode(eoaAddress);
+
+        vm.startPrank(address(account));
+        account.addKey(newKeyHash, CrossChainAccount.KeyType.Secp256k1, 0, newPublicKey);
+        account.removeKey(newKeyHash);
         vm.stopPrank();
 
-        assertFalse(
-            account.isAuthorizedKey(secondKeyX, secondKeyY), "Removed key should not be authorized"
-        );
+        assertFalse(account.isAuthorizedKey(newKeyHash), "Removed key should not be authorized");
     }
 
     function test_removeKey_cannotRemovePrimaryKey() public {
-        vm.prank(accountKeychain);
+        bytes32 ownerKeyHash = account.ownerKeyHash();
+
+        vm.prank(address(account));
         vm.expectRevert(CrossChainAccount.CannotRemovePrimaryKey.selector);
-        account.removeKey(passkeyX, passkeyY);
+        account.removeKey(ownerKeyHash);
     }
 
-    function test_execute() public {
-        // Fund the account
+    function test_executeTrusted() public {
         vm.deal(address(account), 1 ether);
-
         address recipient = address(0xdead);
 
-        vm.prank(accountKeychain);
-        account.execute(recipient, 0.5 ether, "");
+        vm.prank(address(account));
+        account.executeTrusted(recipient, 0.5 ether, "");
 
         assertEq(recipient.balance, 0.5 ether);
     }
 
-    function test_execute_revertsIfNotAuthorized() public {
+    function test_executeTrusted_revertsIfNotSelf() public {
         vm.deal(address(account), 1 ether);
 
         vm.expectRevert(CrossChainAccount.NotAuthorized.selector);
-        account.execute(address(0xdead), 0.5 ether, "");
-    }
-
-    function test_executeBatch() public {
-        vm.deal(address(account), 2 ether);
-
-        address[] memory targets = new address[](2);
-        targets[0] = address(0xdead);
-        targets[1] = address(0xbeef);
-
-        uint256[] memory values = new uint256[](2);
-        values[0] = 0.5 ether;
-        values[1] = 0.3 ether;
-
-        bytes[] memory callData = new bytes[](2);
-        callData[0] = "";
-        callData[1] = "";
-
-        vm.prank(accountKeychain);
-        account.executeBatch(targets, values, callData);
-
-        assertEq(targets[0].balance, 0.5 ether);
-        assertEq(targets[1].balance, 0.3 ether);
+        account.executeTrusted(address(0xdead), 0.5 ether, "");
     }
 
     function test_cannotReinitialize() public {
         vm.expectRevert(CrossChainAccount.AlreadyInitialized.selector);
-        account.initialize(bytes32(uint256(0x9999)), bytes32(uint256(0x8888)), address(0x1234));
+        account.initialize(bytes32(uint256(0x9999)), bytes32(uint256(0x8888)));
+    }
+
+    function test_keyExpiry() public {
+        bytes32 newKeyHash = keccak256("expiringKey");
+        bytes memory newPublicKey = abi.encode(eoaAddress);
+        uint40 expiry = uint40(block.timestamp + 1 hours);
+
+        vm.prank(address(account));
+        account.addKey(newKeyHash, CrossChainAccount.KeyType.Secp256k1, expiry, newPublicKey);
+
+        // Key should be valid now
+        assertTrue(account.isAuthorizedKey(newKeyHash), "Key should be valid before expiry");
+
+        // Fast forward past expiry
+        vm.warp(block.timestamp + 2 hours);
+
+        // Key should now be expired
+        assertFalse(account.isAuthorizedKey(newKeyHash), "Key should be invalid after expiry");
     }
 
     function test_emitsKeyAddedEvent() public {
-        vm.expectEmit(true, true, false, true);
-        emit CrossChainAccount.KeyAdded(secondKeyX, secondKeyY);
+        bytes32 newKeyHash = keccak256("newkey");
 
-        vm.prank(accountKeychain);
-        account.addKey(secondKeyX, secondKeyY);
+        vm.expectEmit(true, false, false, true);
+        emit CrossChainAccount.KeyAdded(newKeyHash, CrossChainAccount.KeyType.Secp256k1);
+
+        vm.prank(address(account));
+        account.addKey(newKeyHash, CrossChainAccount.KeyType.Secp256k1, 0, abi.encode(eoaAddress));
     }
 
     function test_emitsKeyRemovedEvent() public {
-        vm.prank(accountKeychain);
-        account.addKey(secondKeyX, secondKeyY);
+        bytes32 newKeyHash = keccak256("newkey");
 
-        vm.expectEmit(true, true, false, true);
-        emit CrossChainAccount.KeyRemoved(secondKeyX, secondKeyY);
+        vm.prank(address(account));
+        account.addKey(newKeyHash, CrossChainAccount.KeyType.Secp256k1, 0, abi.encode(eoaAddress));
 
-        vm.prank(accountKeychain);
-        account.removeKey(secondKeyX, secondKeyY);
+        vm.expectEmit(true, false, false, true);
+        emit CrossChainAccount.KeyRemoved(newKeyHash);
+
+        vm.prank(address(account));
+        account.removeKey(newKeyHash);
     }
 
     function test_emitsExecutedEvent() public {
@@ -255,8 +307,102 @@ contract CrossChainAccountTest is Test {
         vm.expectEmit(true, false, false, true);
         emit CrossChainAccount.Executed(address(0xdead), 0.5 ether, "");
 
-        vm.prank(accountKeychain);
-        account.execute(address(0xdead), 0.5 ether, "");
+        vm.prank(address(account));
+        account.executeTrusted(address(0xdead), 0.5 ether, "");
     }
 
+    function test_ownerKeyHash() public view {
+        bytes32 expectedHash = keccak256(abi.encodePacked(passkeyX, passkeyY));
+        assertEq(account.ownerKeyHash(), expectedHash, "Owner key hash should match");
+    }
+}
+
+contract CrossChainAccountSecp256k1Test is Test {
+    CrossChainAccountFactory factory;
+    CrossChainAccount account;
+
+    uint256 signerPrivateKey = 0xA11CE;
+    address signerAddress;
+    bytes32 keyHash;
+
+    bytes32 passkeyX = bytes32(uint256(0x1234));
+    bytes32 passkeyY = bytes32(uint256(0x5678));
+
+    function setUp() public {
+        factory = new CrossChainAccountFactory();
+        account = factory.createAccount(passkeyX, passkeyY);
+
+        signerAddress = vm.addr(signerPrivateKey);
+        keyHash = keccak256(abi.encodePacked(signerAddress));
+
+        // Add secp256k1 key to account
+        vm.prank(address(account));
+        account.addKey(
+            keyHash,
+            CrossChainAccount.KeyType.Secp256k1,
+            0,
+            abi.encode(signerAddress)
+        );
+    }
+
+    function test_execute_withSecp256k1Signature() public {
+        vm.deal(address(account), 1 ether);
+        address recipient = address(0xdead);
+
+        // Build the typed data hash
+        bytes32 executeTypehash =
+            keccak256("Execute(address target,uint256 value,bytes data,uint256 nonce)");
+        bytes32 structHash = keccak256(
+            abi.encode(executeTypehash, recipient, 0.5 ether, keccak256(""), account.nonce())
+        );
+
+        // Get domain separator and compute final digest
+        bytes32 domainSeparator = _computeDomainSeparator(address(account));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+
+        // Sign with EOA
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, digest);
+        bytes memory innerSig = abi.encodePacked(r, s, v);
+        bytes memory fullSig = abi.encodePacked(keyHash, innerSig);
+
+        // Execute
+        account.execute(recipient, 0.5 ether, "", fullSig);
+
+        assertEq(recipient.balance, 0.5 ether, "Recipient should receive ETH");
+        assertEq(account.nonce(), 1, "Nonce should increment");
+    }
+
+    function test_execute_invalidSignature_reverts() public {
+        vm.deal(address(account), 1 ether);
+
+        // Create an invalid signature
+        bytes memory invalidSig = abi.encodePacked(keyHash, bytes32(0), bytes32(0), uint8(27));
+
+        vm.expectRevert(CrossChainAccount.InvalidSignature.selector);
+        account.execute(address(0xdead), 0.5 ether, "", invalidSig);
+    }
+
+    function test_isValidSignature_secp256k1() public view {
+        bytes32 testDigest = keccak256("test message");
+
+        // Sign with EOA
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPrivateKey, testDigest);
+        bytes memory innerSig = abi.encodePacked(r, s, v);
+        bytes memory fullSig = abi.encodePacked(keyHash, innerSig);
+
+        bytes4 result = account.isValidSignature(testDigest, fullSig);
+        assertEq(result, bytes4(0x1626ba7e), "Should return ERC1271 magic value");
+    }
+
+    function _computeDomainSeparator(address accountAddr) internal view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("CrossChainAccount"),
+                keccak256("1"),
+                block.chainid,
+                accountAddr
+            )
+        );
+    }
 }

@@ -11,14 +11,14 @@ import { CrossChainAccount } from "./CrossChainAccount.sol";
 /// Key design decisions (per Oracle audit):
 /// 1. No proxy pattern - keeps initCode identical across chains
 /// 2. Atomic deploy+initialize - prevents griefing/front-running
-/// 3. Chain-specific params (accountKeychain) stored as factory immutables
-/// 4. Supports account index for multiple wallets per passkey
+/// 3. Supports account index for multiple wallets per passkey
+///
+/// ## Cross-Chain Compatibility
+/// This factory and the accounts it creates use pure Solidity signature verification
+/// (via Solady's P256 and WebAuthn libraries) instead of chain-specific precompiles.
+/// This ensures the same contract works identically on Tempo, Ethereum, Base, and any
+/// other EVM chain without modification.
 contract CrossChainAccountFactory {
-
-    // ============ Storage ============
-
-    /// @notice The AccountKeychain precompile for this chain
-    address public immutable accountKeychain;
 
     // ============ Events ============
 
@@ -34,10 +34,7 @@ contract CrossChainAccountFactory {
 
     // ============ Constructor ============
 
-    /// @param _accountKeychain The AccountKeychain precompile address for this chain
-    constructor(address _accountKeychain) {
-        accountKeychain = _accountKeychain;
-    }
+    constructor() { }
 
     // ============ View Functions ============
 
@@ -104,8 +101,8 @@ contract CrossChainAccountFactory {
             revert DeploymentFailed();
         }
 
-        // Atomic initialization - factory supplies chain-specific accountKeychain
-        account.initialize(passkeyX, passkeyY, accountKeychain);
+        // Atomic initialization
+        account.initialize(passkeyX, passkeyY);
 
         emit AccountCreated(address(account), passkeyX, passkeyY, index);
     }
@@ -153,5 +150,4 @@ contract CrossChainAccountFactory {
             )
         );
     }
-
 }
