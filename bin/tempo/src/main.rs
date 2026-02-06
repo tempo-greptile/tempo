@@ -25,6 +25,7 @@ use clap::Parser;
 use commonware_runtime::{Metrics, Runner};
 use eyre::WrapErr as _;
 use futures::{FutureExt as _, future::FusedFuture as _};
+use reth_db::mdbx::SyncMode;
 use reth_ethereum::{chainspec::EthChainSpec as _, cli::Commands, evm::revm::primitives::B256};
 use reth_ethereum_cli::Cli;
 use reth_node_builder::{NodeHandle, WithLaunchContext};
@@ -120,6 +121,13 @@ fn main() -> eyre::Result<()> {
         DefaultRpcModuleValidator,
         tempo_cmd::TempoSubcommand,
     >::parse();
+
+    if let Commands::Node(ref mut node_cmd) = cli.command {
+        if node_cmd.db.sync_mode.is_none() {
+            node_cmd.db.sync_mode = Some(SyncMode::SafeNoSync);
+            info!(target: "tempo::cli", "Defaulting to --db.sync-mode=safe-no-sync for improved persistence throughput");
+        }
+    }
 
     // If telemetry is enabled, set logs OTLP (conflicts_with in TelemetryArgs prevents both being set)
     let mut telemetry_config = None;

@@ -11783,6 +11783,7 @@ dependencies = [
  "reth-cli-commands",
  "reth-cli-runner",
  "reth-cli-util",
+ "reth-db",
  "reth-ethereum",
  "reth-ethereum-cli",
  "reth-node-builder",
