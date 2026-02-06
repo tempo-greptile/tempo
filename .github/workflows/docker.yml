@@ -118,6 +118,7 @@ jobs:
         run: echo "shortsha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker images
+        id: bake
         uses: depot/bake-action@2ae2529115bba41de62b77b345de48d57eca7564 # v1.12.1
         with:
           files: |
@@ -140,12 +141,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          images=(
-            "${{ steps.meta-tempo.outputs.tags }}"
-            "${{ steps.meta-tempo-bench.outputs.tags }}"
-            "${{ steps.meta-tempo-sidecar.outputs.tags }}"
-            "${{ steps.meta-tempo-xtask.outputs.tags }}"
-          )
-          for tags in "${images[@]}"; do
-            echo "$tags" | xargs -n1 cosign sign --yes --recursive
+          metadata='${{ steps.bake.outputs.metadata }}'
+          for target in tempo tempo-bench tempo-sidecar tempo-xtask; do
+            digest=$(echo "$metadata" | jq -r ".\"${target}\".[\"containerimage.digest\"]")
+            image="${{ env.REGISTRY }}/${target}"
+            cosign sign --yes "${image}@${digest}"
           done
