@@ -40,7 +40,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tempo_chainspec::{TempoChainSpec, hardfork::TempoHardforks};
 use tempo_consensus::TEMPO_SHARED_GAS_DIVISOR;
@@ -368,6 +368,8 @@ where
         ));
 
         let execution_start = Instant::now();
+        let mut tx_count = 0u64;
+        let mut max_tx_duration = Duration::ZERO;
         while let Some(pool_tx) = best_txs.next() {
             // Ensure we still have capacity for this transaction within the non-shared gas limit.
             // The remaining `shared_gas_limit` is reserved for validator subblocks and must not
@@ -435,7 +437,7 @@ where
                 .unwrap_or_default();
 
             let tx_with_env = pool_tx.transaction.clone().into_with_tx_env();
-            let execution_start = Instant::now();
+            let tx_start = Instant::now();
             let gas_used = match builder.execute_transaction(tx_with_env) {
                 Ok(gas_used) => gas_used,
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
@@ -461,10 +463,11 @@ where
                 // this is an error that we should treat as fatal for this attempt
                 Err(err) => return Err(PayloadBuilderError::evm(err)),
             };
-            let elapsed = execution_start.elapsed();
-            self.metrics
-                .transaction_execution_duration_seconds
-                .record(elapsed);
+            let elapsed = tx_start.elapsed();
+            tx_count += 1;
+            if elapsed > max_tx_duration {
+                max_tx_duration = elapsed;
+            }
             trace!(?elapsed, "Transaction executed");
 
             // update and add to total fees
@@ -479,6 +482,14 @@ where
         self.metrics
             .total_normal_transaction_execution_duration_seconds
             .record(total_normal_transaction_execution_elapsed);
+        self.metrics
+            .transaction_execution_max_duration_seconds
+            .set(max_tx_duration.as_secs_f64());
+        if tx_count > 0 {
+            self.metrics
+                .transaction_execution_avg_duration_seconds
+                .record(total_normal_transaction_execution_elapsed.as_secs_f64() / tx_count as f64);
+        }
         self.metrics
             .payment_transactions
             .record(payment_transactions as f64);
