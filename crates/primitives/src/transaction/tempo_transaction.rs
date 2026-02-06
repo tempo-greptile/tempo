@@ -410,11 +410,10 @@ impl TempoTransaction {
             signature_length(&self.fee_payer_signature) +
             // authorization_list
             self.tempo_authorization_list.length() +
-            // key_authorization (only included if present)
             if let Some(key_auth) = &self.key_authorization {
                 key_auth.length()
             } else {
-                0 // No bytes when None
+                1 // EMPTY_STRING_CODE
             }
     }
 
@@ -456,11 +455,11 @@ impl TempoTransaction {
         // Encode authorization_list
         self.tempo_authorization_list.encode(out);
 
-        // Encode key_authorization (truly optional - only encoded if present)
         if let Some(key_auth) = &self.key_authorization {
             key_auth.encode(out);
+        } else {
+            out.put_u8(EMPTY_STRING_CODE);
         }
-        // No bytes at all when None - maintains backwards compatibility
     }
 
     /// Public version for normal RLP encoding
@@ -556,18 +555,13 @@ impl TempoTransaction {
 
         let tempo_authorization_list = Decodable::decode(buf)?;
 
-        // Decode optional key_authorization field at the end
-        // Check if the next byte looks like it could be a KeyAuthorization (RLP list)
-        // KeyAuthorization is encoded as a list, so it would start with 0xc0-0xf7 (short list) or 0xf8-0xff (long list)
-        // If it's a bytes string (0x80-0xbf for short, 0xb8-0xbf for long), it's not a
-        // KeyAuthorization and most likely a signature bytes following the AA transaction.
         let key_authorization = if let Some(&first) = buf.first() {
-            // Check if this looks like an RLP list (KeyAuthorization is always a list)
-            if first >= 0xc0 {
-                // This could be a KeyAuthorization
+            if first == EMPTY_STRING_CODE {
+                buf.advance(1);
+                None
+            } else if first >= 0xc0 {
                 Some(Decodable::decode(buf)?)
             } else {
-                // This is likely not a KeyAuthorization (probably signature bytes in AASigned context)
                 None
             }
         } else {
@@ -2010,5 +2004,65 @@ mod tests {
             ..Default::default()
         };
         assert!(valid_expiring_tx.validate().is_ok());
+    }
+
+    #[test]
+    fn test_rlp_roundtrip_key_authorization_none() {
+        let tx = TempoTransaction {
+            chain_id: 1,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 2_000_000_000,
+            gas_limit: 21_000,
+            calls: vec![Call {
+                to: TxKind::Call(address!("0000000000000000000000000000000000000002")),
+                value: U256::ZERO,
+                input: Bytes::new(),
+            }],
+            nonce: 1,
+            key_authorization: None,
+            ..Default::default()
+        };
+
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+
+        let decoded = TempoTransaction::decode(&mut buf.as_slice()).unwrap();
+        assert_eq!(decoded.key_authorization, None);
+        assert_eq!(decoded.chain_id, tx.chain_id);
+        assert_eq!(decoded.nonce, tx.nonce);
+    }
+
+    #[test]
+    fn test_rlp_roundtrip_key_authorization_some() {
+        let key_auth = KeyAuthorization {
+            chain_id: 1,
+            key_type: SignatureType::Secp256k1,
+            key_id: address!("0000000000000000000000000000000000000042"),
+            expiry: Some(999_999),
+            limits: None,
+        };
+        let signed_key_auth =
+            key_auth.into_signed(PrimitiveSignature::Secp256k1(Signature::test_signature()));
+
+        let tx = TempoTransaction {
+            chain_id: 1,
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 2_000_000_000,
+            gas_limit: 21_000,
+            calls: vec![Call {
+                to: TxKind::Call(address!("0000000000000000000000000000000000000002")),
+                value: U256::ZERO,
+                input: Bytes::new(),
+            }],
+            nonce: 1,
+            key_authorization: Some(signed_key_auth.clone()),
+            ..Default::default()
+        };
+
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+
+        let decoded = TempoTransaction::decode(&mut buf.as_slice()).unwrap();
+        assert_eq!(decoded.key_authorization, Some(signed_key_auth));
     }
 }
