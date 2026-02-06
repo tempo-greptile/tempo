@@ -11,7 +11,7 @@ use commonware_codec::{Encode as _, Read as _, ReadExt as _};
 use commonware_consensus::types::{Epoch, Epocher as _, FixedEpocher};
 use commonware_cryptography::{
     bls12381::{
-        dkg::{self, Info, SignedDealerLog},
+        dkg::{self, DealerLogSummary, Info, SignedDealerLog},
         primitives::{sharing::Mode, variant::MinSig},
     },
     ed25519::{PrivateKey, PublicKey},
@@ -24,8 +24,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 use itertools::Itertools;
 use serde::Serialize;
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
-
-use crate::dealer_log::{InspectableDealerLog, PlayerResultType};
 
 const BATCH_SIZE: usize = 100;
 
@@ -54,7 +52,7 @@ pub(crate) struct ReplayDkg {
 #[derive(Serialize)]
 struct PlayerAckReveal {
     player: String,
-    result: PlayerResultType,
+    result: &'static str,
 }
 
 #[derive(Serialize)]
@@ -264,27 +262,25 @@ impl ReplayDkg {
                         if let Some((dealer, log)) = signed_log.check(&info) {
                             let dealer_hex = pubkey_to_hex(&dealer);
 
-                            // Re-encode and decode into InspectableDealerLog to get ack/reveal info
-                            let encoded = log.encode();
-                            let inspectable =
-                                InspectableDealerLog::<MinSig, PublicKey>::from_bytes(
-                                    &encoded,
-                                    num_players,
-                                )
-                                .expect("re-decoding should not fail");
-
-                            let ack_count = inspectable.ack_count();
-                            let reveal_count = inspectable.reveal_count();
-                            let too_many_reveals = inspectable.has_too_many_reveals();
-
-                            let player_results: Vec<PlayerAckReveal> = inspectable
-                                .player_results()
-                                .into_iter()
-                                .map(|pr| PlayerAckReveal {
-                                    player: pubkey_to_hex(&pr.player),
-                                    result: pr.result_type,
-                                })
-                                .collect();
+                            let summary = log.summary();
+                            let (ack_count, reveal_count, too_many_reveals, player_results) =
+                                match &summary {
+                                    DealerLogSummary::TooManyReveals => (0, 0, true, vec![]),
+                                    DealerLogSummary::Ok { acks, reveals } => {
+                                        let mut results: Vec<PlayerAckReveal> = acks
+                                            .iter()
+                                            .map(|p| PlayerAckReveal {
+                                                player: pubkey_to_hex(p),
+                                                result: "ack",
+                                            })
+                                            .collect();
+                                        results.extend(reveals.iter().map(|p| PlayerAckReveal {
+                                            player: pubkey_to_hex(p),
+                                            result: "reveal",
+                                        }));
+                                        (acks.len(), reveals.len(), false, results)
+                                    }
+                                };
 
                             progress.println(format!(
                                 "Block {height}: dealer log from {dealer_hex} (acks: {ack_count}, reveals: {reveal_count})"
