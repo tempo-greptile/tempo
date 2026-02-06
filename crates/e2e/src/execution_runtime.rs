@@ -57,7 +57,7 @@ use tempo_node::{
 use tempo_precompiles::{
     VALIDATOR_CONFIG_ADDRESS,
     storage::StorageCtx,
-    validator_config::{IValidatorConfig, ValidatorConfig},
+    validator_config::{IValidatorConfig, ValidatorConfig, traits::*},
 };
 
 const ADMIN_INDEX: u32 = 0;
@@ -145,13 +145,11 @@ impl Builder {
                     validator_config
                         .add_validator(
                             admin(),
-                            IValidatorConfig::addValidatorCall {
-                                newValidatorAddress: *chain_addr,
-                                publicKey: peer.encode().as_ref().try_into().unwrap(),
-                                active: true,
-                                inboundAddress: net_addr.to_string(),
-                                outboundAddress: net_addr.to_string(),
-                            },
+                            *chain_addr,
+                            peer.encode().as_ref().try_into().unwrap(),
+                            true,
+                            net_addr.to_string(),
+                            net_addr.to_string(),
                         )
                         .unwrap();
                 }

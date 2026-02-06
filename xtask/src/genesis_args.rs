@@ -42,7 +42,6 @@ use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, MULTICALL3_ADDRESS, PERMIT2_ADDRESS,
     PERMIT2_SALT, SAFE_DEPLOYER_ADDRESS,
     contracts::{ARACHNID_CREATE2_FACTORY_BYTECODE, CreateX, Multicall3, SafeDeployer},
-    precompiles::IValidatorConfig,
 };
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_evm::evm::{TempoEvm, TempoEvmFactory};
@@ -56,7 +55,7 @@ use tempo_precompiles::{
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
     tip20_factory::{ITIP20Factory::traits::*, TIP20Factory},
     tip403_registry::TIP403Registry,
-    validator_config::ValidatorConfig,
+    validator_config::{Interface as _, ValidatorConfig},
 };
 
 /// Generate genesis allocation file for testing
@@ -868,20 +867,17 @@ fn initialize_validator_config(
 
                 println!("writing {num_validators} validators into contract");
                 for (i, validator) in consensus_config.validators.iter().enumerate() {
-                    #[expect(non_snake_case, reason = "field of a snakeCase smart contract call")]
-                    let newValidatorAddress = onchain_validator_addresses[i];
+                    let validator_address = onchain_validator_addresses[i];
                     let public_key = validator.public_key();
                     let addr = validator.addr;
                     validator_config
                         .add_validator(
                             admin,
-                            IValidatorConfig::addValidatorCall {
-                                newValidatorAddress,
-                                publicKey: public_key.encode().as_ref().try_into().unwrap(),
-                                active: true,
-                                inboundAddress: addr.to_string(),
-                                outboundAddress: addr.to_string(),
-                            },
+                            validator_address,
+                            public_key.encode().as_ref().try_into().unwrap(),
+                            true,
+                            addr.to_string(),
+                            addr.to_string(),
                         )
                         .wrap_err(
                             "failed to execute smart contract call to add validator to evm state",
@@ -889,7 +885,7 @@ fn initialize_validator_config(
                     println!(
                         "added validator\
                 \n\tpublic key: {public_key}\
-                \n\tonchain address: {newValidatorAddress}\
+                \n\tonchain address: {validator_address}\
                 \n\tnet address: {addr}"
                     );
                 }

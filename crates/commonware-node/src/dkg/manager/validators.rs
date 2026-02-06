@@ -14,7 +14,7 @@ use reth_provider::{
 use tempo_node::TempoFullNode;
 use tempo_precompiles::{
     storage::StorageCtx,
-    validator_config::{IValidatorConfig, ValidatorConfig},
+    validator_config::{IValidatorConfig, ValidatorConfig, traits::*},
 };
 
 use tracing::{Level, info, instrument, warn};
@@ -171,19 +171,19 @@ impl DecodedValidator {
     pub(super) fn decode_from_contract(
         IValidatorConfig::Validator {
             active,
-            publicKey,
+            public_key,
             index,
-            validatorAddress,
-            inboundAddress,
-            outboundAddress,
+            validator_address,
+            inbound_address,
+            outbound_address,
         }: IValidatorConfig::Validator,
     ) -> eyre::Result<Self> {
-        let public_key = PublicKey::decode(publicKey.as_ref())
+        let public_key = PublicKey::decode(public_key.as_ref())
             .wrap_err("failed decoding publicKey field as ed25519 public key")?;
-        let inbound = inboundAddress
+        let inbound = inbound_address
             .parse()
             .wrap_err("inboundAddress was not valid")?;
-        let outbound = outboundAddress
+        let outbound = outbound_address
             .parse()
             .wrap_err("outboundAddress was not valid")?;
         Ok(Self {
@@ -192,7 +192,7 @@ impl DecodedValidator {
             inbound,
             outbound,
             index,
-            address: validatorAddress,
+            address: validator_address,
         })
     }
 }

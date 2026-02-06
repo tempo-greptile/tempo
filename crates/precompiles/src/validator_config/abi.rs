@@ -1,0 +1,58 @@
+use tempo_precompiles_macros::abi;
+
+#[rustfmt::skip]
+#[abi(no_reexport)]
+#[allow(non_snake_case)]
+pub mod IValidatorConfig {
+    #[cfg(feature = "precompile")]
+    use crate::error::Result;
+    use alloy::primitives::{Address, B256, U256};
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    #[derive(Debug, Clone, Default, PartialEq, Eq, Storable)]
+    pub struct Validator {
+        pub public_key: B256,
+        pub active: bool,
+        pub index: u64,
+        pub validator_address: Address,
+        /// Address where other validators can connect to this validator.
+        /// Format: `<hostname|ip>:<port>`
+        pub inbound_address: String,
+        /// IP address for firewall whitelisting by other validators.
+        /// Format: `<ip>:<port>` - must be an IP address, not a hostname.
+        pub outbound_address: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum Error {
+        Unauthorized,
+        InvalidPublicKey,
+        ValidatorNotFound,
+        ValidatorAlreadyExists,
+        NotIpPort { field: String, input: String, backtrace: String },
+        NotHostPort { field: String, input: String, backtrace: String },
+    }
+
+    pub trait Interface {
+        fn owner(&self) -> Result<Address>;
+        fn get_validators(&self) -> Result<Vec<Validator>>;
+        fn get_next_full_dkg_ceremony(&self) -> Result<u64>;
+        fn validators_array(&self, index: U256) -> Result<Address>;
+        fn validators(&self, validator: Address) -> Result<Validator>;
+        fn validator_count(&self) -> Result<u64>;
+
+        #[msg_sender]
+        fn add_validator(&mut self, new_validator_address: Address, public_key: B256, active: bool, inbound_address: String, outbound_address: String) -> Result<()>;
+        #[msg_sender]
+        fn update_validator(&mut self, new_validator_address: Address, public_key: B256, inbound_address: String, outbound_address: String) -> Result<()>;
+        #[msg_sender]
+        fn change_validator_status(&mut self, validator: Address, active: bool) -> Result<()>;
+        #[msg_sender]
+        #[hardfork = TempoHardfork::T1]
+        fn change_validator_status_by_index(&mut self, index: u64, active: bool) -> Result<()>;
+        #[msg_sender]
+        fn change_owner(&mut self, new_owner: Address) -> Result<()>;
+        #[msg_sender]
+        fn set_next_full_dkg_ceremony(&mut self, epoch: u64) -> Result<()>;
+    }
+}

@@ -10,6 +10,7 @@ use crate::{
     tip20::TIP20Error,
     tip20_factory::TIP20FactoryError,
     tip403_registry::ITIP403Registry::Error as TIP403RegistryError,
+    validator_config::IValidatorConfig::Error as ValidatorConfigError,
 };
 use alloy::{
     primitives::{Selector, U256},
@@ -19,9 +20,7 @@ use revm::{
     context::journaled_state::JournalLoadErasedError,
     precompile::{PrecompileError, PrecompileOutput, PrecompileResult},
 };
-use tempo_contracts::precompiles::{
-    RolesAuthError, StablecoinDEXError, UnknownFunctionSelector, ValidatorConfigError,
-};
+use tempo_contracts::precompiles::{RolesAuthError, StablecoinDEXError, UnknownFunctionSelector};
 
 /// Top-level error type for all Tempo precompile operations
 #[derive(
