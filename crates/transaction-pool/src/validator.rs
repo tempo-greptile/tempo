@@ -1017,6 +1017,10 @@ mod tests {
     use tempo_primitives::{TempoTxEnvelope, transaction::tempo_transaction::Call};
     use tempo_revm::TempoStateAccess;
 
+    /// Fixed pre-T1 timestamp for tests that rely on T0 gas/fee parameters.
+    /// T1 activates at 1770303600 on Moderato; this is safely before that.
+    const PRE_T1_TIMESTAMP: u64 = 1770300000;
+
     /// Helper to create a mock sealed block with the given timestamp.
     fn create_mock_block(timestamp: u64) -> SealedBlock<reth_ethereum_primitives::Block> {
         let header = Header {
@@ -1432,10 +1436,7 @@ mod tests {
             tt_signed::AASigned,
         };
 
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let current_time = PRE_T1_TIMESTAMP;
 
         // Helper to create AA transaction
         let create_aa_tx = |gas_limit: u64, nonce_key: U256, is_create: bool| {
@@ -1734,10 +1735,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fee_cap_below_min_base_fee_rejected() {
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let current_time = PRE_T1_TIMESTAMP;
 
         // T0 base fee is 10 gwei (10_000_000_000 wei)
         // Create a transaction with max_fee_per_gas below this
@@ -1770,10 +1768,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fee_cap_at_min_base_fee_passes() {
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let current_time = PRE_T1_TIMESTAMP;
 
         // T0 base fee is 10 gwei (10_000_000_000 wei)
         // Create a transaction with max_fee_per_gas exactly at minimum
@@ -1802,10 +1797,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fee_cap_above_min_base_fee_passes() {
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let current_time = PRE_T1_TIMESTAMP;
 
         // T0 base fee is 10 gwei (10_000_000_000 wei)
         // Create a transaction with max_fee_per_gas above minimum
@@ -1834,10 +1826,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_eip1559_fee_cap_below_min_base_fee_rejected() {
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let current_time = PRE_T1_TIMESTAMP;
 
         // T0 base fee is 10 gwei, create EIP-1559 tx with lower fee
         let transaction = TxBuilder::eip1559(Address::random())
@@ -3299,10 +3288,7 @@ mod tests {
     /// Multiple CREATE calls in the same transaction should be rejected.
     #[tokio::test]
     async fn test_aa_multiple_creates_rejected() {
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let current_time = PRE_T1_TIMESTAMP;
 
         // calls = [CREATE, CALL, CREATE] -> should reject with CreateCallNotFirst
         let calls = vec![
@@ -3357,10 +3343,7 @@ mod tests {
             tt_signature::{PrimitiveSignature, TempoSignature},
         };
 
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let current_time = PRE_T1_TIMESTAMP;
 
         // Create an AA transaction with a CREATE call and a non-empty authorization list
         let calls = vec![Call {
