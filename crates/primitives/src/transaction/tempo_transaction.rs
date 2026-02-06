@@ -571,7 +571,9 @@ impl TempoTransaction {
 
         let tempo_authorization_list: Vec<TempoSignedAuthorization> = Decodable::decode(buf)?;
         if tempo_authorization_list.len() > MAX_RLP_AUTHORIZATION_LIST_ENTRIES {
-            return Err(alloy_rlp::Error::Custom("too many authorization list entries"));
+            return Err(alloy_rlp::Error::Custom(
+                "too many authorization list entries",
+            ));
         }
 
         // Decode optional key_authorization field at the end
