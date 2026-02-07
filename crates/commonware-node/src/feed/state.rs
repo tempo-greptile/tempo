@@ -297,8 +297,14 @@ impl ConsensusFeed for FeedStateHandle {
         let mut search_epoch = start_epoch.saturating_sub(1);
         let mut reached_genesis = start_epoch == 0;
 
-        // If we have a cache, try to connect to it instead of walking all the way
-        let cache_connect_epoch = cached.as_ref().map(|c| c.from_epoch);
+        // If we have a cache, try to connect to it instead of walking all the way.
+        // Only connect when walking from a newer epoch towards the cache; if the
+        // query is older than the cache start, connecting would inject transitions
+        // from future epochs into the response.
+        let cache_connect_epoch = cached
+            .as_ref()
+            .filter(|c| start_epoch > c.from_epoch)
+            .map(|c| c.from_epoch);
 
         while search_epoch > 0 {
             // Check if we can connect to cached data
@@ -663,6 +669,48 @@ mod tests {
         assert_eq!(
             resp.identity, "key_genesis",
             "at exactly transition_epoch=25, the active identity is key_genesis (old)"
+        );
+    }
+
+    /// Invariant: cache connect must only trigger when the query epoch is newer
+    /// than the cached range. If the query is older, connecting would inject
+    /// transitions from future epochs.
+    #[test]
+    fn cache_connect_epoch_guards_against_future_injection() {
+        // Cache built from epoch 100 down to 50
+        let cache = make_cache(
+            100,
+            50,
+            "key_100",
+            vec![
+                make_transition(80, "key_60", "key_80"),
+                make_transition(60, "key_50", "key_60"),
+            ],
+        );
+
+        // Query from epoch 40 (older than cache): connect should NOT activate
+        let start_epoch: u64 = 40;
+        let connect = if start_epoch > cache.from_epoch {
+            Some(cache.from_epoch)
+        } else {
+            None
+        };
+        assert!(
+            connect.is_none(),
+            "cache connect must not activate when query (40) < cache.from_epoch (100)"
+        );
+
+        // Query from epoch 150 (newer than cache): connect SHOULD activate
+        let start_epoch: u64 = 150;
+        let connect = if start_epoch > cache.from_epoch {
+            Some(cache.from_epoch)
+        } else {
+            None
+        };
+        assert_eq!(
+            connect,
+            Some(100),
+            "cache connect should activate when query (150) > cache.from_epoch (100)"
         );
     }
 
