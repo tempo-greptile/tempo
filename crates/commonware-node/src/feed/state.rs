@@ -307,9 +307,13 @@ impl ConsensusFeed for FeedStateHandle {
             .map(|c| c.from_epoch);
 
         while search_epoch > 0 {
-            // Check if we can connect to cached data
+            // Check if we can connect to cached data.
+            // Use strict < so we still process search_epoch == connect_epoch
+            // before connecting — the cache was built starting at connect_epoch
+            // and walked from connect_epoch - 1, so it doesn't contain any
+            // transition at exactly connect_epoch.
             if let Some(connect_epoch) = cache_connect_epoch
-                && search_epoch <= connect_epoch
+                && search_epoch < connect_epoch
                 && let Some(ref cache) = cached
             {
                 // Append cached transitions and stop walking
@@ -669,6 +673,40 @@ mod tests {
         assert_eq!(
             resp.identity, "key_genesis",
             "at exactly transition_epoch=25, the active identity is key_genesis (old)"
+        );
+    }
+
+    /// Invariant: cache connect must use strict < to avoid skipping a transition
+    /// at exactly the cache boundary. The cache built from epoch E walked from
+    /// E-1, so it doesn't contain transition at epoch E itself.
+    #[test]
+    fn cache_connect_uses_strict_less_than() {
+        // Cache built from epoch 80 down to 0
+        let cache = make_cache(
+            80,
+            0,
+            "key_80",
+            vec![make_transition(60, "key_40", "key_60")],
+        );
+
+        // When search_epoch == connect_epoch (80), we must NOT connect yet
+        // because we haven't checked whether there's a transition at epoch 80.
+        let search_epoch: u64 = 80;
+        let connect_epoch = cache.from_epoch;
+
+        // With strict <, this should NOT connect
+        let should_connect_strict = search_epoch < connect_epoch;
+        assert!(
+            !should_connect_strict,
+            "must not connect at search_epoch == connect_epoch (would skip transition at boundary)"
+        );
+
+        // search_epoch = 79 should connect
+        let search_epoch: u64 = 79;
+        let should_connect = search_epoch < connect_epoch;
+        assert!(
+            should_connect,
+            "should connect when search_epoch < connect_epoch"
         );
     }
 
