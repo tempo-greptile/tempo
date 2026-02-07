@@ -1,4 +1,43 @@
 //! Shared state for the feed module.
+//!
+//! # Identity Transition Proof Invariants
+//!
+//! The `consensus_getIdentityTransitionProof` RPC method walks the chain
+//! backwards to build a proof of how the network's BLS identity evolved.
+//! The following invariants must hold for both the cached and uncached paths:
+//!
+//! 1. **Epoch-to-identity correctness**: For any queried epoch N, the returned
+//!    `identity` must be the one *active during* epoch N. Identity active at
+//!    epoch N is set by the last block of epoch N-1, so a DKG transition
+//!    recorded at epoch E produces a key that becomes active at epoch E+1.
+//!
+//! 2. **Transition filter boundary**: Returned transitions must have
+//!    `transition_epoch < start_epoch` (strict). The non-cached walk starts at
+//!    `start_epoch - 1`, so it can never discover a transition at exactly
+//!    `start_epoch`. The cache filter must match this to ensure consistency.
+//!
+//! 3. **Cache-uncache equivalence**: The response for a given `(from_epoch, full)`
+//!    must be identical regardless of whether it is served from cache or computed
+//!    from scratch.
+//!
+//! 4. **Cache connect direction**: The cache connect optimization (stitching a
+//!    fresh walk onto existing cached data) must only activate when the query
+//!    epoch is *newer* than the cached range. Connecting when the query is older
+//!    would inject transitions from future epochs into the response.
+//!
+//! 5. **Cache boundary completeness**: When connecting to cached data, use
+//!    strict `<` comparison (`search_epoch < connect_epoch`) so the walk still
+//!    processes the epoch at the cache boundary. The cache was built starting at
+//!    `connect_epoch` and walked from `connect_epoch - 1`, so it does not
+//!    contain any transition at exactly `connect_epoch`.
+//!
+//! 6. **`full=false` cardinality**: When `full=false`, at most one transition
+//!    is returned, including when the response is partially served from cache
+//!    via the connect path.
+//!
+//! 7. **No panics on user input**: User-supplied `from_epoch` values must not
+//!    cause panics. Large values that overflow epoch-to-height arithmetic are
+//!    rejected with `IdentityProofError::InvalidEpoch`.
 
 use crate::{alias::marshal, consensus::Digest};
 use alloy_consensus::BlockHeader as _;
