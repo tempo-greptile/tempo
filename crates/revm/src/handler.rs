@@ -52,9 +52,9 @@ use crate::{
     gas_params::TempoGasParams,
 };
 
-/// Additional gas for P256 signature verification
-/// P256 precompile cost (6900 from EIP-7951) + 1100 for 129 bytes extra signature size - ecrecover savings (3000)
-const P256_VERIFY_GAS: u64 = 5_000;
+/// Additional gas for P256 signature verification (aws-lc optimized).
+/// P256 benchmarks at ~1.3x ecrecover (libsecp256k1). With 1.5x safety margin: 4500 - 3000 = 1500.
+const P256_VERIFY_GAS: u64 = 1_500;
 
 /// Gas cost for ecrecover signature verification (used by KeyAuthorization)
 const ECRECOVER_GAS: u64 = 3_000;

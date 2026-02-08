@@ -201,6 +201,7 @@ commonware-runtime = "0.0.65"
 commonware-storage = "0.0.65"
 commonware-utils = "0.0.65"
 
+aws-lc-sys = "0.27"
 arbitrary = { version = "1.3", features = ["derive"] }
 async-lock = "3.4.1"
 async-trait = "0.1"

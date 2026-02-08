@@ -3,6 +3,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg), allow(unexpected_cfgs))]
 
+// p256 is used in tests for signing; production verification uses aws-lc-sys
+use p256 as _;
+
 pub use alloy_consensus::Header;
 
 pub mod transaction;

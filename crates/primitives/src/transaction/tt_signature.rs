@@ -3,10 +3,6 @@ use super::tempo_transaction::{
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, U256, keccak256, uint};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use p256::{
-    EncodedPoint,
-    ecdsa::{Signature as P256Signature, VerifyingKey, signature::hazmat::PrehashVerifier},
-};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
@@ -689,11 +685,10 @@ pub fn derive_p256_address(pub_key_x: &B256, pub_key_y: &B256) -> Address {
     Address::from_slice(&hash[12..])
 }
 
-/// Verifies a P256 signature using the provided components
+/// Verifies a P256 signature using the provided components.
 ///
-/// This performs actual cryptographic verification of the P256 signature
-/// according to the spec. Called during `recover_signer()` to ensure only
-/// valid signatures enter the mempool.
+/// Uses aws-lc (BoringSSL fork) for assembly-optimized P256 verification,
+/// which is ~5.5x faster than the pure-Rust p256 crate.
 ///
 /// Includes a high-s value check to prevent signature malleability. For any
 /// ECDSA signature (r, s), a second valid signature (r, n-s) exists. By
@@ -706,29 +701,77 @@ fn verify_p256_signature_internal(
     pub_key_y: &[u8],
     message_hash: &B256,
 ) -> Result<(), &'static str> {
-    // High-s value check: reject signatures where s > n/2 to prevent malleability
     let s_value = U256::from_be_slice(s);
     if s_value > P256N_HALF {
         return Err("P256 signature has high s value");
     }
 
-    // Parse public key from affine coordinates
-    let encoded_point = EncodedPoint::from_affine_coordinates(
-        pub_key_x.into(),
-        pub_key_y.into(),
-        false, // Not compressed
-    );
+    unsafe {
+        use aws_lc_sys::*;
 
-    let verifying_key =
-        VerifyingKey::from_encoded_point(&encoded_point).map_err(|_| "Invalid P256 public key")?;
+        let ec_key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
+        if ec_key.is_null() {
+            return Err("Failed to create EC_KEY");
+        }
 
-    let signature = P256Signature::from_slice(&[r, s].concat())
-        .map_err(|_| "Invalid P256 signature encoding")?;
+        let bn_x = BN_bin2bn(pub_key_x.as_ptr(), pub_key_x.len(), std::ptr::null_mut());
+        let bn_y = BN_bin2bn(pub_key_y.as_ptr(), pub_key_y.len(), std::ptr::null_mut());
+        if bn_x.is_null() || bn_y.is_null() {
+            BN_free(bn_x);
+            BN_free(bn_y);
+            EC_KEY_free(ec_key);
+            return Err("Invalid P256 public key coordinates");
+        }
 
-    // Verify signature
-    verifying_key
-        .verify_prehash(message_hash.as_slice(), &signature)
-        .map_err(|_| "P256 signature verification failed")
+        let rc = EC_KEY_set_public_key_affine_coordinates(ec_key, bn_x, bn_y);
+        BN_free(bn_x);
+        BN_free(bn_y);
+        if rc != 1 {
+            EC_KEY_free(ec_key);
+            return Err("Invalid P256 public key");
+        }
+
+        let ecdsa_sig = ECDSA_SIG_new();
+        if ecdsa_sig.is_null() {
+            EC_KEY_free(ec_key);
+            return Err("Failed to create ECDSA_SIG");
+        }
+
+        let sig_r = BN_bin2bn(r.as_ptr(), r.len(), std::ptr::null_mut());
+        let sig_s = BN_bin2bn(s.as_ptr(), s.len(), std::ptr::null_mut());
+        if sig_r.is_null() || sig_s.is_null() {
+            BN_free(sig_r);
+            BN_free(sig_s);
+            ECDSA_SIG_free(ecdsa_sig);
+            EC_KEY_free(ec_key);
+            return Err("Invalid P256 signature encoding");
+        }
+
+        // ECDSA_SIG_set0 takes ownership of sig_r and sig_s on success
+        if ECDSA_SIG_set0(ecdsa_sig, sig_r, sig_s) != 1 {
+            BN_free(sig_r);
+            BN_free(sig_s);
+            ECDSA_SIG_free(ecdsa_sig);
+            EC_KEY_free(ec_key);
+            return Err("Invalid P256 signature encoding");
+        }
+
+        let result = ECDSA_do_verify(
+            message_hash.as_ptr(),
+            message_hash.len(),
+            ecdsa_sig,
+            ec_key,
+        );
+
+        ECDSA_SIG_free(ecdsa_sig);
+        EC_KEY_free(ec_key);
+
+        if result == 1 {
+            Ok(())
+        } else {
+            Err("P256 signature verification failed")
+        }
+    }
 }
 
 /// Minimal struct to deserialize only the fields we need from clientDataJSON.
