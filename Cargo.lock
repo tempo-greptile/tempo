@@ -1499,7 +1499,7 @@ version = "1.15.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e84ce723ab67259cfeb9877c6a639ee9eb7a27b28123abd71db7f0d5d0cc9d86"
 dependencies = [
- "aws-lc-sys",
+ "aws-lc-sys 0.36.0",
  "untrusted 0.7.1",
  "zeroize",
 ]
@@ -1509,6 +1509,18 @@ name = "aws-lc-sys"
 version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43a442ece363113bd4bd4c8b18977a7798dd4d3c3383f34fb61936960e8f4ad8"
+dependencies = [
+ "cc",
+ "cmake",
+ "dunce",
+ "fs_extra",
+]
+
+[[package]]
+name = "aws-lc-sys"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c34dda4df7017c8db52132f0f8a2e0f8161649d15723ed63fc00c82d0f2081a"
 dependencies = [
  "cc",
  "cmake",
@@ -12116,6 +12128,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "arbitrary",
+ "aws-lc-sys 0.37.0",
  "base64 0.22.1",
  "derive_more",
  "modular-bitfield",

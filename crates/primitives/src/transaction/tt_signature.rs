@@ -3,10 +3,7 @@ use super::tempo_transaction::{
 };
 use alloy_primitives::{Address, B256, Bytes, Signature, U256, keccak256, uint};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use p256::{
-    EncodedPoint,
-    ecdsa::{Signature as P256Signature, VerifyingKey, signature::hazmat::PrehashVerifier},
-};
+
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
@@ -706,29 +703,78 @@ fn verify_p256_signature_internal(
     pub_key_y: &[u8],
     message_hash: &B256,
 ) -> Result<(), &'static str> {
-    // High-s value check: reject signatures where s > n/2 to prevent malleability
     let s_value = U256::from_be_slice(s);
     if s_value > P256N_HALF {
         return Err("P256 signature has high s value");
     }
 
-    // Parse public key from affine coordinates
-    let encoded_point = EncodedPoint::from_affine_coordinates(
-        pub_key_x.into(),
-        pub_key_y.into(),
-        false, // Not compressed
-    );
+    unsafe {
+        let ec_key =
+            aws_lc_sys::EC_KEY_new_by_curve_name(aws_lc_sys::NID_X9_62_prime256v1 as i32);
+        if ec_key.is_null() {
+            return Err("Failed to create EC_KEY");
+        }
 
-    let verifying_key =
-        VerifyingKey::from_encoded_point(&encoded_point).map_err(|_| "Invalid P256 public key")?;
+        let x_bn =
+            aws_lc_sys::BN_bin2bn(pub_key_x.as_ptr(), pub_key_x.len(), std::ptr::null_mut());
+        let y_bn =
+            aws_lc_sys::BN_bin2bn(pub_key_y.as_ptr(), pub_key_y.len(), std::ptr::null_mut());
+        if x_bn.is_null() || y_bn.is_null() {
+            aws_lc_sys::BN_free(x_bn);
+            aws_lc_sys::BN_free(y_bn);
+            aws_lc_sys::EC_KEY_free(ec_key);
+            return Err("Failed to create BIGNUMs for public key");
+        }
 
-    let signature = P256Signature::from_slice(&[r, s].concat())
-        .map_err(|_| "Invalid P256 signature encoding")?;
+        let ret = aws_lc_sys::EC_KEY_set_public_key_affine_coordinates(ec_key, x_bn, y_bn);
+        aws_lc_sys::BN_free(x_bn);
+        aws_lc_sys::BN_free(y_bn);
+        if ret != 1 {
+            aws_lc_sys::EC_KEY_free(ec_key);
+            return Err("Invalid P256 public key");
+        }
 
-    // Verify signature
-    verifying_key
-        .verify_prehash(message_hash.as_slice(), &signature)
-        .map_err(|_| "P256 signature verification failed")
+        let ecdsa_sig = aws_lc_sys::ECDSA_SIG_new();
+        if ecdsa_sig.is_null() {
+            aws_lc_sys::EC_KEY_free(ec_key);
+            return Err("Failed to create ECDSA_SIG");
+        }
+
+        let r_bn = aws_lc_sys::BN_bin2bn(r.as_ptr(), r.len(), std::ptr::null_mut());
+        let s_bn = aws_lc_sys::BN_bin2bn(s.as_ptr(), s.len(), std::ptr::null_mut());
+        if r_bn.is_null() || s_bn.is_null() {
+            aws_lc_sys::BN_free(r_bn);
+            aws_lc_sys::BN_free(s_bn);
+            aws_lc_sys::ECDSA_SIG_free(ecdsa_sig);
+            aws_lc_sys::EC_KEY_free(ec_key);
+            return Err("Failed to create BIGNUMs for signature");
+        }
+
+        let ret = aws_lc_sys::ECDSA_SIG_set0(ecdsa_sig, r_bn, s_bn);
+        if ret != 1 {
+            aws_lc_sys::BN_free(r_bn);
+            aws_lc_sys::BN_free(s_bn);
+            aws_lc_sys::ECDSA_SIG_free(ecdsa_sig);
+            aws_lc_sys::EC_KEY_free(ec_key);
+            return Err("Invalid P256 signature encoding");
+        }
+
+        let result = aws_lc_sys::ECDSA_do_verify(
+            message_hash.as_slice().as_ptr(),
+            message_hash.len(),
+            ecdsa_sig,
+            ec_key,
+        );
+
+        aws_lc_sys::ECDSA_SIG_free(ecdsa_sig);
+        aws_lc_sys::EC_KEY_free(ec_key);
+
+        if result == 1 {
+            Ok(())
+        } else {
+            Err("P256 signature verification failed")
+        }
+    }
 }
 
 /// Minimal struct to deserialize only the fields we need from clientDataJSON.

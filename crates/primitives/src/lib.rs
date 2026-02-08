@@ -3,6 +3,8 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg), allow(unexpected_cfgs))]
 
+use p256 as _;
+
 pub use alloy_consensus::Header;
 
 pub mod transaction;
