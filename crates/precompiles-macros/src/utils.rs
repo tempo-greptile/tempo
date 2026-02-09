@@ -210,9 +210,7 @@ pub(crate) fn extract_attributes(attrs: &[Attribute]) -> syn::Result<ExtractedAt
 /// Returns `Ok(None)` if the attribute is not present.
 /// Returns `Ok(Some(None))` if `#[getter]` is present without a name.
 /// Returns `Ok(Some(Some(Ident)))` if a name is provided.
-pub(crate) fn extract_getter_attribute(
-    attrs: &[Attribute],
-) -> syn::Result<Option<Option<Ident>>> {
+pub(crate) fn extract_getter_attribute(attrs: &[Attribute]) -> syn::Result<Option<Option<Ident>>> {
     let mut getter_attr: Option<Option<Ident>> = None;
 
     for attr in attrs {

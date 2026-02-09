@@ -149,56 +149,10 @@ pub(super) fn generate_unified_calls(
 /// `msg_sender: Address` is only injected when the method has `#[msg_sender]` attribute.
 fn generate_transformed_trait(def: &InterfaceDef) -> TokenStream {
     let trait_name = &def.name;
-    let getter_trait_name = format_ident!("{}Getters", trait_name);
     let vis = &def.vis;
     let attrs = &def.attrs;
 
-    let getter_methods: Vec<&MethodDef> = def
-        .methods
-        .iter()
-        .filter(|m| m.getter.is_some())
-        .collect();
-
-    let getter_trait_bounds = if getter_methods.is_empty() {
-        quote! {}
-    } else {
-        quote! { : #getter_trait_name }
-    };
-
-    let getter_trait = if getter_methods.is_empty() {
-        quote! {}
-    } else {
-        let getter_items: Vec<TokenStream> = getter_methods
-            .iter()
-            .map(|m| {
-                let name = format_ident!("_{}", m.name);
-                let attrs = &m.attrs;
-                let params: Vec<TokenStream> = m
-                    .params
-                    .iter()
-                    .map(|(n, ty)| quote! { #n: #ty })
-                    .collect();
-
-                let return_type = if let Some(ref ty) = m.return_type {
-                    quote! { -> Result<#ty> }
-                } else {
-                    quote! { -> Result<()> }
-                };
-
-                quote! {
-                    #(#attrs)*
-                    #[inline]
-                    fn #name(&self, #(#params),*) #return_type;
-                }
-            })
-            .collect();
-
-        quote! {
-            #vis trait #getter_trait_name {
-                #(#getter_items)*
-            }
-        }
-    };
+    let has_getters = def.methods.iter().any(|m| m.getter.is_some());
 
     let methods: Vec<TokenStream> = def
         .methods
@@ -227,13 +181,13 @@ fn generate_transformed_trait(def: &InterfaceDef) -> TokenStream {
                     #(#attrs)*
                     fn #name(#self_param, msg_sender: Address, #(#params),*) #return_type;
                 }
-            } else if m.getter.is_some() {
-                let getter_name = format_ident!("_{}", name);
+            } else if let Some(getter_field) = m.resolved_getter_field() {
+                let getter_impl_name = format_ident!("_{}", getter_field);
                 quote! {
                     #(#attrs)*
                     #[inline]
                     fn #name(#self_param, #(#params),*) #return_type {
-                        #getter_trait_name::#getter_name(self, #(#param_names),*)
+                        __Getters::#getter_impl_name(self, #(#param_names),*)
                     }
                 }
             } else {
@@ -245,12 +199,73 @@ fn generate_transformed_trait(def: &InterfaceDef) -> TokenStream {
         })
         .collect();
 
+    let getter_bound = if has_getters {
+        quote! { : __Getters }
+    } else {
+        quote! {}
+    };
+
     quote! {
-        #getter_trait
         #(#attrs)*
         #[allow(clippy::too_many_arguments)]
-        #vis trait #trait_name #getter_trait_bounds {
+        #vis trait #trait_name #getter_bound {
             #(#methods)*
+        }
+    }
+}
+
+/// Generate the `__Getters` trait that collects all getter methods across interfaces.
+///
+/// Deduplicates getter fields by name and detects collisions (same field name but
+/// different parameter count, which indicates conflicting signatures).
+pub(super) fn generate_getters_trait(interfaces: &[InterfaceDef]) -> TokenStream {
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut getter_methods = Vec::new();
+
+    for def in interfaces {
+        for m in &def.methods {
+            let Some(getter_field) = m.resolved_getter_field() else {
+                continue;
+            };
+            let key = getter_field.to_string();
+            let param_count = m.params.len();
+
+            if let Some(&existing_count) = seen.get(&key) {
+                if existing_count != param_count {
+                    getter_methods.push(quote! {
+                        compile_error!(concat!(
+                            "getter field `", #key, "` is referenced by multiple methods ",
+                            "with different signatures; use `#[getter = \"other_field\"]` to disambiguate"
+                        ));
+                    });
+                }
+                continue;
+            }
+            seen.insert(key, param_count);
+
+            let method_name = format_ident!("_{}", getter_field);
+            let params: Vec<TokenStream> =
+                m.params.iter().map(|(n, ty)| quote! { #n: #ty }).collect();
+            let return_type = if let Some(ref ty) = m.return_type {
+                quote! { -> Result<#ty> }
+            } else {
+                quote! { -> Result<()> }
+            };
+            getter_methods.push(quote! {
+                fn #method_name(&self, #(#params),*) #return_type;
+            });
+        }
+    }
+
+    if getter_methods.is_empty() {
+        return TokenStream::new();
+    }
+
+    quote! {
+        #[cfg(feature = "precompile")]
+        #[doc(hidden)]
+        pub trait __Getters {
+            #(#getter_methods)*
         }
     }
 }

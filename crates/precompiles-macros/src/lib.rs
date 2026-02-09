@@ -174,8 +174,9 @@ const RESERVED: &[&str] = &["address", "storage", "msg_sender"];
 /// # ABI Getters
 ///
 /// Getter auto-impls are driven by `#[getter]` on ABI trait methods, not on
-/// contract fields. The companion `{Trait}Getters` trait uses an `_` prefix to
-/// avoid method name collisions (e.g., `foo` -> `_foo`). Example:
+/// contract fields. A hidden `__Getters` trait is generated with `_`-prefixed
+/// methods (e.g., `foo` -> `_foo`) and auto-implemented by `#[contract]`.
+/// Example:
 ///
 /// ```ignore
 /// #[abi]
@@ -480,7 +481,11 @@ fn parse_fields(input: DeriveInput) -> syn::Result<Vec<FieldInfo>> {
             }
 
             let (slot, base_slot) = extract_attributes(&field.attrs)?;
-            if field.attrs.iter().any(|attr| attr.path().is_ident("getter")) {
+            if field
+                .attrs
+                .iter()
+                .any(|attr| attr.path().is_ident("getter"))
+            {
                 return Err(syn::Error::new_spanned(
                     &field,
                     "`#[getter]` belongs on ABI trait methods, not contract fields",
@@ -540,11 +545,13 @@ fn generate_getter_impls(
 
     for field in fields {
         let field_name = &field.name;
+        let method_name = format_ident!("_{}", field_name);
         let (sig_params, access, return_ty) = build_getter_access(field_name, &field.ty)?;
 
         method_arms.push(quote! {
-            (($method:ident, #field_name)) => {
-                fn $method(&self, #(#sig_params),*) -> Result<#return_ty> {
+            (#field_name) => {
+                #[inline]
+                fn #method_name(&self, #(#sig_params),*) -> Result<#return_ty> {
                     #access
                 }
             };
@@ -552,7 +559,7 @@ fn generate_getter_impls(
     }
 
     method_arms.push(quote! {
-        (($method:ident, $field:ident)) => {
+        ($field:ident) => {
             compile_error!(concat!("unknown getter field: ", stringify!($field)));
         };
     });
@@ -567,43 +574,29 @@ fn generate_getter_impls(
     let mut output = vec![emit_method_tokens];
 
     for abi_mod in abi_mods {
-        let getter_macro_ident = resolve_getter_macro_ident(abi_mod)?;
-        let mod_ident = abi_mod
-            .segments
-            .last()
-            .ok_or_else(|| syn::Error::new_spanned(abi_mod, "invalid abi module path"))?
-            .ident
-            .clone();
-        let emit_impl_ident =
-            format_ident!("__emit_getter_impl_{}_{}", contract_name, mod_ident);
-
-        let emit_impl_tokens = quote! {
-            #[cfg(feature = "precompile")]
-            macro_rules! #emit_impl_ident {
-                ($trait_name:ident, $getter_trait:ident, [$($pair:tt),*]) => {
-                    impl #abi_mod::$getter_trait for #contract_name {
-                        $( #emit_method_ident!($pair); )*
-                    }
-                };
-            }
-        };
-
-        let iface_impls_ident =
-            format_ident!("__emit_getter_iface_impls_{}_{}", contract_name, mod_ident);
+        let emit_impl_ident = format_ident!(
+            "__emit_getter_impl_{}_{}",
+            contract_name,
+            abi_mod
+                .segments
+                .last()
+                .ok_or_else(|| syn::Error::new_spanned(abi_mod, "invalid abi module path"))?
+                .ident
+        );
 
         output.push(quote! {
             #[cfg(feature = "precompile")]
-            macro_rules! #iface_impls_ident {
-                ($trait_name:ident, $getter_trait:ident, [$($pair:tt),*]) => {
-                    impl #abi_mod::$trait_name for #contract_name {}
-                };
-            }
-            #emit_impl_tokens
-
-            #[cfg(feature = "precompile")]
-            #getter_macro_ident!(#emit_impl_ident);
-            #[cfg(feature = "precompile")]
-            #getter_macro_ident!(#iface_impls_ident);
+            const _: () = {
+                macro_rules! #emit_impl_ident {
+                    ([]) => {};
+                    ([$($field:ident),+ $(,)?]) => {
+                        impl #abi_mod::__Getters for #contract_name {
+                            $( #emit_method_ident!($field); )*
+                        }
+                    };
+                }
+                #abi_mod::__abi_getter_fields!(#emit_impl_ident);
+            };
         });
     }
 
@@ -648,17 +641,13 @@ fn build_getter_access(
                 ));
             }
 
-            Ok((key_params, quote! { #access_chain.read() }, quote! { #current_ty }))
+            Ok((
+                key_params,
+                quote! { #access_chain.read() },
+                quote! { #current_ty },
+            ))
         }
     }
-}
-
-fn resolve_getter_macro_ident(abi_mod: &syn::Path) -> syn::Result<Ident> {
-    let last = abi_mod
-        .segments
-        .last()
-        .ok_or_else(|| syn::Error::new_spanned(abi_mod, "invalid abi module path"))?;
-    Ok(format_ident!("__abi_getter_traits_{}", last.ident))
 }
 
 /// Derives the `Storable` trait for structs with named fields.

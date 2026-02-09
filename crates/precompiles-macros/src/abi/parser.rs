@@ -714,6 +714,17 @@ impl MethodDef {
             attrs: preserved_attrs,
         })
     }
+
+    /// Returns the resolved getter field name, if this method is a getter.
+    ///
+    /// - `#[getter]` → method name (e.g., `foo`)
+    /// - `#[getter = "bar"]` → custom name (e.g., `bar`)
+    /// - No `#[getter]` → `None`
+    pub(crate) fn resolved_getter_field(&self) -> Option<&Ident> {
+        self.getter
+            .as_ref()
+            .map(|name| name.as_ref().unwrap_or(&self.name))
+    }
 }
 
 impl FieldAccessors for MethodDef {

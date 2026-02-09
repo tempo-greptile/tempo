@@ -112,12 +112,6 @@ fn generate_submodules(
     );
     // Collect trait names
     let trait_names: Vec<&Ident> = interfaces.iter().map(|i| &i.name).collect();
-    let getter_trait_names: Vec<Ident> = interfaces
-        .iter()
-        .filter(|i| i.methods.iter().any(|m| m.getter.is_some()))
-        .map(|i| format_ident!("{}Getters", i.name))
-        .collect();
-
     // Collect {TraitName}Calls enum names
     let trait_calls_names: Vec<Ident> = interfaces
         .iter()
@@ -165,15 +159,6 @@ fn generate_submodules(
             #(#traits_mod_reexports)*
         }
     };
-    let getter_trait_reexports = if getter_trait_names.is_empty() {
-        quote! {}
-    } else {
-        quote! {
-            #[cfg(feature = "precompile")]
-            pub use super::{#(#getter_trait_names),*};
-        }
-    };
-
     let trait_calls_reexports = if trait_calls_names.is_empty() {
         quote! {}
     } else {
@@ -258,8 +243,6 @@ fn generate_submodules(
 
             // Interface traits
             #trait_reexports
-            // Getter companion traits
-            #getter_trait_reexports
 
             // {TraitName}Calls enums
             #trait_calls_reexports
@@ -282,51 +265,32 @@ fn generate_submodules(
     }
 }
 
-fn generate_getter_metadata(mod_name: &Ident, interfaces: &[InterfaceDef]) -> TokenStream {
-    let mut trait_methods = Vec::new();
-
-    let macro_ident = format_ident!("__abi_getter_traits_{}", mod_name);
-
-    for interface in interfaces {
-        let getter_trait_ident = format_ident!("{}Getters", interface.name);
-        let getters: Vec<_> = interface
-            .methods
-            .iter()
-            .filter(|method| method.getter.is_some())
-            .collect();
-
-        if getters.is_empty() {
-            continue;
-        }
-
-        let trait_name = &interface.name;
-        let getter_list: Vec<_> = getters
-            .iter()
-            .map(|method| {
-                let method_name = format_ident!("_{}", method.name);
-                let field_name = method
-                    .getter
-                    .as_ref()
-                    .and_then(|name| name.as_ref())
-                    .unwrap_or(&method.name);
-                quote! { (#method_name, #field_name) }
-            })
-            .collect();
-        trait_methods.push(quote! {
-            $mac!(#trait_name, #getter_trait_ident, [#(#getter_list),*]);
-        });
-    }
+/// Generate getter metadata macro that passes getter field names to `#[contract]` for impl
+/// generation. Always emitted (even with an empty list) so `#[contract]` can unconditionally
+/// reference `abi_mod::__abi_getter_fields!`. Uses module-scoped `macro_rules!` with
+/// `pub(crate) use` re-export instead of `#[macro_export]` to avoid Rust issue #52234.
+fn generate_getter_metadata(_mod_name: &Ident, interfaces: &[InterfaceDef]) -> TokenStream {
+    let mut seen = std::collections::HashSet::new();
+    let getter_fields: Vec<Ident> = interfaces
+        .iter()
+        .flat_map(|def| def.methods.iter().filter_map(|m| m.resolved_getter_field()))
+        .filter(|f| seen.insert(f.to_string()))
+        .cloned()
+        .collect();
 
     quote! {
         #[cfg(feature = "precompile")]
         #[doc(hidden)]
         #[allow(unused_macros)]
-        #[macro_export]
-        macro_rules! #macro_ident {
+        macro_rules! __abi_getter_fields {
             ($mac:ident) => {
-                #(#trait_methods)*
+                $mac!([#(#getter_fields),*]);
             };
         }
+
+        #[cfg(feature = "precompile")]
+        #[doc(hidden)]
+        pub(crate) use __abi_getter_fields;
     }
 }
 
@@ -371,6 +335,9 @@ pub(crate) fn expand(item: ItemMod, config: SolidityConfig) -> syn::Result<Token
         common::generate_dummy_container(AbiType::Event)
     };
 
+    // Generate __Getters trait (collects all getter methods across interfaces)
+    let getters_trait = interface::generate_getters_trait(&module.interfaces);
+
     // Generate Interface traits and their Calls enums
     // Traits are wrapped in #[cfg(feature = "precompile")] by generate_interface
     let interface_impls = module
@@ -389,6 +356,7 @@ pub(crate) fn expand(item: ItemMod, config: SolidityConfig) -> syn::Result<Token
     // Generate unified Calls enum that composes all interface Calls and constants
     let unified_calls = interface::generate_unified_calls(&module.interfaces, has_constants);
 
+    // Generate getter metadata macro for #[contract] to consume
     let getter_metadata = generate_getter_metadata(mod_name, &module.interfaces);
 
     // Generate the Dispatch trait for routing calls to methods
@@ -485,6 +453,10 @@ pub(crate) fn expand(item: ItemMod, config: SolidityConfig) -> syn::Result<Token
 
             #event_impl
 
+            #getters_trait
+
+            #getter_metadata
+
             #(#interface_impls)*
 
             #constants_trait
@@ -492,8 +464,6 @@ pub(crate) fn expand(item: ItemMod, config: SolidityConfig) -> syn::Result<Token
             #constants_impl
 
             #unified_calls
-
-            #getter_metadata
 
             #dispatch_trait
 
