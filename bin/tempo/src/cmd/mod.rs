@@ -47,7 +47,7 @@ pub(crate) enum ConsensusSubcommand {
     /// Calculates the public key from an ed25519 signing key.
     CalculatePublicKey(CalculatePublicKey),
     /// Add a validator via the on-chain validator config contract.
-    AddValidator(AddValidator),
+    AddValidator(Box<AddValidator>),
     /// Query validator info from the previous epoch's DKG outcome and current contract state.
     ValidatorsInfo(ValidatorsInfo),
 }

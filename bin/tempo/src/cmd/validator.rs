@@ -5,6 +5,8 @@ use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder, network::TxSigner};
 use alloy_rpc_types_eth::TransactionRequest;
 use alloy_sol_types::SolCall;
+use commonware_codec::DecodeExt as _;
+use commonware_cryptography::ed25519::PublicKey;
 use eyre::WrapErr as _;
 use foundry_wallets::WalletOpts;
 use tempo_alloy::{
@@ -30,11 +32,11 @@ pub(crate) struct AddValidator {
     #[arg(long, default_value_t = true)]
     active: bool,
 
-    /// The validator's inbound address, formatted as <hostname|ip>:<port>.
+    /// The validator's inbound address, formatted as `hostname|ip:port`.
     #[arg(long)]
     inbound_address: String,
 
-    /// The validator's outbound address, formatted as <ip>:<port>.
+    /// The validator's outbound address, formatted as `ip:port`.
     #[arg(long)]
     outbound_address: String,
 
@@ -52,6 +54,9 @@ impl AddValidator {
     }
 
     async fn run_async(self) -> eyre::Result<()> {
+        PublicKey::decode(self.public_key.as_ref())
+            .wrap_err("invalid ed25519 public key")?;
+
         let signer = self
             .wallet
             .signer()
