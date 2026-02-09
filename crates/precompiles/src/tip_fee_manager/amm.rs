@@ -102,20 +102,6 @@ impl IFeeAMM::Interface for TipFeeManager {
         self.pools[pool_id].read()
     }
 
-    fn pools(&self, pool_id: B256) -> Result<Pool> {
-        self.pools[pool_id].read()
-    }
-
-    /// Get total supply of LP tokens for a pool
-    fn total_supply(&self, pool_id: B256) -> Result<U256> {
-        self.total_supply[pool_id].read()
-    }
-
-    /// Get user's LP token balance
-    fn liquidity_balances(&self, pool_id: B256, user: Address) -> Result<U256> {
-        self.liquidity_balances[pool_id][user].read()
-    }
-
     /// Mint LP tokens
     fn mint(
         &mut self,

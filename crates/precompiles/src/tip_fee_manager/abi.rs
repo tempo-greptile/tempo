@@ -21,8 +21,10 @@ pub mod IFeeManager {
 
     pub trait Interface {
         // View functions
+        #[getter]
         fn user_tokens(&self, user: Address) -> Result<Address>;
         fn validator_tokens(&self, validator: Address) -> Result<Address>;
+        #[getter]
         fn collected_fees(&self, validator: Address, token: Address) -> Result<U256>;
 
         // State-changing functions
@@ -80,10 +82,13 @@ pub mod IFeeAMM {
         // Pool management (view)
         fn get_pool_id(&self, user_token: Address, validator_token: Address) -> Result<B256>;
         fn get_pool(&self, user_token: Address, validator_token: Address) -> Result<Pool>;
+        #[getter]
         fn pools(&self, pool_id: B256) -> Result<Pool>;
 
         // Liquidity balances (view)
+        #[getter]
         fn total_supply(&self, pool_id: B256) -> Result<U256>;
+        #[getter]
         fn liquidity_balances(&self, pool_id: B256, user: Address) -> Result<U256>;
 
         // Liquidity operations (mutate)

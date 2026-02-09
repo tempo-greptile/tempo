@@ -72,11 +72,6 @@ impl IFeeManager::Interface for TipFeeManager {
         self.emit_event(FeeManagerEvent::validator_token_set(msg_sender, token))
     }
 
-    /// Get user's preferred token.
-    fn user_tokens(&self, user: Address) -> Result<Address> {
-        self.user_tokens[user].read()
-    }
-
     fn set_user_token(&mut self, msg_sender: Address, token: Address) -> Result<()> {
         // Validate that the token is a valid deployed TIP20
         if !TIP20Factory::new().is_tip20(token)? {
@@ -90,10 +85,6 @@ impl IFeeManager::Interface for TipFeeManager {
 
         // Emit UserTokenSet event
         self.emit_event(FeeManagerEvent::user_token_set(msg_sender, token))
-    }
-
-    fn collected_fees(&self, validator: Address, token: Address) -> Result<U256> {
-        self.collected_fees[validator][token].read()
     }
 
     /// Transfers the validator's fee balance for a specific token to their address.
