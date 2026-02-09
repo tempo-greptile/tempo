@@ -34,11 +34,22 @@ pub mod IValidatorConfig {
     }
 
     pub trait Interface {
+        /// Get the owner of the precompile.
+        #[getter]
         fn owner(&self) -> Result<Address>;
+        /// Get the complete set of validators.
         fn get_validators(&self) -> Result<Vec<Validator>>;
+        /// Get the epoch at which a fresh DKG ceremony will be triggered.
+        ///
+        /// The fresh DKG ceremony runs in epoch N, and epoch N+1 uses the new DKG polynomial.
+        #[getter = "next_dkg_ceremony"]
         fn get_next_full_dkg_ceremony(&self) -> Result<u64>;
+        /// Get validator address at a specific index in the validators array.
         fn validators_array(&self, index: U256) -> Result<Address>;
+        /// Get validator information by address.
+        #[getter]
         fn validators(&self, validator: Address) -> Result<Validator>;
+        /// Get the current validator count.
         fn validator_count(&self) -> Result<u64>;
 
         #[msg_sender]

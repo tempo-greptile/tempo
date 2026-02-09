@@ -53,18 +53,12 @@ impl ValidatorConfig {
 }
 
 impl IValidatorConfig::Interface for ValidatorConfig {
-    /// Get the owner of the precompile
-    fn owner(&self) -> Result<Address> {
-        self.owner.read()
-    }
-
     /// Change owner (owner only)
     fn change_owner(&mut self, msg_sender: Address, new_owner: Address) -> Result<()> {
         self.check_owner(msg_sender)?;
         self.owner.write(new_owner)
     }
 
-    /// Get the complete set of validators (view function)
     fn get_validators(&self) -> Result<Vec<Validator>> {
         let count = self.validators_array.len()?;
         let mut validators = Vec::with_capacity(count);
@@ -80,7 +74,6 @@ impl IValidatorConfig::Interface for ValidatorConfig {
         Ok(validators)
     }
 
-    /// Get validator address at a specific index in the validators array
     fn validators_array(&self, index: U256) -> Result<Address> {
         let index = u64::try_from(index).map_err(|_| TempoPrecompileError::array_oob())?;
         match self.validators_array.at(index as usize)? {
@@ -89,12 +82,6 @@ impl IValidatorConfig::Interface for ValidatorConfig {
         }
     }
 
-    /// Get validator information by address
-    fn validators(&self, validator: Address) -> Result<Validator> {
-        self.validators[validator].read()
-    }
-
-    /// Get the current validator count
     fn validator_count(&self) -> Result<u64> {
         self.validators_array.len().map(|c| c as u64)
     }
@@ -266,13 +253,6 @@ impl IValidatorConfig::Interface for ValidatorConfig {
         let mut validator = self.validators[validator_address].read()?;
         validator.active = active;
         self.validators[validator_address].write(validator)
-    }
-
-    /// Get the epoch at which a fresh DKG ceremony will be triggered.
-    ///
-    /// The fresh DKG ceremony runs in epoch N, and epoch N+1 uses the new DKG polynomial.
-    fn get_next_full_dkg_ceremony(&self) -> Result<u64> {
-        self.next_dkg_ceremony.read()
     }
 
     /// Set the epoch at which a fresh DKG ceremony will be triggered (owner only).
