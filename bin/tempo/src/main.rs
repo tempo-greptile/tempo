@@ -23,6 +23,7 @@ mod tempo_cmd;
 
 use clap::Parser;
 use commonware_runtime::{Metrics, Runner};
+use defaults::MINIMAL_PRUNE_DISTANCE;
 use eyre::WrapErr as _;
 use futures::{FutureExt as _, future::FusedFuture as _};
 use reth_ethereum::{chainspec::EthChainSpec as _, cli::Commands, evm::revm::primitives::B256};
@@ -332,6 +333,14 @@ fn main() -> eyre::Result<()> {
                         Some(follow.clone())
                     };
                     builder.config_mut().debug.rpc_consensus_url = follow_url;
+                }
+
+                if builder.config().pruning.minimal {
+                    let pruning = &mut builder.config_mut().pruning;
+                    pruning.receipts_distance = Some(MINIMAL_PRUNE_DISTANCE);
+                    pruning.account_history_distance = Some(MINIMAL_PRUNE_DISTANCE);
+                    pruning.storage_history_distance = Some(MINIMAL_PRUNE_DISTANCE);
+                    pruning.bodies_distance = Some(MINIMAL_PRUNE_DISTANCE);
                 }
 
                 builder
