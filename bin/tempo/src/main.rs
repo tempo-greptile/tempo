@@ -337,6 +337,7 @@ fn main() -> eyre::Result<()> {
 
                 if builder.config().pruning.minimal {
                     let pruning = &mut builder.config_mut().pruning;
+                    pruning.transaction_lookup_distance = Some(MINIMAL_PRUNE_DISTANCE);
                     pruning.receipts_distance = Some(MINIMAL_PRUNE_DISTANCE);
                     pruning.account_history_distance = Some(MINIMAL_PRUNE_DISTANCE);
                     pruning.storage_history_distance = Some(MINIMAL_PRUNE_DISTANCE);
