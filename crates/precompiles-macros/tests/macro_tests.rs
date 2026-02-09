@@ -11,6 +11,9 @@ use alloy::{
 use std::collections::HashMap;
 use tempo_precompiles_macros::abi;
 
+#[cfg(feature = "precompile")]
+type Result<T> = core::result::Result<T, ()>;
+
 #[abi]
 mod structs {
     use super::*;
@@ -75,9 +78,6 @@ fn test_unit_enum() {
     let decoded = Status::abi_decode(&encoded).unwrap();
     assert_eq!(decoded, Status::Active);
 }
-
-#[cfg(feature = "precompile")]
-type Result<T> = core::result::Result<T, ()>;
 
 #[abi]
 mod e2e {

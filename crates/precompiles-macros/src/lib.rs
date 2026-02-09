@@ -19,7 +19,7 @@ mod utils;
 
 use alloy::primitives::U256;
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{
     Data, DeriveInput, Expr, Fields, Ident, Token, Type, Visibility,
     parse::{Parse, ParseStream, Parser},
@@ -137,7 +137,7 @@ const RESERVED: &[&str] = &["address", "storage", "msg_sender"];
 /// The macro generates:
 /// 1. Transformed struct with generic parameters and runtime fields
 /// 2. Constructor: `__new(address, storage)`
-/// 3. Type-safe (private) getter and setter methods
+/// 3. Type-safe storage accessors
 ///
 /// # ABI Composition
 ///
@@ -170,6 +170,27 @@ const RESERVED: &[&str] = &["address", "storage", "msg_sender"];
 /// - `SELECTORS: &[B256]` - All event topic0 hashes
 /// - `From<module::Event>` impls
 /// - `IntoLogData` trait impl
+///
+/// # ABI Getters
+///
+/// Getter auto-impls are driven by `#[getter]` on ABI trait methods, not on
+/// contract fields. The companion `{Trait}Getters` trait uses an `_` prefix to
+/// avoid method name collisions (e.g., `foo` -> `_foo`). Example:
+///
+/// ```ignore
+/// #[abi]
+/// mod example {
+///     pub trait Interface {
+///         #[getter]
+///         fn total_supply(&self) -> Result<U256>;
+///     }
+/// }
+///
+/// #[contract(abi = example)]
+/// pub struct Token {
+///     total_supply: U256,
+/// }
+/// ```
 ///
 /// # Requirements
 ///
@@ -387,6 +408,7 @@ fn gen_contract_output(
     let fields = parse_fields(input)?;
 
     let storage_output = gen_contract_storage(&ident, &vis, &fields, config.address.as_ref())?;
+    let getter_impls = generate_getter_impls(&ident, &fields, config)?;
 
     let abi_aliases = if let Some(abi_mods) = &config.abi {
         let is_dynamic = config.address.is_none();
@@ -397,6 +419,7 @@ fn gen_contract_output(
 
     Ok(quote! {
         #storage_output
+        #getter_impls
         #abi_aliases
     })
 }
@@ -457,6 +480,12 @@ fn parse_fields(input: DeriveInput) -> syn::Result<Vec<FieldInfo>> {
             }
 
             let (slot, base_slot) = extract_attributes(&field.attrs)?;
+            if field.attrs.iter().any(|attr| attr.path().is_ident("getter")) {
+                return Err(syn::Error::new_spanned(
+                    &field,
+                    "`#[getter]` belongs on ABI trait methods, not contract fields",
+                ));
+            }
             Ok(FieldInfo {
                 name: name.to_owned(),
                 ty: field.ty,
@@ -495,6 +524,141 @@ fn gen_contract_storage(
     };
 
     Ok(output)
+}
+
+fn generate_getter_impls(
+    contract_name: &Ident,
+    fields: &[FieldInfo],
+    config: &ContractConfig,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let Some(abi_mods) = &config.abi else {
+        return Ok(proc_macro2::TokenStream::new());
+    };
+
+    let emit_method_ident = format_ident!("__emit_getter_method_{}", contract_name);
+    let mut method_arms = Vec::new();
+
+    for field in fields {
+        let field_name = &field.name;
+        let (sig_params, access, return_ty) = build_getter_access(field_name, &field.ty)?;
+
+        method_arms.push(quote! {
+            (($method:ident, #field_name)) => {
+                fn $method(&self, #(#sig_params),*) -> Result<#return_ty> {
+                    #access
+                }
+            };
+        });
+    }
+
+    method_arms.push(quote! {
+        (($method:ident, $field:ident)) => {
+            compile_error!(concat!("unknown getter field: ", stringify!($field)));
+        };
+    });
+
+    let emit_method_tokens = quote! {
+        #[cfg(feature = "precompile")]
+        macro_rules! #emit_method_ident {
+            #(#method_arms)*
+        }
+    };
+
+    let mut output = vec![emit_method_tokens];
+
+    for abi_mod in abi_mods {
+        let getter_macro_ident = resolve_getter_macro_ident(abi_mod)?;
+        let mod_ident = abi_mod
+            .segments
+            .last()
+            .ok_or_else(|| syn::Error::new_spanned(abi_mod, "invalid abi module path"))?
+            .ident
+            .clone();
+        let emit_impl_ident =
+            format_ident!("__emit_getter_impl_{}_{}", contract_name, mod_ident);
+
+        let emit_impl_tokens = quote! {
+            #[cfg(feature = "precompile")]
+            macro_rules! #emit_impl_ident {
+                ($trait_name:ident, $getter_trait:ident, [$($pair:tt),*]) => {
+                    impl #abi_mod::$getter_trait for #contract_name {
+                        $( #emit_method_ident!($pair); )*
+                    }
+                };
+            }
+        };
+
+        let iface_impls_ident =
+            format_ident!("__emit_getter_iface_impls_{}_{}", contract_name, mod_ident);
+
+        output.push(quote! {
+            #[cfg(feature = "precompile")]
+            macro_rules! #iface_impls_ident {
+                ($trait_name:ident, $getter_trait:ident, [$($pair:tt),*]) => {
+                    impl #abi_mod::$trait_name for #contract_name {}
+                };
+            }
+            #emit_impl_tokens
+
+            #[cfg(feature = "precompile")]
+            #getter_macro_ident!(#emit_impl_ident);
+            #[cfg(feature = "precompile")]
+            #getter_macro_ident!(#iface_impls_ident);
+        });
+    }
+
+    Ok(quote! { #(#output)* })
+}
+
+fn build_getter_access(
+    field_name: &Ident,
+    field_ty: &Type,
+) -> syn::Result<(
+    Vec<proc_macro2::TokenStream>,
+    proc_macro2::TokenStream,
+    proc_macro2::TokenStream,
+)> {
+    match packing::classify_field_type(field_ty)? {
+        FieldKind::Direct(_) => Ok((
+            Vec::new(),
+            quote! { self.#field_name.read() },
+            quote! { #field_ty },
+        )),
+        FieldKind::Mapping { .. } => {
+            let mut key_params = Vec::new();
+            let mut access_chain = quote! { self.#field_name };
+            let mut current_ty = field_ty.clone();
+            let mut idx = 0usize;
+
+            while let Some((key_ty, value_ty)) = utils::extract_mapping_types(&current_ty) {
+                let key_ty = key_ty.clone();
+                let value_ty = value_ty.clone();
+
+                let arg_name = format_ident!("key{idx}");
+                key_params.push(quote! { #arg_name: #key_ty });
+                access_chain = quote! { #access_chain.at(#arg_name) };
+                current_ty = value_ty;
+                idx += 1;
+            }
+
+            if idx == 0 {
+                return Err(syn::Error::new_spanned(
+                    field_ty,
+                    "mapping getter requires value type",
+                ));
+            }
+
+            Ok((key_params, quote! { #access_chain.read() }, quote! { #current_ty }))
+        }
+    }
+}
+
+fn resolve_getter_macro_ident(abi_mod: &syn::Path) -> syn::Result<Ident> {
+    let last = abi_mod
+        .segments
+        .last()
+        .ok_or_else(|| syn::Error::new_spanned(abi_mod, "invalid abi module path"))?;
+    Ok(format_ident!("__abi_getter_traits_{}", last.ident))
 }
 
 /// Derives the `Storable` trait for structs with named fields.

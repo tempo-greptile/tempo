@@ -11,7 +11,7 @@
 //! - Enum `Event` generates `SolEvent` structs + `IntoLogData` enum.
 //! - Other enums, which must be unit enums, are encoded as u8.
 
-use crate::utils::to_camel_case;
+use crate::utils::{extract_getter_attribute, to_camel_case};
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 use syn::{
@@ -629,8 +629,13 @@ pub(super) struct MethodDef {
     /// If set, the dispatcher will check that the current hardfork >= this value,
     /// otherwise it returns `unknown_selector`.
     pub hardfork: Option<Path>,
+    /// Getter attribute for ABI-driven contract field access.
+    ///
+    /// `Some(None)` indicates `#[getter]` with default field name.
+    /// `Some(Some(Ident))` indicates `#[getter = "field_name"]`.
+    pub getter: Option<Option<Ident>>,
     /// Doc comments and other attributes to preserve on the generated trait method.
-    /// Excludes `#[msg_sender]` and `#[hardfork]` which are consumed by the macro.
+    /// Excludes `#[msg_sender]`, `#[hardfork]`, and `#[getter]` which are consumed by the macro.
     pub attrs: Vec<Attribute>,
 }
 
@@ -670,11 +675,30 @@ impl MethodDef {
         let return_type = extract_result_inner_type(&sig.output)?;
         let needs_sender = has_sender_attr(attrs);
         let hardfork = extract_hardfork_attr(attrs)?;
+        let getter = extract_getter_attribute(attrs)?;
+
+        if getter.is_some() && is_mutable {
+            return Err(syn::Error::new_spanned(
+                sig,
+                "`#[getter]` can only be used on `&self` methods",
+            ));
+        }
+
+        if getter.is_some() && needs_sender {
+            return Err(syn::Error::new_spanned(
+                sig,
+                "`#[getter]` cannot be combined with `#[msg_sender]`",
+            ));
+        }
 
         // Preserve doc comments and other attributes, filtering out macro-consumed ones
         let preserved_attrs = attrs
             .iter()
-            .filter(|attr| !attr.path().is_ident("msg_sender") && !attr.path().is_ident("hardfork"))
+            .filter(|attr| {
+                !attr.path().is_ident("msg_sender")
+                    && !attr.path().is_ident("hardfork")
+                    && !attr.path().is_ident("getter")
+            })
             .cloned()
             .collect();
 
@@ -686,6 +710,7 @@ impl MethodDef {
             is_mutable,
             needs_sender,
             hardfork,
+            getter,
             attrs: preserved_attrs,
         })
     }

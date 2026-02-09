@@ -155,7 +155,7 @@ fn generate_match_body(interfaces: &[InterfaceDef], constants: &[ConstantDef]) -
         .collect();
 
     let constants_branch = if has_constants {
-        let arms = generate_constant_arms_nested(constants);
+        let arms = generate_constant_arms(constants);
         quote! {
             Calls::Constants(inner) => match inner {
                 #(#arms)*
@@ -176,13 +176,14 @@ fn generate_match_body(interfaces: &[InterfaceDef], constants: &[ConstantDef]) -
 /// Generate match arms for methods when Calls is directly aliased to {Interface}Calls.
 fn generate_method_arms_flat(iface: &InterfaceDef) -> Vec<TokenStream> {
     let calls_name = format_ident!("{}Calls", iface.name);
+    let trait_name = &iface.name;
 
     iface
         .methods
         .iter()
         .map(|method| {
             let variant = format_ident!("{}", method.sol_name);
-            let dispatch_call = generate_dispatch_call(method);
+            let dispatch_call = generate_dispatch_call(trait_name, method);
 
             quote! {
                 #calls_name::#variant(call) => { #dispatch_call }
@@ -196,12 +197,13 @@ fn generate_method_arms_nested(
     iface: &InterfaceDef,
     calls_name: &proc_macro2::Ident,
 ) -> Vec<TokenStream> {
+    let trait_name = &iface.name;
     iface
         .methods
         .iter()
         .map(|method| {
             let variant = format_ident!("{}", method.sol_name);
-            let dispatch_call = generate_dispatch_call(method);
+            let dispatch_call = generate_dispatch_call(trait_name, method);
 
             quote! {
                 #calls_name::#variant(call) => { #dispatch_call }
@@ -211,8 +213,8 @@ fn generate_method_arms_nested(
 }
 
 /// Generate the dispatch call for a single method.
-fn generate_dispatch_call(method: &MethodDef) -> TokenStream {
-    let inner_dispatch = generate_inner_dispatch(method);
+fn generate_dispatch_call(trait_name: &Ident, method: &MethodDef) -> TokenStream {
+    let inner_dispatch = generate_inner_dispatch(trait_name, method);
 
     // Wrap with hardfork check if specified
     if let Some(hardfork) = &method.hardfork {
@@ -235,7 +237,7 @@ fn generate_dispatch_call(method: &MethodDef) -> TokenStream {
 }
 
 /// Generate the inner dispatch logic for a method (without hardfork gating).
-fn generate_inner_dispatch(method: &MethodDef) -> TokenStream {
+fn generate_inner_dispatch(trait_name: &Ident, method: &MethodDef) -> TokenStream {
     let rust_name = &method.name;
     let param_names: Vec<_> = method.params.iter().map(|(name, _)| name).collect();
     let call_name = format_ident!("{}Call", method.sol_name);
@@ -247,9 +249,9 @@ fn generate_inner_dispatch(method: &MethodDef) -> TokenStream {
         // Mutable method: use mutate/mutate_void (with or without sender)
         if needs_sender {
             let method_call = if param_names.is_empty() {
-                quote! { self.#rust_name(s) }
+                quote! { #trait_name::#rust_name(self, s) }
             } else {
-                quote! { self.#rust_name(s, #(c.#param_names),*) }
+                quote! { #trait_name::#rust_name(self, s, #(c.#param_names),*) }
             };
 
             if is_void {
@@ -259,9 +261,9 @@ fn generate_inner_dispatch(method: &MethodDef) -> TokenStream {
             }
         } else {
             let method_call = if param_names.is_empty() {
-                quote! { self.#rust_name() }
+                quote! { #trait_name::#rust_name(self) }
             } else {
-                quote! { self.#rust_name(#(c.#param_names),*) }
+                quote! { #trait_name::#rust_name(self, #(c.#param_names),*) }
             };
 
             if is_void {
@@ -273,23 +275,25 @@ fn generate_inner_dispatch(method: &MethodDef) -> TokenStream {
     } else if needs_sender {
         // View method with sender
         if param_names.is_empty() {
-            quote! { metadata_with_sender::<#call_name>(msg_sender, |s| self.#rust_name(s)) }
+            quote! {
+                metadata_with_sender::<#call_name>(msg_sender, |s| #trait_name::#rust_name(self, s))
+            }
         } else {
-            let method_call = quote! { self.#rust_name(s, #(c.#param_names),*) };
+            let method_call = quote! { #trait_name::#rust_name(self, s, #(c.#param_names),*) };
             quote! { view_with_sender(call, msg_sender, |s, c| #method_call) }
         }
     } else {
         // View method without sender
         if param_names.is_empty() {
-            quote! { metadata::<#call_name>(|| self.#rust_name()) }
+            quote! { metadata::<#call_name>(|| #trait_name::#rust_name(self)) }
         } else {
-            let method_call = quote! { self.#rust_name(#(c.#param_names),*) };
+            let method_call = quote! { #trait_name::#rust_name(self, #(c.#param_names),*) };
             quote! { view(call, |c| #method_call) }
         }
     }
 }
 
-/// Generate match arms for constants when Calls is directly aliased to ConstantsCalls.
+/// Generate match arms for constants (used for both flat and nested dispatch).
 fn generate_constant_arms(constants: &[ConstantDef]) -> Vec<TokenStream> {
     constants
         .iter()
@@ -299,27 +303,6 @@ fn generate_constant_arms(constants: &[ConstantDef]) -> Vec<TokenStream> {
             let call_name = format_ident!("{}Call", sol_name);
             let rust_name = &c.name;
 
-            // IConstants methods are infallible, so wrap in Ok()
-            quote! {
-                ConstantsCalls::#variant(_) => {
-                    metadata::<#call_name>(|| Ok(self.#rust_name()))
-                }
-            }
-        })
-        .collect()
-}
-
-/// Generate match arms for constants when nested inside Calls::Constants(inner).
-fn generate_constant_arms_nested(constants: &[ConstantDef]) -> Vec<TokenStream> {
-    constants
-        .iter()
-        .map(|c| {
-            let sol_name = c.sol_name();
-            let variant = format_ident!("{}", sol_name);
-            let call_name = format_ident!("{}Call", sol_name);
-            let rust_name = &c.name;
-
-            // IConstants methods are infallible, so wrap in Ok()
             quote! {
                 ConstantsCalls::#variant(_) => {
                     metadata::<#call_name>(|| Ok(self.#rust_name()))

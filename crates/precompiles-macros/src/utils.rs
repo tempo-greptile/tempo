@@ -1,7 +1,7 @@
 //! Utility functions for the contract macro implementation.
 
 use alloy::primitives::{U256, keccak256};
-use syn::{Attribute, Lit, Type, TypePath};
+use syn::{Attribute, Ident, Lit, Meta, Type, TypePath};
 
 /// Return type for [`extract_attributes`]: (slot, base_slot)
 type ExtractedAttributes = (Option<U256>, Option<U256>);
@@ -199,6 +199,71 @@ pub(crate) fn extract_attributes(attrs: &[Attribute]) -> syn::Result<ExtractedAt
     }
 
     Ok((slot_attr, base_slot_attr))
+}
+
+/// Extracts the optional `#[getter]` attribute from a list of attributes.
+///
+/// Supported forms:
+/// - `#[getter]`
+/// - `#[getter = "function_name"]`
+///
+/// Returns `Ok(None)` if the attribute is not present.
+/// Returns `Ok(Some(None))` if `#[getter]` is present without a name.
+/// Returns `Ok(Some(Some(Ident)))` if a name is provided.
+pub(crate) fn extract_getter_attribute(
+    attrs: &[Attribute],
+) -> syn::Result<Option<Option<Ident>>> {
+    let mut getter_attr: Option<Option<Ident>> = None;
+
+    for attr in attrs {
+        if !attr.path().is_ident("getter") {
+            continue;
+        }
+
+        if getter_attr.is_some() {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "duplicate `getter` attribute",
+            ));
+        }
+
+        match &attr.meta {
+            Meta::Path(_) => {
+                getter_attr = Some(None);
+            }
+            Meta::NameValue(value) => {
+                let lit = match &value.value {
+                    syn::Expr::Lit(expr) => &expr.lit,
+                    _ => {
+                        return Err(syn::Error::new_spanned(
+                            value,
+                            "getter attribute value must be a string literal",
+                        ));
+                    }
+                };
+
+                let Lit::Str(lit) = lit else {
+                    return Err(syn::Error::new_spanned(
+                        lit,
+                        "getter attribute value must be a string literal",
+                    ));
+                };
+
+                let ident = syn::parse_str::<Ident>(&lit.value()).map_err(|_| {
+                    syn::Error::new_spanned(lit, "getter name must be a valid identifier")
+                })?;
+                getter_attr = Some(Some(ident));
+            }
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "getter attribute must be `#[getter]` or `#[getter = \"name\"]`",
+                ));
+            }
+        }
+    }
+
+    Ok(getter_attr)
 }
 
 /// Extracts array sizes from the `#[storable_arrays(...)]` attribute.
