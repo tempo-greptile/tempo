@@ -375,17 +375,16 @@ where
 
             self.evm_mut().ctx_mut().block.beneficiary = fee_recipient;
         }
-        let result = self.inner.execute_transaction_without_commit((tx_env, recovered));
+        let result = self
+            .inner
+            .execute_transaction_without_commit((tx_env, recovered));
 
         self.evm_mut().ctx_mut().block.beneficiary = beneficiary;
 
         result.map(|inner| TempoTxResult { inner, tx: tx_ref })
     }
 
-    fn commit_transaction(
-        &mut self,
-        output: Self::Result,
-    ) -> Result<u64, BlockExecutionError> {
+    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
         let TempoTxResult { inner, tx } = output;
 
         let next_section = self.validate_tx(&tx, inner.result.result.gas_used())?;
@@ -1067,7 +1066,7 @@ mod tests {
                 blob_gas_used: 0,
                 tx_type: tx.tx_type(),
             },
-            tx: tx.clone(),
+            tx,
         };
 
         let gas_used = executor.commit_transaction(output).unwrap();
