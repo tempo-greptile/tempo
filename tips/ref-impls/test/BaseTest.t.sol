@@ -56,7 +56,7 @@ contract BaseTest is Test {
     TIP20 public token2;
     bool isTempo;
 
-    uint64 internal constant _FOUNDRY_CHAIN_ID = 31337;
+    uint64 internal constant _FOUNDRY_CHAIN_ID = 31_337;
 
     error MissingPrecompile(string name, address addr);
     error CallShouldHaveReverted();
