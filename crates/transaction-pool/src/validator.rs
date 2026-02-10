@@ -7,7 +7,7 @@ use alloy_consensus::Transaction;
 use alloy_primitives::U256;
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_primitives_traits::{
-    Block, GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
+    GotExpected, SealedBlock, transaction::error::InvalidTransactionError,
 };
 use reth_storage_api::{StateProvider, StateProviderFactory, errors::ProviderError};
 use reth_transaction_pool::{
@@ -70,9 +70,9 @@ pub const DEFAULT_AA_VALID_AFTER_MAX_SECS: u64 = 120;
 
 /// Validator for Tempo transactions.
 #[derive(Debug)]
-pub struct TempoTransactionValidator<Client> {
+pub struct TempoTransactionValidator<Client, Evm> {
     /// Inner validator that performs default Ethereum tx validation.
-    pub(crate) inner: EthTransactionValidator<Client, TempoPooledTransaction>,
+    pub(crate) inner: EthTransactionValidator<Client, TempoPooledTransaction, Evm>,
     /// Maximum allowed `valid_after` offset for AA txs.
     pub(crate) aa_valid_after_max_secs: u64,
     /// Maximum number of authorizations allowed in an AA transaction.
@@ -81,12 +81,13 @@ pub struct TempoTransactionValidator<Client> {
     pub(crate) amm_liquidity_cache: AmmLiquidityCache,
 }
 
-impl<Client> TempoTransactionValidator<Client>
+impl<Client, Evm> TempoTransactionValidator<Client, Evm>
 where
     Client: ChainSpecProvider<ChainSpec = TempoChainSpec> + StateProviderFactory,
+    Evm: reth_evm::ConfigureEvm,
 {
     pub fn new(
-        inner: EthTransactionValidator<Client, TempoPooledTransaction>,
+        inner: EthTransactionValidator<Client, TempoPooledTransaction, Evm>,
         aa_valid_after_max_secs: u64,
         max_tempo_authorizations: usize,
         amm_liquidity_cache: AmmLiquidityCache,
@@ -928,11 +929,13 @@ pub fn ensure_intrinsic_gas_tempo_tx(
     }
 }
 
-impl<Client> TransactionValidator for TempoTransactionValidator<Client>
+impl<Client, Evm> TransactionValidator for TempoTransactionValidator<Client, Evm>
 where
     Client: ChainSpecProvider<ChainSpec = TempoChainSpec> + StateProviderFactory,
+    Evm: reth_evm::ConfigureEvm,
 {
     type Transaction = TempoPooledTransaction;
+    type Block = reth_primitives_traits::BlockTy<Evm::Primitives>;
 
     async fn validate_transaction(
         &self,
@@ -951,8 +954,10 @@ where
 
     async fn validate_transactions(
         &self,
-        transactions: Vec<(TransactionOrigin, Self::Transaction)>,
+        transactions: impl IntoIterator<Item = (TransactionOrigin, Self::Transaction), IntoIter: Send>
+            + Send,
     ) -> Vec<TransactionValidationOutcome<Self::Transaction>> {
+        let transactions: Vec<_> = transactions.into_iter().collect();
         let state_provider = match self.inner.client().latest() {
             Ok(provider) => provider,
             Err(err) => {
@@ -974,8 +979,9 @@ where
     async fn validate_transactions_with_origin(
         &self,
         origin: TransactionOrigin,
-        transactions: impl IntoIterator<Item = Self::Transaction> + Send,
+        transactions: impl IntoIterator<Item = Self::Transaction, IntoIter: Send> + Send,
     ) -> Vec<TransactionValidationOutcome<Self::Transaction>> {
+        let transactions: Vec<_> = transactions.into_iter().collect();
         let state_provider = match self.inner.client().latest() {
             Ok(provider) => provider,
             Err(err) => {
@@ -994,10 +1000,7 @@ where
             .collect()
     }
 
-    fn on_new_head_block<B>(&self, new_tip_block: &SealedBlock<B>)
-    where
-        B: Block,
-    {
+    fn on_new_head_block(&self, new_tip_block: &SealedBlock<Self::Block>) {
         self.inner.on_new_head_block(new_tip_block)
     }
 }

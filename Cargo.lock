@@ -342,27 +342,6 @@ dependencies = [
 
 [[package]]
 name = "alloy-evm"
-version = "0.26.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b99ba7b74a87176f31ee1cd26768f7155b0eeff61ed925f59b13085ffe5f891"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-hardforks",
- "alloy-primitives",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "alloy-sol-types",
- "auto_impl",
- "derive_more",
- "op-alloy",
- "op-revm",
- "revm",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "alloy-evm"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2ccfe6d724ceabd5518350cfb34f17dd3a6c3cc33579eee94d98101d3a511ff"
@@ -7768,7 +7747,7 @@ dependencies = [
  "alloy-chains",
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm 0.27.2",
+ "alloy-evm",
  "alloy-genesis",
  "alloy-primitives",
  "alloy-trie",
@@ -8372,7 +8351,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-eip7928",
  "alloy-eips",
- "alloy-evm 0.27.2",
+ "alloy-evm",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-rpc-types-engine",
@@ -8739,7 +8718,7 @@ source = "git+https://github.com/paradigmxyz/reth?branch=feat%2Fbacked-off-peers
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm 0.27.2",
+ "alloy-evm",
  "alloy-primitives",
  "auto_impl",
  "derive_more",
@@ -8763,7 +8742,7 @@ source = "git+https://github.com/paradigmxyz/reth?branch=feat%2Fbacked-off-peers
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm 0.27.2",
+ "alloy-evm",
  "alloy-primitives",
  "alloy-rpc-types-engine",
  "derive_more",
@@ -8783,7 +8762,7 @@ name = "reth-execution-errors"
 version = "1.10.2"
 source = "git+https://github.com/paradigmxyz/reth?branch=feat%2Fbacked-off-peers-reason-label#23ef36a2496064c651a87b2c0b921b3d7e50c105"
 dependencies = [
- "alloy-evm 0.27.2",
+ "alloy-evm",
  "alloy-primitives",
  "alloy-rlp",
  "nybbles",
@@ -8798,7 +8777,7 @@ source = "git+https://github.com/paradigmxyz/reth?branch=feat%2Fbacked-off-peers
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm 0.27.2",
+ "alloy-evm",
  "alloy-primitives",
  "derive_more",
  "reth-ethereum-primitives",
@@ -9629,7 +9608,7 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-eip7928",
  "alloy-eips",
- "alloy-evm 0.27.2",
+ "alloy-evm",
  "alloy-genesis",
  "alloy-network",
  "alloy-primitives",
@@ -9774,7 +9753,7 @@ version = "1.10.2"
 source = "git+https://github.com/paradigmxyz/reth?branch=feat%2Fbacked-off-peers-reason-label#23ef36a2496064c651a87b2c0b921b3d7e50c105"
 dependencies = [
  "alloy-consensus",
- "alloy-evm 0.27.2",
+ "alloy-evm",
  "alloy-json-rpc",
  "alloy-network",
  "alloy-primitives",
@@ -9827,7 +9806,7 @@ dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
  "alloy-eips",
- "alloy-evm 0.27.2",
+ "alloy-evm",
  "alloy-json-rpc",
  "alloy-network",
  "alloy-primitives",
@@ -9870,7 +9849,7 @@ source = "git+https://github.com/paradigmxyz/reth?branch=feat%2Fbacked-off-peers
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm 0.27.2",
+ "alloy-evm",
  "alloy-network",
  "alloy-primitives",
  "alloy-rpc-client",
@@ -11817,7 +11796,7 @@ name = "tempo-chainspec"
 version = "1.1.0"
 dependencies = [
  "alloy-eips",
- "alloy-evm 0.26.4",
+ "alloy-evm",
  "alloy-genesis",
  "alloy-hardforks",
  "alloy-primitives",
@@ -11900,7 +11879,7 @@ name = "tempo-consensus"
 version = "1.1.0"
 dependencies = [
  "alloy-consensus",
- "alloy-evm 0.26.4",
+ "alloy-evm",
  "alloy-genesis",
  "alloy-primitives",
  "reth-chainspec",
@@ -11943,7 +11922,7 @@ name = "tempo-e2e"
 version = "1.1.0"
 dependencies = [
  "alloy",
- "alloy-evm 0.26.4",
+ "alloy-evm",
  "alloy-genesis",
  "alloy-network",
  "alloy-primitives",
@@ -11987,7 +11966,7 @@ name = "tempo-evm"
 version = "1.1.0"
 dependencies = [
  "alloy-consensus",
- "alloy-evm 0.26.4",
+ "alloy-evm",
  "alloy-primitives",
  "alloy-rlp",
  "commonware-codec",
@@ -12148,7 +12127,7 @@ name = "tempo-precompiles"
 version = "1.1.0"
 dependencies = [
  "alloy",
- "alloy-evm 0.26.4",
+ "alloy-evm",
  "alloy-primitives",
  "alloy-signer",
  "alloy-signer-local",
@@ -12195,7 +12174,7 @@ dependencies = [
  "arbitrary",
  "base64 0.22.1",
  "derive_more",
- "modular-bitfield 0.11.2",
+ "modular-bitfield 0.13.1",
  "p256",
  "proptest",
  "proptest-arbitrary-interop",
@@ -12218,7 +12197,7 @@ version = "1.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm 0.26.4",
+ "alloy-evm",
  "alloy-primitives",
  "alloy-rlp",
  "alloy-sol-types",
@@ -12280,7 +12259,7 @@ version = "1.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
- "alloy-evm 0.26.4",
+ "alloy-evm",
  "alloy-primitives",
  "alloy-signer",
  "alloy-signer-local",
@@ -12302,6 +12281,7 @@ dependencies = [
  "revm",
  "tempo-chainspec",
  "tempo-contracts",
+ "tempo-evm",
  "tempo-precompiles",
  "tempo-primitives",
  "tempo-revm",

@@ -9,12 +9,12 @@ use crate::{
 use alloy_consensus::Transaction;
 use alloy_primitives::{
     Address, B256, TxHash,
-    map::{AddressMap, HashMap},
+    map::{AddressMap, AddressSet, HashMap},
 };
 use parking_lot::RwLock;
 use reth_chainspec::ChainSpecProvider;
 use reth_eth_wire_types::HandleMempoolData;
-use reth_primitives_traits::Block;
+
 use reth_provider::{ChangedAccount, StateProviderFactory};
 use reth_transaction_pool::{
     AddedTransactionOutcome, AllPoolTransactions, BestTransactions, BestTransactionsAttributes,
@@ -30,12 +30,13 @@ use reth_transaction_pool::{
 use revm::database::BundleAccount;
 use std::{sync::Arc, time::Instant};
 use tempo_chainspec::{TempoChainSpec, hardfork::TempoHardforks};
+use tempo_evm::TempoEvmConfig;
 
 /// Tempo transaction pool that routes based on nonce_key
 pub struct TempoTransactionPool<Client> {
     /// Vanilla pool for all standard transactions and AA transactions with regular nonce.
     protocol_pool: Pool<
-        TransactionValidationTaskExecutor<TempoTransactionValidator<Client>>,
+        TransactionValidationTaskExecutor<TempoTransactionValidator<Client, TempoEvmConfig>>,
         CoinbaseTipOrdering<TempoPooledTransaction>,
         InMemoryBlobStore,
     >,
@@ -46,7 +47,7 @@ pub struct TempoTransactionPool<Client> {
 impl<Client> TempoTransactionPool<Client> {
     pub fn new(
         protocol_pool: Pool<
-            TransactionValidationTaskExecutor<TempoTransactionValidator<Client>>,
+            TransactionValidationTaskExecutor<TempoTransactionValidator<Client, TempoEvmConfig>>,
             CoinbaseTipOrdering<TempoPooledTransaction>,
             InMemoryBlobStore,
         >,
@@ -971,10 +972,41 @@ where
         txs
     }
 
-    fn unique_senders(&self) -> std::collections::HashSet<Address> {
+    fn unique_senders(&self) -> AddressSet {
         let mut senders = self.protocol_pool.unique_senders();
         senders.extend(self.aa_2d_pool.read().senders_iter().copied());
         senders
+    }
+
+    async fn add_transactions_with_origins(
+        &self,
+        transactions: impl IntoIterator<Item = (TransactionOrigin, Self::Transaction)> + Send,
+    ) -> Vec<PoolResult<AddedTransactionOutcome>> {
+        let transactions: Vec<_> = transactions.into_iter().collect();
+        if transactions.is_empty() {
+            return Vec::new();
+        }
+        let origins: Vec<_> = transactions.iter().map(|(o, _)| *o).collect();
+        let validated = self
+            .protocol_pool
+            .validator()
+            .validate_transactions(transactions)
+            .await;
+
+        validated
+            .into_iter()
+            .zip(origins)
+            .map(|(tx, origin)| self.add_validated_transaction(origin, tx))
+            .collect()
+    }
+
+    fn prune_transactions(
+        &self,
+        hashes: Vec<TxHash>,
+    ) -> Vec<Arc<ValidPoolTransaction<Self::Transaction>>> {
+        let mut txs = self.aa_2d_pool.write().remove_transactions(hashes.iter());
+        txs.extend(self.protocol_pool.prune_transactions(hashes));
+        txs
     }
 
     fn get_blob(
@@ -1048,14 +1080,13 @@ impl<Client> TransactionPoolExt for TempoTransactionPool<Client>
 where
     Client: StateProviderFactory + ChainSpecProvider<ChainSpec = TempoChainSpec> + 'static,
 {
+    type Block = tempo_primitives::Block;
+
     fn set_block_info(&self, info: BlockInfo) {
         self.protocol_pool.set_block_info(info)
     }
 
-    fn on_canonical_state_change<B>(&self, update: CanonicalStateUpdate<'_, B>)
-    where
-        B: Block,
-    {
+    fn on_canonical_state_change(&self, update: CanonicalStateUpdate<'_, Self::Block>) {
         self.protocol_pool.on_canonical_state_change(update)
     }
 

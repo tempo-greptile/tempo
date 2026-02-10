@@ -414,20 +414,19 @@ impl Default for TempoPoolBuilder {
     }
 }
 
-impl<Node> PoolBuilder<Node> for TempoPoolBuilder
+impl<Node> PoolBuilder<Node, TempoEvmConfig> for TempoPoolBuilder
 where
     Node: FullNodeTypes<Types = TempoNode>,
 {
     type Pool = TempoTransactionPool<Node::Provider>;
 
-    async fn build_pool(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Pool> {
+    async fn build_pool(self, ctx: &BuilderContext<Node>, evm_config: TempoEvmConfig) -> eyre::Result<Self::Pool> {
         let mut pool_config = ctx.pool_config();
         pool_config.max_inflight_delegated_slot_limit = pool_config.max_account_slots;
 
         // this store is effectively a noop
         let blob_store = InMemoryBlobStore::default();
-        let validator = TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone())
-            .with_head_timestamp(ctx.head().timestamp)
+        let validator = TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
             .with_max_tx_input_bytes(ctx.config().txpool.max_tx_input_bytes)
             .with_local_transactions_config(pool_config.local_transactions_config.clone())
             .set_tx_fee_cap(ctx.config().rpc.rpc_tx_fee_cap)
