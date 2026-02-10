@@ -8,10 +8,7 @@ use reth_tracing::{
     RethTracer, Tracer,
     tracing::{debug, error, info},
 };
-use tempo_alloy::{
-    TempoNetwork, fillers::ExpiringNonceFiller, primitives::TempoTxEnvelope,
-    provider::ext::TempoProviderBuilderExt,
-};
+use tempo_alloy::{TempoNetwork, fillers::ExpiringNonceFiller, primitives::TempoTxEnvelope};
 
 use alloy::{
     consensus::BlockHeader,
@@ -168,18 +165,9 @@ pub struct MaxTpsArgs {
     #[arg(long)]
     clear_txpool: bool,
 
-    /// Use 2D nonces instead of expiring nonces.
-    ///
-    /// By default, tempo-bench uses expiring nonces (TIP-1009) which use a circular buffer
-    /// for replay protection, avoiding state bloat. Use this flag to switch to 2D nonces
-    /// which store nonce state per (address, nonce_key) pair.
-    #[arg(long)]
-    use_2d_nonces: bool,
-
     /// Use standard sequential nonces instead of expiring nonces.
     ///
-    /// This disables both expiring nonces and 2D nonces, using traditional sequential
-    /// nonce management.
+    /// This disables expiring nonces, using traditional sequential nonce management.
     #[arg(long)]
     use_standard_nonces: bool,
 
@@ -216,25 +204,7 @@ impl MaxTpsArgs {
                 .erased()
         });
 
-        if self.use_2d_nonces {
-            info!(
-                accounts = self.accounts,
-                "Creating signers (with 2D nonces)"
-            );
-            let signer_provider_manager = SignerProviderManager::new(
-                self.mnemonic.resolve(),
-                self.from_mnemonic_index,
-                accounts,
-                self.target_urls.clone(),
-                Box::new(|target_url, _cached_nonce_manager| {
-                    ProviderBuilder::new_with_network::<TempoNetwork>()
-                        .with_random_2d_nonces()
-                        .connect_http(target_url)
-                }),
-                signer_provider_factory,
-            );
-            self.run_with_manager(signer_provider_manager).await
-        } else if self.use_standard_nonces {
+        if self.use_standard_nonces {
             info!(
                 accounts = self.accounts,
                 "Creating signers (with standard nonces)"
@@ -392,7 +362,7 @@ impl MaxTpsArgs {
         // For expiring nonces, we need to generate/sign/send in batches to avoid
         // transactions expiring before they're sent. We pipeline batch generation
         // with sending to avoid gaps that would cause empty blocks.
-        let use_expiring_nonces = !self.use_2d_nonces && !self.use_standard_nonces;
+        let use_expiring_nonces = !self.use_standard_nonces;
         let mut pending_txs = if use_expiring_nonces {
             let batch_secs = self.expiring_batch_secs.unwrap_or(15);
             let batch_size = self.tps * batch_secs;
