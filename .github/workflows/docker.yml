@@ -63,7 +63,9 @@ jobs:
         id: meta-tempo-bench
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
-          images: ${{ env.REGISTRY }}/tempo-bench
+          images: |
+            ${{ env.REGISTRY }}/tempo-bench
+            docker.io/tempoxyz/tempo-bench
           bake-target: tempo-bench
           tags: |
             type=schedule,pattern=nightly
@@ -81,7 +83,9 @@ jobs:
         id: meta-tempo-sidecar
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
-          images: ${{ env.REGISTRY }}/tempo-sidecar
+          images: |
+            ${{ env.REGISTRY }}/tempo-sidecar
+            docker.io/tempoxyz/tempo-sidecar
           bake-target: tempo-sidecar
           tags: |
             type=schedule,pattern=nightly
@@ -99,7 +103,9 @@ jobs:
         id: meta-tempo-xtask
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
-          images: ${{ env.REGISTRY }}/tempo-xtask
+          images: |
+            ${{ env.REGISTRY }}/tempo-xtask
+            docker.io/tempoxyz/tempo-xtask
           bake-target: tempo-xtask
           tags: |
             type=schedule,pattern=nightly
