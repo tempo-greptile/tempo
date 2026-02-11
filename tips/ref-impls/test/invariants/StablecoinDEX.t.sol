@@ -18,6 +18,10 @@ contract StablecoinDEXInvariantTest is InvariantBaseTest {
     /// @dev Fixed set of valid ticks used for order placement
     int16[15] private _ticks =
         [int16(-2000), -1000, -500, -200, -100, -50, -10, 0, 10, 50, 100, 200, 500, 1000, 2000];
+    /// @dev Dedicated ticks for TEMPO-DEX19 divisible bid path (all satisfy min order size guard)
+    int16[15] private _divisibleBidTicks = [
+        int16(-1990), -1490, -1190, -990, -790, -590, -390, -190, -90, 10, 90, 190, 390, 990, 1990
+    ];
 
     /// @dev Expected next order ID, used to verify TEMPO-DEX1
     uint128 private _nextOrderId;
@@ -163,7 +167,7 @@ contract StablecoinDEXInvariantTest is InvariantBaseTest {
 
     /// @notice TEMPO-DEX19: Test divisibility edge cases - when (base*price) % PRICE_SCALE == 0
     function placeDivisibleBid(uint256 actorRnd, uint256 tickRnd, uint256 tokenRnd) external {
-        int16 tick = _ticks[tickRnd % _ticks.length];
+        int16 tick = _divisibleBidTicks[tickRnd % _divisibleBidTicks.length];
         address actor = _actors[actorRnd % _actors.length];
         address token = address(_tokens[tokenRnd % _tokens.length]);
         uint32 price = exchange.tickToPrice(tick);
