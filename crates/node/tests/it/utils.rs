@@ -17,7 +17,7 @@ use alloy::{
 use alloy_primitives::B256;
 use alloy_rpc_types_engine::PayloadAttributes;
 use reth_e2e_test_utils::setup;
-use reth_ethereum::tasks::TaskManager;
+use reth_ethereum::tasks::Runtime;
 use reth_node_api::{FullNodeComponents, PayloadBuilderAttributes};
 use reth_node_builder::{NodeBuilder, NodeConfig, NodeHandle, rpc::RethRpcAddOns};
 use reth_node_core::args::RpcServerArgs;
@@ -80,8 +80,8 @@ pub(crate) enum NodeSource {
     LocalNode(String),
 }
 
-/// Type alias for a local test node and task manager
-pub(crate) type LocalTestNode = (Box<dyn TestNodeHandle>, TaskManager);
+/// Type alias for a local test node and runtime
+pub(crate) type LocalTestNode = (Box<dyn TestNodeHandle>, Runtime);
 
 /// Trait wrapper around NodeHandle to simplify function return types
 pub(crate) trait TestNodeHandle: Send {}
@@ -137,16 +137,12 @@ pub(crate) async fn await_receipts(
 pub(crate) struct SingleNodeSetup {
     /// The node handle for direct manipulation (inject_tx, advance_block, etc.)
     pub node: reth_e2e_test_utils::NodeHelperType<TempoNode>,
-    /// Task manager that must be kept alive for the node to function
-    _tasks: TaskManager,
 }
 
 /// Result type for multi-node setup
 pub(crate) struct MultiNodeSetup {
     /// Node handles for direct manipulation
     pub nodes: Vec<reth_e2e_test_utils::NodeHelperType<TempoNode>>,
-    /// Task manager that must be kept alive for nodes to function
-    _tasks: TaskManager,
 }
 
 /// Result type for HTTP-only setup (no direct node access)
@@ -218,7 +214,7 @@ impl TestNodeBuilder {
 
         let chain_spec = self.build_chain_spec()?;
 
-        let (mut nodes, tasks, _wallet) = setup::<TempoNode>(
+        let (mut nodes, _wallet) = setup::<TempoNode>(
             1,
             Arc::new(chain_spec),
             self.is_dev,
@@ -228,10 +224,7 @@ impl TestNodeBuilder {
 
         let node = nodes.remove(0);
 
-        Ok(SingleNodeSetup {
-            node,
-            _tasks: tasks,
-        })
+        Ok(SingleNodeSetup { node })
     }
 
     /// Build multiple nodes with direct access
@@ -250,7 +243,7 @@ impl TestNodeBuilder {
 
         let chain_spec = self.build_chain_spec()?;
 
-        let (nodes, tasks, _wallet) = setup::<TempoNode>(
+        let (nodes, _wallet) = setup::<TempoNode>(
             self.node_count,
             Arc::new(chain_spec),
             self.is_dev,
@@ -258,10 +251,7 @@ impl TestNodeBuilder {
         )
         .await?;
 
-        Ok(MultiNodeSetup {
-            nodes,
-            _tasks: tasks,
-        })
+        Ok(MultiNodeSetup { nodes })
     }
 
     /// Build HTTP-only setup
@@ -273,7 +263,8 @@ impl TestNodeBuilder {
             });
         }
 
-        let tasks = TaskManager::current();
+        let runtime = Runtime::with_existing_handle(tokio::runtime::Handle::current())
+            .expect("must be able to create Runtime");
         let chain_spec = self.build_chain_spec()?;
         let validator = chain_spec.inner.genesis.coinbase;
 
@@ -290,7 +281,7 @@ impl TestNodeBuilder {
         node_config.dev.block_time = Some(Duration::from_millis(100));
 
         let node_handle = NodeBuilder::new(node_config.clone())
-            .testing_node(tasks.executor())
+            .testing_node(runtime.clone())
             .node(TempoNode::default())
             .launch_with_debug_capabilities()
             .map_debug_payload_attributes(move |mut attributes| {
@@ -309,7 +300,7 @@ impl TestNodeBuilder {
 
         Ok(HttpOnlySetup {
             http_url,
-            local_node: Some((Box::new(node_handle), tasks)),
+            local_node: Some((Box::new(node_handle), runtime)),
         })
     }
 
