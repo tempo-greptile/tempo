@@ -413,6 +413,7 @@ where
             Arc::new(execution_runtime::chainspec()),
             static_file_provider,
             rocksdb,
+            reth_ethereum::tasks::Runtime::default(),
         )
         .expect("failed to create provider factory");
 

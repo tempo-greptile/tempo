@@ -983,8 +983,10 @@ where
 
     async fn validate_transactions(
         &self,
-        transactions: Vec<(TransactionOrigin, Self::Transaction)>,
+        transactions: impl IntoIterator<Item = (TransactionOrigin, Self::Transaction), IntoIter: Send>
+        + Send,
     ) -> Vec<TransactionValidationOutcome<Self::Transaction>> {
+        let transactions: Vec<_> = transactions.into_iter().collect();
         let state_provider = match self.inner.client().latest() {
             Ok(provider) => provider,
             Err(err) => {
@@ -1006,7 +1008,7 @@ where
     async fn validate_transactions_with_origin(
         &self,
         origin: TransactionOrigin,
-        transactions: impl IntoIterator<Item = Self::Transaction> + Send,
+        transactions: impl IntoIterator<Item = Self::Transaction, IntoIter: Send> + Send,
     ) -> Vec<TransactionValidationOutcome<Self::Transaction>> {
         let state_provider = match self.inner.client().latest() {
             Ok(provider) => provider,
@@ -1045,7 +1047,7 @@ where
 mod tests {
     use super::*;
     use crate::{test_utils::TxBuilder, transaction::TempoPoolTransactionError};
-    use alloy_consensus::{Block, Header, Signed, Transaction, TxLegacy};
+    use alloy_consensus::{Header, Signed, Transaction, TxLegacy};
     use alloy_primitives::{Address, B256, Signature, TxKind, U256, address, uint};
     use reth_primitives_traits::SignedTransaction;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
@@ -1061,7 +1063,7 @@ mod tests {
         tip403_registry::{ITIP403Registry, PolicyData, TIP403Registry},
     };
     use tempo_primitives::{
-        TempoTxEnvelope,
+        Block, TempoHeader, TempoTxEnvelope,
         transaction::{
             TempoTransaction,
             envelope::TEMPO_SYSTEM_TX_SIGNATURE,
@@ -1127,8 +1129,11 @@ mod tests {
             ExtendedAccount::new(transaction.nonce(), alloy_primitives::U256::ZERO),
         );
         let block_with_gas = Block {
-            header: Header {
-                gas_limit: TEMPO_T1_TX_GAS_LIMIT_CAP,
+            header: TempoHeader {
+                inner: alloy_consensus::Header {
+                    gas_limit: TEMPO_T1_TX_GAS_LIMIT_CAP,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             body: Default::default(),
@@ -2790,10 +2795,13 @@ mod tests {
             );
 
             // Create block with proper timestamp
-            let block = reth_ethereum_primitives::Block {
-                header: Header {
-                    timestamp: tip_timestamp,
-                    gas_limit: TEMPO_T1_TX_GAS_LIMIT_CAP,
+            let block = Block {
+                header: TempoHeader {
+                    inner: alloy_consensus::Header {
+                        timestamp: tip_timestamp,
+                        gas_limit: TEMPO_T1_TX_GAS_LIMIT_CAP,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 body: Default::default(),
