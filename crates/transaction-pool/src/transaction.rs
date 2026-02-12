@@ -33,6 +33,8 @@ pub struct TempoPooledTransaction {
     inner: EthPooledTransaction<TempoTxEnvelope>,
     /// Cached payment classification for efficient block building
     is_payment: bool,
+    /// Cached expiring nonce classification
+    is_expiring_nonce: bool,
     /// Cached slot of the 2D nonce, if any.
     nonce_key_slot: OnceLock<Option<U256>>,
     /// Cached prepared [`TempoTxEnv`] for payload building.
@@ -48,6 +50,10 @@ impl TempoPooledTransaction {
     /// Create new instance of [Self] from the given consensus transactions and the encoded size.
     pub fn new(transaction: Recovered<TempoTxEnvelope>) -> Self {
         let is_payment = transaction.is_payment();
+        let is_expiring_nonce = transaction
+            .as_aa()
+            .map(|tx| tx.tx().is_expiring_nonce_tx())
+            .unwrap_or(false);
         Self {
             inner: EthPooledTransaction {
                 cost: calc_gas_balance_spending(
@@ -60,6 +66,7 @@ impl TempoPooledTransaction {
                 transaction,
             },
             is_payment,
+            is_expiring_nonce,
             nonce_key_slot: OnceLock::new(),
             tx_env: OnceLock::new(),
             key_expiry: OnceLock::new(),
@@ -115,11 +122,7 @@ impl TempoPooledTransaction {
 
     /// Returns true if this is an expiring nonce transaction.
     pub(crate) fn is_expiring_nonce(&self) -> bool {
-        self.inner
-            .transaction
-            .as_aa()
-            .map(|tx| tx.tx().is_expiring_nonce_tx())
-            .unwrap_or(false)
+        self.is_expiring_nonce
     }
 
     /// Extracts the keychain subject (account, key_id, fee_token) from this transaction.
@@ -238,6 +241,9 @@ pub enum TempoPoolTransactionError {
         "Keychain signature validation failed: {0}, please see https://docs.tempo.xyz/errors/tx/Keychain for more"
     )]
     Keychain(&'static str),
+
+    #[error("Fee payer signature recovery failed")]
+    InvalidFeePayerSignature,
 
     #[error(
         "Native transfers are not supported, if you were trying to transfer a stablecoin, please call TIP20::Transfer"
@@ -393,6 +399,7 @@ impl PoolTransactionError for TempoPoolTransactionError {
             | Self::ExpiringNonceNonceNotZero
             | Self::AccessKeyExpired { .. }
             | Self::KeyAuthorizationExpired { .. }
+            | Self::InvalidFeePayerSignature
             | Self::NoCalls
             | Self::CreateCallWithAuthorizationList
             | Self::CreateCallNotFirst
@@ -773,6 +780,7 @@ mod tests {
                 },
                 false,
             ),
+            (TempoPoolTransactionError::InvalidFeePayerSignature, true),
             (TempoPoolTransactionError::NonZeroValue, true),
             (TempoPoolTransactionError::SubblockNonceKey, true),
             (
