@@ -9,6 +9,11 @@ use url::Url;
 
 pub(crate) const DEFAULT_DOWNLOAD_URL: &str = "https://snapshots.tempoxyz.dev/4217";
 
+/// Snapshot base URL for moderato (chain ID 42431)
+const MODERATO_DOWNLOAD_URL: &str = "https://snapshots.tempoxyz.dev/42431";
+/// Snapshot base URL for andantino/testnet (chain ID 42429)
+const ANDANTINO_DOWNLOAD_URL: &str = "https://snapshots.tempoxyz.dev/42429";
+
 /// Default OTLP logs filter level for telemetry.
 const DEFAULT_LOGS_OTLP_FILTER: &str = "debug";
 
@@ -115,14 +120,46 @@ pub(crate) struct TelemetryConfig {
     pub(crate) metrics_auth_header: Option<String>,
 }
 
+/// Resolves the snapshot base URL from CLI arguments.
+///
+/// Peeks at `--chain` / `-c` from `std::env::args` to select the correct
+/// chain-specific snapshot URL *before* clap parsing. This is necessary because
+/// [`DownloadDefaults`] is a global `OnceLock` that must be initialized before
+/// the CLI is parsed, while the chain selection happens during parsing.
+fn resolve_download_base_url() -> &'static str {
+    let args: Vec<String> = std::env::args().collect();
+    snapshot_url_for_args(&args)
+}
+
+/// Returns the snapshot base URL for the chain specified in the given CLI args.
+fn snapshot_url_for_args(args: &[String]) -> &'static str {
+    // Support both `--chain moderato` and `--chain=moderato` / `-c moderato`
+    let chain = args.iter().enumerate().find_map(|(i, a)| {
+        if a == "--chain" || a == "-c" {
+            args.get(i + 1).map(|s| s.as_str())
+        } else {
+            a.strip_prefix("--chain=")
+                .or_else(|| a.strip_prefix("-c="))
+        }
+    });
+
+    match chain {
+        Some("moderato") => MODERATO_DOWNLOAD_URL,
+        Some("testnet") => ANDANTINO_DOWNLOAD_URL,
+        _ => DEFAULT_DOWNLOAD_URL,
+    }
+}
+
 fn init_download_urls() {
+    let base_url = resolve_download_base_url();
+
     let download_defaults = DownloadDefaults {
         available_snapshots: vec![
             Cow::Owned(format!("{DEFAULT_DOWNLOAD_URL} (mainnet)")),
             Cow::Borrowed("https://snapshots.tempoxyz.dev/42431 (moderato)"),
             Cow::Borrowed("https://snapshots.tempoxyz.dev/42429 (andantino)"),
         ],
-        default_base_url: Cow::Borrowed(DEFAULT_DOWNLOAD_URL),
+        default_base_url: Cow::Borrowed(base_url),
         long_help: None,
     };
 
@@ -167,4 +204,58 @@ pub(crate) fn init_defaults() {
     init_download_urls();
     init_payload_builder_defaults();
     init_txpool_defaults();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(s: &[&str]) -> Vec<String> {
+        s.iter().map(|a| a.to_string()).collect()
+    }
+
+    #[test]
+    fn test_snapshot_url_defaults_to_mainnet() {
+        assert_eq!(snapshot_url_for_args(&args(&["tempo", "download"])), DEFAULT_DOWNLOAD_URL);
+    }
+
+    #[test]
+    fn test_snapshot_url_mainnet_explicit() {
+        assert_eq!(
+            snapshot_url_for_args(&args(&["tempo", "download", "--chain", "mainnet"])),
+            DEFAULT_DOWNLOAD_URL
+        );
+    }
+
+    #[test]
+    fn test_snapshot_url_moderato() {
+        assert_eq!(
+            snapshot_url_for_args(&args(&["tempo", "download", "--chain", "moderato"])),
+            MODERATO_DOWNLOAD_URL
+        );
+    }
+
+    #[test]
+    fn test_snapshot_url_testnet() {
+        assert_eq!(
+            snapshot_url_for_args(&args(&["tempo", "download", "--chain", "testnet"])),
+            ANDANTINO_DOWNLOAD_URL
+        );
+    }
+
+    #[test]
+    fn test_snapshot_url_chain_equals_syntax() {
+        assert_eq!(
+            snapshot_url_for_args(&args(&["tempo", "download", "--chain=moderato"])),
+            MODERATO_DOWNLOAD_URL
+        );
+    }
+
+    #[test]
+    fn test_snapshot_url_short_flag() {
+        assert_eq!(
+            snapshot_url_for_args(&args(&["tempo", "download", "-c", "moderato"])),
+            MODERATO_DOWNLOAD_URL
+        );
+    }
 }
