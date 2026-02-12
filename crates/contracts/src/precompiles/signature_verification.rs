@@ -4,7 +4,7 @@ crate::sol! {
     /// Signature Verification precompile interface (TIP-1020)
     ///
     /// This precompile enables contracts to verify Tempo signature types
-    /// (secp256k1, P256, WebAuthn, Keychain) using the same verification
+    /// (secp256k1, P256, WebAuthn) using the same verification
     /// logic as Tempo transaction processing.
     ///
     /// For signature encoding formats, see:
@@ -15,7 +15,7 @@ crate::sol! {
         /// Verifies a Tempo signature
         /// @param signer The expected signer address
         /// @param hash The message hash that was signed
-        /// @param signature The encoded signature (secp256k1, P256, WebAuthn, or Keychain)
+        /// @param signature The encoded signature (secp256k1, P256, or WebAuthn)
         /// @return True if valid, reverts otherwise
         function verify(address signer, bytes32 hash, bytes calldata signature) external view returns (bool);
 
@@ -25,8 +25,6 @@ crate::sol! {
         /// The recovered signer does not match the expected signer
         error SignerMismatch(address expected, address recovered);
 
-        /// The keychain access key is not authorized, expired, or revoked
-        error UnauthorizedKeychainKey();
     }
 }
 
@@ -41,8 +39,4 @@ impl SignatureVerificationError {
         Self::SignerMismatch(ISignatureVerification::SignerMismatch { expected, recovered })
     }
 
-    /// Creates an error for unauthorized keychain key
-    pub const fn unauthorized_keychain_key() -> Self {
-        Self::UnauthorizedKeychainKey(ISignatureVerification::UnauthorizedKeychainKey {})
-    }
 }

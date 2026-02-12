@@ -16,7 +16,9 @@
 //!    NOT the WebAuthn calldata cost (that would be double-charging).
 
 use super::tt_signature::{PrimitiveSignature, TempoSignature};
-use revm::interpreter::gas::{COLD_SLOAD_COST, STANDARD_TOKEN_COST, get_tokens_in_calldata_istanbul};
+use revm::interpreter::gas::{
+    COLD_SLOAD_COST, STANDARD_TOKEN_COST, get_tokens_in_calldata_istanbul,
+};
 
 /// Additional gas for P256 signature verification.
 /// P256 precompile cost (6900 from EIP-7951) + 1100 for 129 bytes extra signature size - ecrecover savings (3000)
@@ -70,7 +72,6 @@ pub fn primitive_signature_verification_gas_precompile(signature: &PrimitiveSign
 /// Calculate gas for a Tempo signature in transaction context.
 ///
 /// Returns the *additional* gas beyond the base transaction cost.
-/// For Keychain signatures, adds key validation overhead to the inner signature cost.
 #[inline]
 pub fn tempo_signature_verification_gas(signature: &TempoSignature) -> u64 {
     match signature {
