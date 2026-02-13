@@ -269,7 +269,7 @@ pub(super) struct FieldDef {
 pub(super) struct ConstantDef {
     /// Original constant name (e.g., `PAUSE_ROLE`)
     pub name: Ident,
-    /// The value type (for LazyLock<T>, this is T)
+    /// The value type (for `LazyLock<T>`, this is `T`)
     pub ty: Type,
     /// The initializer expression
     pub expr: Expr,

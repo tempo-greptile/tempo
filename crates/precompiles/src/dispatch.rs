@@ -3,7 +3,7 @@
 //! Re-exports from lib.rs for macro compatibility.
 
 pub use crate::{
-    dispatch_call, input_cost, metadata, mutate, mutate_void, unknown_selector, view, Precompile,
+    Precompile, dispatch_call, input_cost, metadata, mutate, mutate_void, unknown_selector, view,
 };
 
 #[cfg(test)]

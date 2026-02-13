@@ -488,7 +488,7 @@ pub(super) fn generate_simple_struct(
     }
 }
 
-/// Extract the first generic type argument from a TypePath (e.g., T from Vec<T>)
+/// Extract the first generic type argument from a TypePath (e.g., `T` from `Vec<T>`)
 fn extract_generic_type_arg(type_path: &TypePath) -> Option<&Type> {
     type_path.path.segments.last().and_then(|seg| {
         if let PathArguments::AngleBracketed(args) = &seg.arguments {

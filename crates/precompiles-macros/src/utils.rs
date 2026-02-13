@@ -136,7 +136,7 @@ pub(crate) fn to_pascal_case(s: &str) -> String {
     result
 }
 
-/// Check if a TypePath represents a Vec<T>
+/// Check if a TypePath represents a `Vec<T>`
 pub(crate) fn is_vec(type_path: &TypePath) -> bool {
     type_path
         .path
