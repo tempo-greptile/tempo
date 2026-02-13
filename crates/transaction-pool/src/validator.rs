@@ -1045,6 +1045,7 @@ mod tests {
     use tempo_chainspec::spec::{MODERATO, TEMPO_T1_TX_GAS_LIMIT_CAP};
     use tempo_precompiles::{
         PATH_USD_ADDRESS, TIP403_REGISTRY_ADDRESS,
+        account_keychain::SignatureType as PrecompileSigType,
         tip20::{TIP20Token, slots as tip20_slots},
         tip403_registry::{ITIP403Registry, PolicyData, TIP403Registry},
     };
@@ -2301,8 +2302,8 @@ mod tests {
 
             // Setup storage with a valid authorized key (expiry > 0, not revoked)
             let slot_value = AuthorizedKey {
-                signature_type: 0, // secp256k1
-                expiry: u64::MAX,  // never expires
+                signature_type: PrecompileSigType::Secp256k1,
+                expiry: u64::MAX, // never expires
                 enforce_limits: false,
                 is_revoked: false,
             }
@@ -2334,7 +2335,7 @@ mod tests {
 
             // Setup storage with a revoked key
             let slot_value = AuthorizedKey {
-                signature_type: 0,
+                signature_type: PrecompileSigType::Secp256k1,
                 expiry: 0, // revoked keys have expiry=0
                 enforce_limits: false,
                 is_revoked: true,
@@ -2371,7 +2372,7 @@ mod tests {
 
             // Setup storage with expiry = 0 (key doesn't exist)
             let slot_value = AuthorizedKey {
-                signature_type: 0,
+                signature_type: PrecompileSigType::Secp256k1,
                 expiry: 0, // expiry = 0 means key doesn't exist
                 enforce_limits: false,
                 is_revoked: false,
@@ -2716,7 +2717,7 @@ mod tests {
 
             // Setup with valid key for the actual sender
             let slot_value = AuthorizedKey {
-                signature_type: 0,
+                signature_type: PrecompileSigType::Secp256k1,
                 expiry: u64::MAX,
                 enforce_limits: false,
                 is_revoked: false,
@@ -2809,7 +2810,7 @@ mod tests {
 
             // Setup storage with an expired key (expiry in the past)
             let slot_value = AuthorizedKey {
-                signature_type: 0,
+                signature_type: PrecompileSigType::Secp256k1,
                 expiry: current_time - 1, // Expired (in the past)
                 enforce_limits: false,
                 is_revoked: false,
@@ -2847,7 +2848,7 @@ mod tests {
 
             // Setup storage with expiry == current_time (edge case: expired)
             let slot_value = AuthorizedKey {
-                signature_type: 0,
+                signature_type: PrecompileSigType::Secp256k1,
                 expiry: current_time, // Expiry at exactly current time should be rejected
                 enforce_limits: false,
                 is_revoked: false,
@@ -2884,7 +2885,7 @@ mod tests {
 
             // Setup storage with a future expiry
             let slot_value = AuthorizedKey {
-                signature_type: 0,
+                signature_type: PrecompileSigType::Secp256k1,
                 expiry: current_time + 100, // Valid (in the future)
                 enforce_limits: false,
                 is_revoked: false,
@@ -3163,7 +3164,7 @@ mod tests {
 
             // Setup AccountKeychain storage with AuthorizedKey
             let slot_value = AuthorizedKey {
-                signature_type: 0,
+                signature_type: PrecompileSigType::Secp256k1,
                 expiry: u64::MAX,
                 enforce_limits,
                 is_revoked: false,
