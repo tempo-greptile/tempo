@@ -629,7 +629,7 @@ fn build_getter_access(
 
                 let arg_name = format_ident!("key{idx}");
                 key_params.push(quote! { #arg_name: #key_ty });
-                access_chain = quote! { #access_chain.at(#arg_name) };
+                access_chain = quote! { #access_chain.at(&#arg_name) };
                 current_ty = value_ty;
                 idx += 1;
             }
