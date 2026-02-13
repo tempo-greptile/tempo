@@ -32,15 +32,13 @@ use revm::{
         interpreter::EthInterpreter,
     },
 };
-use tempo_contracts::precompiles::{
-    IAccountKeychain::SignatureType as PrecompileSignatureType, TIPFeeAMMError,
-};
+use tempo_contracts::precompiles::IAccountKeychain::SignatureType as PrecompileSignatureType;
 use tempo_precompiles::{
     account_keychain::{AccountKeychain, TokenLimit, authorizeKeyCall},
     error::TempoPrecompileError,
     nonce::{Interface as NonceInterface, NonceManager},
     storage::{PrecompileStorageProvider, StorageCtx, evm::EvmPrecompileStorageProvider},
-    tip_fee_manager::TipFeeManager,
+    tip_fee_manager::{IFeeAMM::Error as FeeAMMError, TipFeeManager},
     tip20::{ITIP20::InsufficientBalance, TIP20Error, TIP20Token, is_tip20_prefix},
 };
 use tempo_primitives::transaction::{
@@ -1032,7 +1030,7 @@ where
             // indicate the transaction cannot be included (e.g., insufficient liquidity
             // in FeeAMM pool for fee swaps)
             Err(match err {
-                TempoPrecompileError::TIPFeeAMMError(TIPFeeAMMError::InsufficientLiquidity(_)) => {
+                TempoPrecompileError::FeeAMMError(FeeAMMError::InsufficientLiquidity(_)) => {
                     FeePaymentError::InsufficientAmmLiquidity {
                         fee: gas_balance_spending,
                     }
