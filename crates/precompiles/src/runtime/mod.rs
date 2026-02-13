@@ -349,4 +349,59 @@ mod tests {
             "T0: expected PrecompileError for invalid calldata, got {result:?}"
         );
     }
+
+    #[test]
+    fn test_input_cost_returns_non_zero_for_input() {
+        assert_eq!(input_cost(0), 0);
+        assert_eq!(input_cost(1), INPUT_PER_WORD_COST);
+        assert_eq!(input_cost(32), INPUT_PER_WORD_COST);
+        assert_eq!(input_cost(33), INPUT_PER_WORD_COST * 2);
+    }
+
+    #[test]
+    fn test_extend_tempo_precompiles_registers_precompiles() {
+        use revm::handler::EthPrecompiles;
+
+        let cfg = CfgEnv::<TempoHardfork>::default();
+        let mut precompiles = PrecompilesMap::from_static(EthPrecompiles::default().precompiles);
+
+        extend_tempo_precompiles(&mut precompiles, &cfg);
+
+        assert!(
+            precompiles.get(&TIP20_FACTORY_ADDRESS).is_some(),
+            "TIP20Factory should be registered"
+        );
+        assert!(
+            precompiles.get(&TIP403_REGISTRY_ADDRESS).is_some(),
+            "TIP403Registry should be registered"
+        );
+        assert!(
+            precompiles.get(&TIP_FEE_MANAGER_ADDRESS).is_some(),
+            "TipFeeManager should be registered"
+        );
+        assert!(
+            precompiles.get(&STABLECOIN_DEX_ADDRESS).is_some(),
+            "StablecoinDEX should be registered"
+        );
+        assert!(
+            precompiles.get(&NONCE_PRECOMPILE_ADDRESS).is_some(),
+            "NonceManager should be registered"
+        );
+        assert!(
+            precompiles.get(&VALIDATOR_CONFIG_ADDRESS).is_some(),
+            "ValidatorConfig should be registered"
+        );
+        assert!(
+            precompiles.get(&ACCOUNT_KEYCHAIN_ADDRESS).is_some(),
+            "AccountKeychain should be registered"
+        );
+        assert!(
+            precompiles.get(&PATH_USD_ADDRESS).is_some(),
+            "TIP20 tokens should be registered"
+        );
+        assert!(
+            precompiles.get(&Address::random()).is_none(),
+            "Random address should not be a precompile"
+        );
+    }
 }
