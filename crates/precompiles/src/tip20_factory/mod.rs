@@ -771,8 +771,7 @@ mod tests {
             // Use a salt that produces non-reserved address
             let salt = B256::repeat_byte(0xFF);
 
-            let address =
-                factory.get_token_address(ITIP20Factory::getTokenAddressCall { sender, salt })?;
+            let address = factory.get_token_address(sender, salt)?;
 
             // Address should NOT be default
             assert_ne!(address, Address::ZERO);
@@ -781,8 +780,7 @@ mod tests {
             assert!(is_tip20_prefix(address));
 
             // Should be deterministic
-            let address2 =
-                factory.get_token_address(ITIP20Factory::getTokenAddressCall { sender, salt })?;
+            let address2 = factory.get_token_address(sender, salt)?;
             assert_eq!(address, address2);
 
             Ok(())
