@@ -222,41 +222,6 @@ contract TempoTransactionInvariantTest is InvariantChecker {
         );
     }
 
-    // NOTE: Fee payer signature RLP encoding was fixed to use [v, r, s] order with
-    // normalized parity (0/1 instead of 27/28) to match Rust's Signature::write_rlp_vrs.
-    // The E6 invariant handler (handler_expiringNonceSponsored) now exercises the replay property.
-
-    /// @notice Smoke test: sponsored fee payer tx executes successfully
-    /// @dev Confirms the full fee payer sponsorship flow works end-to-end:
-    ///      correct RLP encoding [v,r,s], correct fee payer signature hash (0x78 magic byte),
-    ///      and successful execution via vm.executeTransaction.
-    function test_sponsoredFeePayerTxExecutes() public {
-        this.handler_tempoFeeSponsor(0, 1, 2, 1e6, 1);
-        assertTrue(ghost_totalTxExecuted > 0, "Sponsored tx should have executed");
-    }
-
-    /// @notice Confirms E6 invariant detects fee payer signature malleability replay
-    /// @dev Exercises handler_expiringNonceSponsored twice with same user intent but
-    ///      different fee payers. The first tx should succeed. The second should be rejected
-    ///      by replay protection (same signature_hash). E6 counter must stay at 0.
-    function test_e6ExpiringNonceSponsoredReplayRejected() public {
-        // First sponsored expiring nonce tx should succeed
-        this.handler_expiringNonceSponsored(0, 1, 2, 1);
-        assertGt(
-            ghost_expiringNonceSponsoredExecuted, 0,
-            "First sponsored expiring nonce tx should execute"
-        );
-
-        // Second call with different fee payer but same intent
-        this.handler_expiringNonceSponsored(0, 3, 2, 1);
-
-        // E6: replay should NOT be allowed (protocol uses signature_hash for dedup)
-        assertEq(
-            ghost_expiringNonceIntentReplayAllowed, 0,
-            "E6: Intent replay should not be allowed"
-        );
-    }
-
     /*//////////////////////////////////////////////////////////////
                         SIGNING PARAMS HELPER
     //////////////////////////////////////////////////////////////*/
