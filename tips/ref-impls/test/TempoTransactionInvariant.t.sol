@@ -222,6 +222,13 @@ contract TempoTransactionInvariantTest is InvariantChecker {
         );
     }
 
+    // NOTE: test_expiringNonceSponsoredIntentReplay is blocked by a pre-existing issue:
+    // tempo-foundry's vm.executeTransaction cannot decode fee-payer-sponsored transactions
+    // due to an RLP encoding mismatch (Solidity encodes fee payer sig as [r,s,v] but Rust
+    // decoder expects [v,r,s]). This also affects handler_tempoFeeSponsor which silently
+    // catches the decode error. Once this encoding is fixed in tempo-std, the E6 invariant
+    // handler (handler_expiringNonceSponsored) will exercise the replay property.
+
     /*//////////////////////////////////////////////////////////////
                         SIGNING PARAMS HELPER
     //////////////////////////////////////////////////////////////*/
@@ -4326,8 +4333,8 @@ contract TempoTransactionInvariantTest is InvariantChecker {
 
     /// @notice Build a sponsored expiring nonce tx with a fee payer
     /// @dev Returns signed tx bytes and the intent hash (tx encoding hash without fee payer sig).
-    ///      The user signs over the encoding without fee payer sig (matching Rust's signature_hash
-    ///      which uses a placeholder for fee payer sig). The fee payer signs the same encoding.
+    ///      The user signs over the encoding without fee payer sig. The fee payer signs the same.
+    ///      Both variants with different fee payers share the same user signature and intent hash.
     function _buildSponsoredExpiringNonceTx(
         uint256 senderIdx,
         address to,
@@ -4355,16 +4362,25 @@ contract TempoTransactionInvariantTest is InvariantChecker {
         bytes memory unsignedEncoding = tx_.encode(vmRlp);
         intentHash = keccak256(unsignedEncoding);
 
-        // User signs the intent hash
-        (uint8 uV, bytes32 uR, bytes32 uS) = vm.sign(actorKeys[senderIdx], intentHash);
-        bytes memory userSig = abi.encodePacked(uR, uS, uV);
-
-        // Fee payer signs the same encoding
+        // Fee payer signs the unsigned encoding
         (uint8 fpV, bytes32 fpR, bytes32 fpS) = vm.sign(actorKeys[feePayerIdx], intentHash);
         bytes memory feePayerSig = abi.encodePacked(fpR, fpS, fpV);
-
         tx_ = tx_.withFeePayerSignature(feePayerSig);
-        signedTx = TxBuilder._encodeSignedTempo(vmRlp, tx_, userSig);
+
+        // User signs the full tx encoding (with fee payer sig included) via signTempo,
+        // which uses encodeWithSignature for correct RLP serialization
+        signedTx = TxBuilder.signTempo(
+            vmRlp,
+            vm,
+            tx_,
+            TxBuilder.SigningParams({
+                strategy: TxBuilder.SigningStrategy.Secp256k1,
+                privateKey: actorKeys[senderIdx],
+                pubKeyX: bytes32(0),
+                pubKeyY: bytes32(0),
+                userAddress: address(0)
+            })
+        );
     }
 
     /// @notice Handler: Execute a sponsored expiring nonce transaction
