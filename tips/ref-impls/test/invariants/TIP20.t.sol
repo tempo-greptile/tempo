@@ -3,7 +3,9 @@ pragma solidity ^0.8.13;
 
 import { TIP20 } from "../../src/TIP20.sol";
 import { ITIP20 } from "../../src/interfaces/ITIP20.sol";
+import { IAccountKeychain } from "../../src/interfaces/IAccountKeychain.sol";
 import { InvariantBaseTest } from "./InvariantBaseTest.t.sol";
+import { Vm } from "forge-std/Vm.sol";
 
 /// @title TIP20 Invariant Tests
 /// @notice Fuzz-based invariant tests for the TIP20 token implementation
@@ -1057,9 +1059,110 @@ contract TIP20InvariantTest is InvariantBaseTest {
         vm.stopPrank();
     }
 
+    /*//////////////////////////////////////////////////////////////
+                        APPROVE SNAPSHOT HELPERS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @dev Captures all relevant state before an approve for post-approve assertions
+    struct ApproveSnapshot {
+        uint256 allowanceBefore;
+        uint256 ownerBal;
+        uint256 spenderBal;
+        uint256 totalSupply;
+        uint128 optedInSupply;
+        uint256 globalRPT;
+        bool paused;
+        uint64 transferPolicyId;
+        uint256 supplyCap;
+        address ownerRewardRecipient;
+        uint256 ownerRPT;
+        uint256 ownerRewardBal;
+        address spenderRewardRecipient;
+        uint256 spenderRPT;
+        uint256 spenderRewardBal;
+    }
+
+    /// @dev Takes a snapshot of all approve-relevant state
+    function _snapApprove(
+        TIP20 token,
+        address owner,
+        address spender
+    )
+        internal
+        view
+        returns (ApproveSnapshot memory s)
+    {
+        s.allowanceBefore = token.allowance(owner, spender);
+        s.ownerBal = token.balanceOf(owner);
+        s.spenderBal = token.balanceOf(spender);
+        s.totalSupply = token.totalSupply();
+        s.optedInSupply = token.optedInSupply();
+        s.globalRPT = token.globalRewardPerToken();
+        s.paused = token.paused();
+        s.transferPolicyId = token.transferPolicyId();
+        s.supplyCap = token.supplyCap();
+        (s.ownerRewardRecipient, s.ownerRPT, s.ownerRewardBal) = token.userRewardInfo(owner);
+        if (owner != spender) {
+            (s.spenderRewardRecipient, s.spenderRPT, s.spenderRewardBal) =
+                token.userRewardInfo(spender);
+        }
+    }
+
+    /// @dev Asserts that approve did not change any state other than the allowance
+    function _assertApproveNoSideEffects(
+        TIP20 token,
+        address owner,
+        address spender,
+        ApproveSnapshot memory s,
+        string memory ctx
+    )
+        internal
+        view
+    {
+        assertEq(token.balanceOf(owner), s.ownerBal, string.concat(ctx, ": owner balance changed"));
+        if (owner != spender) {
+            assertEq(
+                token.balanceOf(spender), s.spenderBal, string.concat(ctx, ": spender balance changed")
+            );
+        }
+        assertEq(token.totalSupply(), s.totalSupply, string.concat(ctx, ": totalSupply changed"));
+        assertEq(token.optedInSupply(), s.optedInSupply, string.concat(ctx, ": optedInSupply changed"));
+        assertEq(
+            token.globalRewardPerToken(), s.globalRPT, string.concat(ctx, ": globalRewardPerToken changed")
+        );
+        assertEq(token.paused(), s.paused, string.concat(ctx, ": paused changed"));
+        assertEq(
+            token.transferPolicyId(), s.transferPolicyId, string.concat(ctx, ": transferPolicyId changed")
+        );
+        assertEq(token.supplyCap(), s.supplyCap, string.concat(ctx, ": supplyCap changed"));
+
+        (address rrO, uint256 rptO, uint256 rbO) = token.userRewardInfo(owner);
+        assertEq(rrO, s.ownerRewardRecipient, string.concat(ctx, ": owner rewardRecipient changed"));
+        assertEq(rptO, s.ownerRPT, string.concat(ctx, ": owner rewardPerToken changed"));
+        assertEq(rbO, s.ownerRewardBal, string.concat(ctx, ": owner rewardBalance changed"));
+
+        if (owner != spender) {
+            (address rrS, uint256 rptS, uint256 rbS) = token.userRewardInfo(spender);
+            assertEq(
+                rrS, s.spenderRewardRecipient, string.concat(ctx, ": spender rewardRecipient changed")
+            );
+            assertEq(rptS, s.spenderRPT, string.concat(ctx, ": spender rewardPerToken changed"));
+            assertEq(rbS, s.spenderRewardBal, string.concat(ctx, ": spender rewardBalance changed"));
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        APPROVE HANDLERS
+    //////////////////////////////////////////////////////////////*/
+
     /// @notice Handler for approvals
-    /// @dev Tests TEMPO-TIP5 (allowance setting)
-    function approve(
+    /// @dev Tests TEMPO-TIP5 (allowance setting via overwrite semantics)
+    ///      Asserts: return value, allowance set correctly, Approval event emitted,
+    ///      no side effects on balances/supply/rewards/admin state.
+    ///      Covers: self-approval (owner == spender), overwrite of existing allowance,
+    ///      zero amount (revocation), type(uint256).max (infinite approval),
+    ///      works regardless of pause state or transfer policy.
+    function handler_approve(
         uint256 actorSeed,
         uint256 tokenSeed,
         uint256 spenderSeed,
@@ -1067,26 +1170,69 @@ contract TIP20InvariantTest is InvariantBaseTest {
     )
         external
     {
-        address actor = _selectActor(actorSeed);
+        address owner = _selectActor(actorSeed);
         address spender = _selectActor(spenderSeed);
         TIP20 token = _selectBaseToken(tokenSeed);
 
-        amount = bound(amount, 0, type(uint128).max);
+        // Bias amount toward important edge values using independent entropy
+        uint256 r = uint256(keccak256(abi.encode(amount, owner, spender))) % 8;
+        if (r == 0) {
+            amount = 0;
+        } else if (r == 1) {
+            amount = 1;
+        } else if (r == 2) {
+            amount = type(uint128).max;
+        } else if (r == 3) {
+            amount = uint256(type(uint128).max) + 1;
+        } else if (r == 4) {
+            amount = type(uint256).max;
+        }
+        // r >= 5: keep raw fuzz value (full uint256 range)
 
-        vm.startPrank(actor);
+        ApproveSnapshot memory s = _snapApprove(token, owner, spender);
+
+        vm.recordLogs();
+        vm.startPrank(owner);
         try token.approve(spender, amount) returns (bool success) {
             vm.stopPrank();
-            assertTrue(success, "TEMPO-TIP5: Approve should return true");
 
+            // TEMPO-TIP5: Must return true
+            assertTrue(success, "TEMPO-TIP5: approve must return true");
+
+            // TEMPO-TIP5: Allowance must be set to the exact amount (overwrite semantics)
             assertEq(
-                token.allowance(actor, spender), amount, "TEMPO-TIP5: Allowance not set correctly"
+                token.allowance(owner, spender), amount, "TEMPO-TIP5: allowance not set correctly"
             );
+
+            // Approve must not change any other state
+            _assertApproveNoSideEffects(token, owner, spender, s, "approve");
+
+            // Assert exactly one Approval event emitted by the token with correct parameters
+            Vm.Log[] memory logs = vm.getRecordedLogs();
+            bytes32 approvalSig = keccak256("Approval(address,address,uint256)");
+            uint256 tokenLogCount;
+            bool found;
+            for (uint256 i = 0; i < logs.length; i++) {
+                if (logs[i].emitter != address(token)) continue;
+                tokenLogCount++;
+                if (logs[i].topics.length < 3 || logs[i].topics[0] != approvalSig) continue;
+                if (
+                    address(uint160(uint256(logs[i].topics[1]))) == owner
+                        && address(uint160(uint256(logs[i].topics[2]))) == spender
+                ) {
+                    uint256 evAmount = abi.decode(logs[i].data, (uint256));
+                    assertEq(evAmount, amount, "TEMPO-TIP5: Approval event amount mismatch");
+                    found = true;
+                }
+            }
+            assertTrue(found, "TEMPO-TIP5: Approval event not emitted");
+            assertEq(tokenLogCount, 1, "TEMPO-TIP5: token emitted unexpected extra logs");
 
             if (_loggingEnabled) {
                 _log(
                     string.concat(
                         "APPROVE: ",
-                        _getActorIndex(actor),
+                        _getActorIndex(owner),
                         " approved ",
                         _getActorIndex(spender),
                         " for ",
@@ -1098,7 +1244,30 @@ contract TIP20InvariantTest is InvariantBaseTest {
             }
         } catch (bytes memory reason) {
             vm.stopPrank();
-            assertTrue(_isKnownTIP20Error(bytes4(reason)), "Unknown error encountered");
+
+            // Solidity approve has no revert paths. A revert here can only
+            // come from Rust AccountKeychain spending limit enforcement.
+            bytes4 sel = reason.length >= 4 ? bytes4(reason) : bytes4(0);
+            assertTrue(
+                sel == IAccountKeychain.SpendingLimitExceeded.selector
+                    || sel == IAccountKeychain.KeyNotFound.selector
+                    || sel == IAccountKeychain.KeyInactive.selector
+                    || sel == IAccountKeychain.KeyExpired.selector
+                    || sel == IAccountKeychain.KeyAlreadyRevoked.selector
+                    || sel == IAccountKeychain.UnauthorizedCaller.selector,
+                "approve: unexpected revert (not a keychain error)"
+            );
+
+            // Revert must not change any state
+            assertEq(
+                token.allowance(owner, spender),
+                s.allowanceBefore,
+                "approve: allowance changed on revert"
+            );
+            _assertApproveNoSideEffects(token, owner, spender, s, "approve(revert)");
+
+            // No events should be emitted on revert
+            assertEq(vm.getRecordedLogs().length, 0, "approve: logs emitted on revert");
         }
     }
 
