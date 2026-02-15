@@ -966,7 +966,7 @@ contract ValidatorConfigV2Test is BaseTest {
         } catch (bytes memory err) {
             assertEq(
                 bytes4(err),
-                IValidatorConfigV2.ValidatorAlreadyExists.selector,
+                IValidatorConfigV2.AddressAlreadyHasValidator.selector,
                 "Should reject active address"
             );
         }

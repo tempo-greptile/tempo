@@ -100,11 +100,11 @@ contract ValidatorConfigV2 is IValidatorConfigV2 {
     }
 
     /// @inheritdoc IValidatorConfigV2
-    function deactivateValidator(address validatorAddress)
-        external
-        onlyInitialized
-        onlyOwnerOrValidator(validatorAddress)
-    {
+    function deactivateValidator(address validatorAddress) external {
+        if (msg.sender != validatorAddress && msg.sender != _owner) {
+            revert Unauthorized();
+        }
+
         uint64 idx = addressToIndex[validatorAddress];
         if (idx == 0) {
             revert ValidatorNotFound();
@@ -186,9 +186,11 @@ contract ValidatorConfigV2 is IValidatorConfigV2 {
         string calldata egress
     )
         external
-        onlyInitialized
-        onlyOwnerOrValidator(validatorAddress)
     {
+        if (msg.sender != validatorAddress && msg.sender != _owner) {
+            revert Unauthorized();
+        }
+
         uint64 idx = addressToIndex[validatorAddress];
         if (idx == 0) {
             revert ValidatorNotFound();
@@ -225,7 +227,7 @@ contract ValidatorConfigV2 is IValidatorConfigV2 {
             revert ValidatorNotFound();
         }
         if (addressToIndex[newAddress] != 0) {
-            revert ValidatorAlreadyExists();
+            revert AddressAlreadyHasValidator();
         }
 
         Validator storage v = validatorsArray[idx - 1];
@@ -393,9 +395,9 @@ contract ValidatorConfigV2 is IValidatorConfigV2 {
             revert InvalidValidatorAddress();
         }
         // Allow reusing addresses of deactivated validators
-        uint256 idx1 = addressToIndex[validatorAddress];
+        uint64 idx1 = addressToIndex[validatorAddress];
         if (idx1 != 0 && validatorsArray[idx1 - 1].deactivatedAtHeight == 0) {
-            revert ValidatorAlreadyExists();
+            revert AddressAlreadyHasValidator();
         }
         _validateRotateParams(publicKey, ingress, egress);
     }
