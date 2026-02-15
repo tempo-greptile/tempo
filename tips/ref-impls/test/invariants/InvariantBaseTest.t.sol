@@ -242,12 +242,50 @@ abstract contract InvariantBaseTest is BaseTest {
     /// @param token Token to check authorization for
     /// @return The selected authorized actor
     function _selectAuthorizedActor(uint256 seed, address token) internal view returns (address) {
-        uint64 policyId = token == address(pathUSD) ? _pathUsdPolicyId : _tokenPolicyIds[token];
+        uint64 policyId = _getPolicyId(token);
 
         address[] memory authorized = new address[](_actors.length);
         uint256 count = 0;
         for (uint256 i = 0; i < _actors.length; i++) {
             if (registry.isAuthorized(policyId, _actors[i])) {
+                authorized[count++] = _actors[i];
+            }
+        }
+
+        vm.assume(count > 0);
+        return authorized[bound(seed, 0, count - 1)];
+    }
+
+    /// @dev Selects an actor authorized as sender for the given token's policy
+    /// @param seed Random seed for selection
+    /// @param token Token to check sender authorization for
+    /// @return The selected authorized sender
+    function _selectAuthorizedSender(uint256 seed, address token) internal view returns (address) {
+        uint64 policyId = _getPolicyId(token);
+
+        address[] memory authorized = new address[](_actors.length);
+        uint256 count = 0;
+        for (uint256 i = 0; i < _actors.length; i++) {
+            if (registry.isAuthorizedSender(policyId, _actors[i])) {
+                authorized[count++] = _actors[i];
+            }
+        }
+
+        vm.assume(count > 0);
+        return authorized[bound(seed, 0, count - 1)];
+    }
+
+    /// @dev Selects an actor authorized as recipient for the given token's policy
+    /// @param seed Random seed for selection
+    /// @param token Token to check recipient authorization for
+    /// @return The selected authorized recipient
+    function _selectAuthorizedRecipient(uint256 seed, address token) internal view returns (address) {
+        uint64 policyId = _getPolicyId(token);
+
+        address[] memory authorized = new address[](_actors.length);
+        uint256 count = 0;
+        for (uint256 i = 0; i < _actors.length; i++) {
+            if (registry.isAuthorizedRecipient(policyId, _actors[i])) {
                 authorized[count++] = _actors[i];
             }
         }

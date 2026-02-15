@@ -4,7 +4,6 @@ pragma solidity ^0.8.13;
 import { TIP20 } from "../../src/TIP20.sol";
 import { ITIP20 } from "../../src/interfaces/ITIP20.sol";
 import { InvariantBaseTest } from "./InvariantBaseTest.t.sol";
-import { Vm } from "forge-std/Vm.sol";
 
 /// @title TIP20 Invariant Tests
 /// @notice Fuzz-based invariant tests for the TIP20 token implementation
@@ -43,6 +42,165 @@ contract TIP20InvariantTest is InvariantBaseTest {
         if (!_tokenHolderSeen[token][holder]) {
             _tokenHolderSeen[token][holder] = true;
             _tokenHolders[token].push(holder);
+        }
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        TRANSFER SNAPSHOT HELPERS
+    //////////////////////////////////////////////////////////////*/
+
+    /// @dev Captures all relevant state before a transfer for post-transfer assertions
+    struct TransferSnapshot {
+        uint256 fromBalance;
+        uint256 toBalance;
+        uint256 totalSupply;
+        uint128 optedInSupply;
+        uint256 globalRPT;
+        address fromDelegate;
+        uint256 fromRPT;
+        address toDelegate;
+        uint256 toRPT;
+        uint256 fromDelegateRewardBal;
+        uint256 toDelegateRewardBal;
+    }
+
+    /// @dev Takes a snapshot of all transfer-relevant state
+    function _snapTransfer(
+        TIP20 token,
+        address from,
+        address to
+    )
+        internal
+        view
+        returns (TransferSnapshot memory s)
+    {
+        s.fromBalance = token.balanceOf(from);
+        s.toBalance = token.balanceOf(to);
+        s.totalSupply = token.totalSupply();
+        s.optedInSupply = token.optedInSupply();
+        s.globalRPT = token.globalRewardPerToken();
+        (s.fromDelegate, s.fromRPT,) = token.userRewardInfo(from);
+        (s.toDelegate, s.toRPT,) = token.userRewardInfo(to);
+        if (s.fromDelegate != address(0)) {
+            (,, s.fromDelegateRewardBal) = token.userRewardInfo(s.fromDelegate);
+        }
+        if (s.toDelegate != address(0)) {
+            (,, s.toDelegateRewardBal) = token.userRewardInfo(s.toDelegate);
+        }
+    }
+
+    /// @dev Asserts all post-transfer invariants: balance conservation, total supply,
+    ///      optedInSupply delta, globalRPT unchanged, rewardPerToken synced, reward accrual
+    function _assertPostTransfer(
+        TIP20 token,
+        address from,
+        address to,
+        uint256 amount,
+        TransferSnapshot memory s,
+        string memory ctx
+    )
+        internal
+        view
+    {
+        bool isSelf = from == to;
+
+        // Balance conservation
+        if (isSelf) {
+            assertEq(token.balanceOf(from), s.fromBalance, string.concat(ctx, ": balance changed on self-transfer"));
+        } else {
+            assertEq(
+                token.balanceOf(from), s.fromBalance - amount, string.concat(ctx, ": sender balance incorrect")
+            );
+            assertEq(
+                token.balanceOf(to), s.toBalance + amount, string.concat(ctx, ": recipient balance incorrect")
+            );
+        }
+
+        // Total supply unchanged
+        assertEq(token.totalSupply(), s.totalSupply, string.concat(ctx, ": total supply changed"));
+
+        // optedInSupply delta
+        {
+            int256 expectedDelta;
+            if (!isSelf) {
+                expectedDelta = (s.toDelegate != address(0) ? int256(uint256(amount)) : int256(0))
+                    - (s.fromDelegate != address(0) ? int256(uint256(amount)) : int256(0));
+            }
+            assertEq(
+                int256(uint256(token.optedInSupply())),
+                int256(uint256(s.optedInSupply)) + expectedDelta,
+                string.concat(ctx, ": optedInSupply delta mismatch")
+            );
+        }
+
+        // globalRewardPerToken unchanged
+        assertEq(
+            token.globalRewardPerToken(), s.globalRPT, string.concat(ctx, ": globalRewardPerToken changed")
+        );
+
+        // rewardPerToken synced to global
+        {
+            (, uint256 fromRPTAfter,) = token.userRewardInfo(from);
+            assertEq(fromRPTAfter, s.globalRPT, string.concat(ctx, ": sender rewardPerToken not synced"));
+
+            if (!isSelf) {
+                (, uint256 toRPTAfter,) = token.userRewardInfo(to);
+                assertEq(toRPTAfter, s.globalRPT, string.concat(ctx, ": recipient rewardPerToken not synced"));
+            }
+        }
+
+        // Reward accrual
+        _assertRewardAccrual(token, isSelf, s, ctx);
+    }
+
+    /// @dev Asserts delegate reward accrual is correct after a transfer
+    function _assertRewardAccrual(
+        TIP20 token,
+        bool isSelf,
+        TransferSnapshot memory s,
+        string memory ctx
+    )
+        internal
+        view
+    {
+        if (isSelf) {
+            if (s.fromDelegate != address(0) && s.globalRPT > s.fromRPT) {
+                uint256 expectedAccrual = (s.fromBalance * (s.globalRPT - s.fromRPT)) / ACC_PRECISION;
+                (,, uint256 delegateRewardBalAfter) = token.userRewardInfo(s.fromDelegate);
+                assertEq(
+                    delegateRewardBalAfter,
+                    s.fromDelegateRewardBal + expectedAccrual,
+                    string.concat(ctx, ": self-transfer delegate reward accrual should happen exactly once")
+                );
+            }
+            return;
+        }
+
+        if (s.fromDelegate != address(0) && s.globalRPT > s.fromRPT) {
+            uint256 expectedAccrual = (s.fromBalance * (s.globalRPT - s.fromRPT)) / ACC_PRECISION;
+            (,, uint256 fromDelegateRewardBalAfter) = token.userRewardInfo(s.fromDelegate);
+            uint256 base = s.fromDelegateRewardBal;
+            if (s.fromDelegate == s.toDelegate && s.globalRPT > s.toRPT) {
+                base += (s.toBalance * (s.globalRPT - s.toRPT)) / ACC_PRECISION;
+            }
+            assertEq(
+                fromDelegateRewardBalAfter,
+                base + expectedAccrual,
+                string.concat(ctx, ": sender delegate reward accrual incorrect")
+            );
+        }
+        if (s.toDelegate != address(0) && s.globalRPT > s.toRPT) {
+            uint256 expectedAccrual = (s.toBalance * (s.globalRPT - s.toRPT)) / ACC_PRECISION;
+            (,, uint256 toDelegateRewardBalAfter) = token.userRewardInfo(s.toDelegate);
+            uint256 base = s.toDelegateRewardBal;
+            if (s.fromDelegate == s.toDelegate && s.globalRPT > s.fromRPT) {
+                base += (s.fromBalance * (s.globalRPT - s.fromRPT)) / ACC_PRECISION;
+            }
+            assertEq(
+                toDelegateRewardBalAfter,
+                base + expectedAccrual,
+                string.concat(ctx, ": recipient delegate reward accrual incorrect")
+            );
         }
     }
 
@@ -119,7 +277,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address actor = _selectAuthorizedActor(actorSeed, address(token));
+        address actor = _selectAuthorizedSender(actorSeed, address(token));
         address recipient = _selectActorExcluding(recipientSeed, actor);
 
         uint256 actorBalance = token.balanceOf(actor);
@@ -127,137 +285,20 @@ contract TIP20InvariantTest is InvariantBaseTest {
 
         amount = bound(amount, 1, actorBalance);
 
-        vm.assume(_isAuthorizedSender(address(token), actor));
         vm.assume(_isAuthorizedRecipient(address(token), recipient));
         vm.assume(!token.paused());
 
-        // Snapshot all relevant state before transfer
-        uint256 recipientBalanceBefore = token.balanceOf(recipient);
-        uint256 totalSupplyBefore = token.totalSupply();
-        uint128 optedInSupplyBefore = token.optedInSupply();
-        uint256 globalRPTBefore = token.globalRewardPerToken();
+        TransferSnapshot memory s = _snapTransfer(token, actor, recipient);
 
-        // Snapshot reward info for sender and recipient
-        (address fromDelegate, uint256 fromRPTBefore,) = token.userRewardInfo(actor);
-        (address toDelegate, uint256 toRPTBefore,) = token.userRewardInfo(recipient);
-
-        // Snapshot delegate reward balances before transfer
-        (,, uint256 fromDelegateRewardBalBefore) =
-            fromDelegate != address(0) ? token.userRewardInfo(fromDelegate) : (address(0), uint256(0), uint256(0));
-        (,, uint256 toDelegateRewardBalBefore) =
-            toDelegate != address(0) ? token.userRewardInfo(toDelegate) : (address(0), uint256(0), uint256(0));
-
-        vm.recordLogs();
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.Transfer(actor, recipient, amount);
 
         vm.startPrank(actor);
         bool success = token.transfer(recipient, amount);
         vm.stopPrank();
 
         assertTrue(success, "TEMPO-TIP1: Transfer should return true");
-
-        // TEMPO-TIP1: Balance conservation
-        assertEq(
-            token.balanceOf(actor),
-            actorBalance - amount,
-            "TEMPO-TIP1: Sender balance not decreased correctly"
-        );
-        assertEq(
-            token.balanceOf(recipient),
-            recipientBalanceBefore + amount,
-            "TEMPO-TIP1: Recipient balance not increased correctly"
-        );
-
-        // TEMPO-TIP2: Total supply unchanged
-        assertEq(
-            token.totalSupply(),
-            totalSupplyBefore,
-            "TEMPO-TIP2: Total supply changed during transfer"
-        );
-
-        // optedInSupply consistency: must reflect movement between opted-in/out accounts
-        {
-            int256 expectedDelta =
-                (toDelegate != address(0) ? int256(uint256(amount)) : int256(0))
-                - (fromDelegate != address(0) ? int256(uint256(amount)) : int256(0));
-
-            assertEq(
-                int256(uint256(token.optedInSupply())),
-                int256(uint256(optedInSupplyBefore)) + expectedDelta,
-                "optedInSupply delta mismatch after transfer"
-            );
-        }
-
-        // globalRewardPerToken must not change during transfer
-        assertEq(
-            token.globalRewardPerToken(),
-            globalRPTBefore,
-            "globalRewardPerToken changed during transfer"
-        );
-
-        // Both parties' rewardPerToken must be synced to global after transfer
-        (, uint256 fromRPTAfter,) = token.userRewardInfo(actor);
-        (, uint256 toRPTAfter,) = token.userRewardInfo(recipient);
-        assertEq(fromRPTAfter, globalRPTBefore, "Sender rewardPerToken not synced to global");
-        assertEq(toRPTAfter, globalRPTBefore, "Recipient rewardPerToken not synced to global");
-
-        // Reward accrual: delegates must receive correct reward increments
-        if (fromDelegate != address(0) && globalRPTBefore > fromRPTBefore) {
-            uint256 expectedAccrual = (actorBalance * (globalRPTBefore - fromRPTBefore)) / ACC_PRECISION;
-            (,, uint256 fromDelegateRewardBalAfter) = token.userRewardInfo(fromDelegate);
-            uint256 base = fromDelegateRewardBalBefore;
-            // Account for case where fromDelegate == toDelegate (both accruals go to same address)
-            if (fromDelegate == toDelegate && globalRPTBefore > toRPTBefore) {
-                base += (recipientBalanceBefore * (globalRPTBefore - toRPTBefore)) / ACC_PRECISION;
-            }
-            assertEq(
-                fromDelegateRewardBalAfter,
-                base + expectedAccrual,
-                "Sender delegate reward accrual incorrect"
-            );
-        }
-        if (toDelegate != address(0) && globalRPTBefore > toRPTBefore) {
-            uint256 expectedAccrual = (recipientBalanceBefore * (globalRPTBefore - toRPTBefore)) / ACC_PRECISION;
-            (,, uint256 toDelegateRewardBalAfter) = token.userRewardInfo(toDelegate);
-            // Account for case where fromDelegate == toDelegate (both accruals go to same address)
-            uint256 base = toDelegateRewardBalBefore;
-            if (fromDelegate == toDelegate && globalRPTBefore > fromRPTBefore) {
-                base += (actorBalance * (globalRPTBefore - fromRPTBefore)) / ACC_PRECISION;
-            }
-            assertEq(
-                toDelegateRewardBalAfter,
-                base + expectedAccrual,
-                "Recipient delegate reward accrual incorrect"
-            );
-        }
-
-        // Verify Transfer event
-        {
-            Vm.Log[] memory entries = vm.getRecordedLogs();
-            bytes32 transferSig = keccak256("Transfer(address,address,uint256)");
-            bool found = false;
-            for (uint256 i = 0; i < entries.length; i++) {
-                if (entries[i].emitter == address(token) && entries[i].topics[0] == transferSig) {
-                    assertEq(
-                        entries[i].topics[1],
-                        bytes32(uint256(uint160(actor))),
-                        "Transfer event: wrong from"
-                    );
-                    assertEq(
-                        entries[i].topics[2],
-                        bytes32(uint256(uint160(recipient))),
-                        "Transfer event: wrong to"
-                    );
-                    assertEq(
-                        abi.decode(entries[i].data, (uint256)),
-                        amount,
-                        "Transfer event: wrong amount"
-                    );
-                    found = true;
-                    break;
-                }
-            }
-            assertTrue(found, "Transfer event not emitted");
-        }
+        _assertPostTransfer(token, actor, recipient, amount, s, "transfer");
 
         if (_loggingEnabled) {
             _log(
@@ -276,7 +317,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
     }
 
     /// @notice Handler for self-transfer edge case
-    /// @dev Self-transfers are valid and must not change any balances or optedInSupply
+    /// @dev Self-transfers are valid and must not change any balances or optedInSupply.
+    ///      Reward accrual must happen exactly once (not doubled).
     function handler_transferSelf(
         uint256 actorSeed,
         uint256 tokenSeed,
@@ -285,100 +327,27 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address actor = _selectAuthorizedActor(actorSeed, address(token));
+        address actor = _selectAuthorizedSender(actorSeed, address(token));
 
         uint256 actorBalance = token.balanceOf(actor);
         vm.assume(actorBalance > 0);
 
         amount = bound(amount, 0, actorBalance);
 
-        vm.assume(_isAuthorizedSender(address(token), actor));
         vm.assume(_isAuthorizedRecipient(address(token), actor));
         vm.assume(!token.paused());
 
-        uint256 totalSupplyBefore = token.totalSupply();
-        uint128 optedInSupplyBefore = token.optedInSupply();
-        uint256 globalRPTBefore = token.globalRewardPerToken();
-        (address actorDelegate, uint256 actorRPTBefore,) = token.userRewardInfo(actor);
+        TransferSnapshot memory s = _snapTransfer(token, actor, actor);
 
-        // Snapshot delegate reward balance before transfer
-        (,, uint256 delegateRewardBalBefore) =
-            actorDelegate != address(0) ? token.userRewardInfo(actorDelegate) : (address(0), uint256(0), uint256(0));
-
-        vm.recordLogs();
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.Transfer(actor, actor, amount);
 
         vm.startPrank(actor);
         bool success = token.transfer(actor, amount);
         vm.stopPrank();
 
         assertTrue(success, "Self-transfer should return true");
-
-        // Balance must be unchanged
-        assertEq(token.balanceOf(actor), actorBalance, "Balance changed on self-transfer");
-
-        // Total supply unchanged
-        assertEq(token.totalSupply(), totalSupplyBefore, "Total supply changed on self-transfer");
-
-        // optedInSupply must be unchanged (from and to are the same, deltas cancel)
-        assertEq(
-            token.optedInSupply(),
-            optedInSupplyBefore,
-            "optedInSupply changed on self-transfer"
-        );
-
-        // globalRewardPerToken must not change
-        assertEq(
-            token.globalRewardPerToken(),
-            globalRPTBefore,
-            "globalRewardPerToken changed on self-transfer"
-        );
-
-        // rewardPerToken must be synced to global
-        (, uint256 actorRPTAfter,) = token.userRewardInfo(actor);
-        assertEq(actorRPTAfter, globalRPTBefore, "rewardPerToken not synced on self-transfer");
-
-        // Reward accrual: if opted-in, accrual happens exactly once (not doubled)
-        // _transfer calls _updateRewardsAndGetRecipient twice (for from and to), but the
-        // second call sees rewardPerToken already synced, so accrual is zero.
-        if (actorDelegate != address(0) && globalRPTBefore > actorRPTBefore) {
-            uint256 expectedAccrual =
-                (actorBalance * (globalRPTBefore - actorRPTBefore)) / ACC_PRECISION;
-            (,, uint256 delegateRewardBalAfter) = token.userRewardInfo(actorDelegate);
-            assertEq(
-                delegateRewardBalAfter,
-                delegateRewardBalBefore + expectedAccrual,
-                "Self-transfer: delegate reward accrual should happen exactly once"
-            );
-        }
-
-        // Verify Transfer event (self-transfers must still emit)
-        {
-            Vm.Log[] memory entries = vm.getRecordedLogs();
-            bytes32 transferSig = keccak256("Transfer(address,address,uint256)");
-            bool found = false;
-            for (uint256 i = 0; i < entries.length; i++) {
-                if (entries[i].emitter == address(token) && entries[i].topics[0] == transferSig) {
-                    assertEq(
-                        entries[i].topics[1],
-                        bytes32(uint256(uint160(actor))),
-                        "Transfer event: wrong from on self-transfer"
-                    );
-                    assertEq(
-                        entries[i].topics[2],
-                        bytes32(uint256(uint160(actor))),
-                        "Transfer event: wrong to on self-transfer"
-                    );
-                    assertEq(
-                        abi.decode(entries[i].data, (uint256)),
-                        amount,
-                        "Transfer event: wrong amount on self-transfer"
-                    );
-                    found = true;
-                    break;
-                }
-            }
-            assertTrue(found, "Transfer event not emitted on self-transfer");
-        }
+        _assertPostTransfer(token, actor, actor, amount, s, "self-transfer");
 
         if (_loggingEnabled) {
             _log(
@@ -395,7 +364,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
     }
 
     /// @notice Handler for zero-amount transfer edge case
-    /// @dev Tests that zero-amount transfers are handled correctly
+    /// @dev Tests that zero-amount transfers succeed, emit Transfer, and leave all state unchanged
     function handler_transferZeroAmount(
         uint256 actorSeed,
         uint256 tokenSeed,
@@ -404,90 +373,23 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address actor = _selectAuthorizedActor(actorSeed, address(token));
+        address actor = _selectAuthorizedSender(actorSeed, address(token));
         address recipient = _selectActorExcluding(recipientSeed, actor);
 
-        vm.assume(_isAuthorizedSender(address(token), actor));
         vm.assume(_isAuthorizedRecipient(address(token), recipient));
         vm.assume(!token.paused());
 
-        uint256 actorBalanceBefore = token.balanceOf(actor);
-        uint256 recipientBalanceBefore = token.balanceOf(recipient);
-        uint256 totalSupplyBefore = token.totalSupply();
-        uint128 optedInSupplyBefore = token.optedInSupply();
-        uint256 globalRPTBefore = token.globalRewardPerToken();
+        TransferSnapshot memory s = _snapTransfer(token, actor, recipient);
 
-        vm.recordLogs();
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.Transfer(actor, recipient, 0);
 
         vm.startPrank(actor);
         bool success = token.transfer(recipient, 0);
         vm.stopPrank();
 
         assertTrue(success, "Zero transfer should return true");
-
-        // Balances should remain unchanged
-        assertEq(
-            token.balanceOf(actor),
-            actorBalanceBefore,
-            "Sender balance changed on zero transfer"
-        );
-        assertEq(
-            token.balanceOf(recipient),
-            recipientBalanceBefore,
-            "Recipient balance changed on zero transfer"
-        );
-        assertEq(
-            token.totalSupply(), totalSupplyBefore, "Total supply changed on zero transfer"
-        );
-
-        // optedInSupply unchanged (zero amount means no movement)
-        assertEq(
-            token.optedInSupply(),
-            optedInSupplyBefore,
-            "optedInSupply changed on zero transfer"
-        );
-
-        // globalRewardPerToken must not change
-        assertEq(
-            token.globalRewardPerToken(),
-            globalRPTBefore,
-            "globalRewardPerToken changed on zero transfer"
-        );
-
-        // rewardPerToken must be synced for both parties
-        (, uint256 fromRPTAfter,) = token.userRewardInfo(actor);
-        (, uint256 toRPTAfter,) = token.userRewardInfo(recipient);
-        assertEq(fromRPTAfter, globalRPTBefore, "Sender rewardPerToken not synced on zero transfer");
-        assertEq(toRPTAfter, globalRPTBefore, "Recipient rewardPerToken not synced on zero transfer");
-
-        // Transfer event must still be emitted for zero-amount transfers
-        {
-            Vm.Log[] memory entries = vm.getRecordedLogs();
-            bytes32 transferSig = keccak256("Transfer(address,address,uint256)");
-            bool found = false;
-            for (uint256 i = 0; i < entries.length; i++) {
-                if (entries[i].emitter == address(token) && entries[i].topics[0] == transferSig) {
-                    assertEq(
-                        entries[i].topics[1],
-                        bytes32(uint256(uint160(actor))),
-                        "Transfer event: wrong from on zero transfer"
-                    );
-                    assertEq(
-                        entries[i].topics[2],
-                        bytes32(uint256(uint160(recipient))),
-                        "Transfer event: wrong to on zero transfer"
-                    );
-                    assertEq(
-                        abi.decode(entries[i].data, (uint256)),
-                        0,
-                        "Transfer event: wrong amount on zero transfer"
-                    );
-                    found = true;
-                    break;
-                }
-            }
-            assertTrue(found, "Transfer event not emitted on zero transfer");
-        }
+        _assertPostTransfer(token, actor, recipient, 0, s, "zero-transfer");
 
         if (_loggingEnabled) {
             _log(
@@ -513,13 +415,12 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address actor = _selectAuthorizedActor(actorSeed, address(token));
+        address actor = _selectAuthorizedSender(actorSeed, address(token));
 
         uint256 actorBalance = token.balanceOf(actor);
         vm.assume(actorBalance > 0);
         amount = bound(amount, 1, actorBalance);
 
-        vm.assume(_isAuthorizedSender(address(token), actor));
         vm.assume(!token.paused());
 
         vm.startPrank(actor);
@@ -539,13 +440,12 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address actor = _selectAuthorizedActor(actorSeed, address(token));
+        address actor = _selectAuthorizedSender(actorSeed, address(token));
 
         uint256 actorBalance = token.balanceOf(actor);
         vm.assume(actorBalance > 0);
         amount = bound(amount, 1, actorBalance);
 
-        vm.assume(_isAuthorizedSender(address(token), actor));
         vm.assume(!token.paused());
 
         // Construct a TIP20-prefix address: upper 96 bits = 0x20c000000000000000000000
@@ -570,7 +470,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address owner = _selectAuthorizedActor(ownerSeed, address(token));
+        address owner = _selectAuthorizedSender(ownerSeed, address(token));
         address spender = _selectActorExcluding(actorSeed, owner);
 
         uint256 ownerBalance = token.balanceOf(owner);
@@ -580,7 +480,6 @@ contract TIP20InvariantTest is InvariantBaseTest {
         uint256 currentAllowance = token.allowance(owner, spender);
         vm.assume(currentAllowance >= amount);
 
-        vm.assume(_isAuthorizedSender(address(token), owner));
         vm.assume(!token.paused());
 
         // Construct a TIP20-prefix address: upper 96 bits = 0x20c000000000000000000000
@@ -604,13 +503,12 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address actor = _selectAuthorizedActor(actorSeed, address(token));
+        address actor = _selectAuthorizedSender(actorSeed, address(token));
         address recipient = _selectActorExcluding(recipientSeed, actor);
 
         uint256 actorBalance = token.balanceOf(actor);
         extra = bound(extra, 1, 1_000_000_000_000);
 
-        vm.assume(_isAuthorizedSender(address(token), actor));
         vm.assume(_isAuthorizedRecipient(address(token), recipient));
         vm.assume(!token.paused());
 
@@ -625,7 +523,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
     }
 
     /// @notice Handler for transfer from blacklisted sender
-    /// @dev Tests that transfers from a blacklisted address revert with PolicyForbids
+    /// @dev Tests that transfers from a blacklisted address revert with PolicyForbids.
+    ///      Uses vm.snapshot/revertTo for clean state isolation.
     function handler_tryTransferPolicyForbidsSender(
         uint256 actorSeed,
         uint256 tokenSeed,
@@ -644,26 +543,25 @@ contract TIP20InvariantTest is InvariantBaseTest {
 
         vm.assume(!token.paused());
 
-        // Blacklist the sender
+        uint256 snap = vm.snapshotState();
+
         uint64 policyId = _getPolicyId(address(token));
         address policyAdmin = _getPolicyAdmin(address(token));
 
         vm.prank(policyAdmin);
         registry.modifyPolicyBlacklist(policyId, actor, true);
 
-        // Sender is now blacklisted, transfer should revert
         vm.startPrank(actor);
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         token.transfer(recipient, amount);
         vm.stopPrank();
 
-        // Clean up: remove from blacklist
-        vm.prank(policyAdmin);
-        registry.modifyPolicyBlacklist(policyId, actor, false);
+        vm.revertToStateAndDelete(snap);
     }
 
     /// @notice Handler for transfer to blacklisted recipient
-    /// @dev Tests that transfers to a blacklisted address revert with PolicyForbids
+    /// @dev Tests that transfers to a blacklisted address revert with PolicyForbids.
+    ///      Uses vm.snapshot/revertTo for clean state isolation.
     function handler_tryTransferPolicyForbidsRecipient(
         uint256 actorSeed,
         uint256 tokenSeed,
@@ -673,7 +571,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address actor = _selectActor(actorSeed);
+        address actor = _selectAuthorizedSender(actorSeed, address(token));
         address recipient = _selectActorExcluding(recipientSeed, actor);
 
         uint256 actorBalance = token.balanceOf(actor);
@@ -681,28 +579,26 @@ contract TIP20InvariantTest is InvariantBaseTest {
         amount = bound(amount, 1, actorBalance);
 
         vm.assume(!token.paused());
-        vm.assume(_isAuthorizedSender(address(token), actor));
 
-        // Blacklist the recipient
+        uint256 snap = vm.snapshotState();
+
         uint64 policyId = _getPolicyId(address(token));
         address policyAdmin = _getPolicyAdmin(address(token));
 
         vm.prank(policyAdmin);
         registry.modifyPolicyBlacklist(policyId, recipient, true);
 
-        // Recipient is now blacklisted, transfer should revert
         vm.startPrank(actor);
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         token.transfer(recipient, amount);
         vm.stopPrank();
 
-        // Clean up: remove from blacklist
-        vm.prank(policyAdmin);
-        registry.modifyPolicyBlacklist(policyId, recipient, false);
+        vm.revertToStateAndDelete(snap);
     }
 
     /// @notice Handler for transfer when contract is paused
-    /// @dev Tests that transfers revert with ContractPaused when paused
+    /// @dev Tests that transfers revert with ContractPaused when paused.
+    ///      Ensures all other preconditions are met so the revert is from the pause check.
     function handler_tryTransferWhenPaused(
         uint256 actorSeed,
         uint256 tokenSeed,
@@ -714,12 +610,14 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
         vm.assume(token.paused());
 
-        address actor = _selectActor(actorSeed);
+        address actor = _selectAuthorizedSender(actorSeed, address(token));
         address recipient = _selectActorExcluding(recipientSeed, actor);
 
         uint256 actorBalance = token.balanceOf(actor);
         vm.assume(actorBalance > 0);
         amount = bound(amount, 1, actorBalance);
+
+        vm.assume(_isAuthorizedRecipient(address(token), recipient));
 
         vm.startPrank(actor);
         vm.expectRevert(ITIP20.ContractPaused.selector);
@@ -730,7 +628,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
     /// @notice Handler for transferFrom with allowance
     /// @dev Tests TEMPO-TIP3 (allowance consumption), TEMPO-TIP4 (infinite allowance),
     ///      balance conservation, total supply unchanged, optedInSupply consistency,
-    ///      reward accounting, and Transfer event emission
+    ///      reward accounting, spender isolation, and Transfer event emission
     function handler_transferFrom(
         uint256 actorSeed,
         uint256 tokenSeed,
@@ -741,7 +639,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address owner = _selectAuthorizedActor(ownerSeed, address(token));
+        address owner = _selectAuthorizedSender(ownerSeed, address(token));
         address spender = _selectActorExcluding(actorSeed, owner);
         address recipient = _selectActorExcluding(recipientSeed, owner);
 
@@ -753,31 +651,17 @@ contract TIP20InvariantTest is InvariantBaseTest {
 
         amount = bound(amount, 1, ownerBalance < currentAllowance ? ownerBalance : currentAllowance);
 
-        vm.assume(_isAuthorizedSender(address(token), owner));
         vm.assume(_isAuthorizedRecipient(address(token), recipient));
         vm.assume(!token.paused());
 
-        // Snapshot all relevant state before transferFrom
-        uint256 recipientBalanceBefore = token.balanceOf(recipient);
-        uint256 totalSupplyBefore = token.totalSupply();
-        uint128 optedInSupplyBefore = token.optedInSupply();
-        uint256 globalRPTBefore = token.globalRewardPerToken();
+        TransferSnapshot memory s = _snapTransfer(token, owner, recipient);
         bool isInfiniteAllowance = currentAllowance == type(uint256).max;
-
-        // Snapshot reward info for owner and recipient
-        (address fromDelegate, uint256 fromRPTBefore,) = token.userRewardInfo(owner);
-        (address toDelegate, uint256 toRPTBefore,) = token.userRewardInfo(recipient);
-
-        // Snapshot delegate reward balances before transfer
-        (,, uint256 fromDelegateRewardBalBefore) =
-            fromDelegate != address(0) ? token.userRewardInfo(fromDelegate) : (address(0), uint256(0), uint256(0));
-        (,, uint256 toDelegateRewardBalBefore) =
-            toDelegate != address(0) ? token.userRewardInfo(toDelegate) : (address(0), uint256(0), uint256(0));
 
         // Snapshot spender reward info to assert it is unchanged
         (, uint256 spenderRPTBefore, uint256 spenderRewardBalBefore) = token.userRewardInfo(spender);
 
-        vm.recordLogs();
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.Transfer(owner, recipient, amount);
 
         vm.startPrank(spender);
         bool success = token.transferFrom(owner, recipient, amount);
@@ -800,114 +684,13 @@ contract TIP20InvariantTest is InvariantBaseTest {
             );
         }
 
-        // Balance conservation
-        assertEq(
-            token.balanceOf(owner),
-            ownerBalance - amount,
-            "TEMPO-TIP3: Owner balance not decreased correctly"
-        );
-        assertEq(
-            token.balanceOf(recipient),
-            recipientBalanceBefore + amount,
-            "TEMPO-TIP3: Recipient balance not increased correctly"
-        );
-
-        // Total supply unchanged
-        assertEq(
-            token.totalSupply(),
-            totalSupplyBefore,
-            "TEMPO-TIP2: Total supply changed during transferFrom"
-        );
-
-        // optedInSupply consistency: must reflect movement between opted-in/out accounts
-        {
-            int256 expectedDelta =
-                (toDelegate != address(0) ? int256(uint256(amount)) : int256(0))
-                - (fromDelegate != address(0) ? int256(uint256(amount)) : int256(0));
-
-            assertEq(
-                int256(uint256(token.optedInSupply())),
-                int256(uint256(optedInSupplyBefore)) + expectedDelta,
-                "optedInSupply delta mismatch after transferFrom"
-            );
-        }
-
-        // globalRewardPerToken must not change during transferFrom
-        assertEq(
-            token.globalRewardPerToken(),
-            globalRPTBefore,
-            "globalRewardPerToken changed during transferFrom"
-        );
-
-        // Both parties' rewardPerToken must be synced to global after transferFrom
-        (, uint256 fromRPTAfter,) = token.userRewardInfo(owner);
-        (, uint256 toRPTAfter,) = token.userRewardInfo(recipient);
-        assertEq(fromRPTAfter, globalRPTBefore, "Owner rewardPerToken not synced to global");
-        assertEq(toRPTAfter, globalRPTBefore, "Recipient rewardPerToken not synced to global");
-
-        // Reward accrual: delegates must receive correct reward increments
-        if (fromDelegate != address(0) && globalRPTBefore > fromRPTBefore) {
-            uint256 expectedAccrual = (ownerBalance * (globalRPTBefore - fromRPTBefore)) / ACC_PRECISION;
-            (,, uint256 fromDelegateRewardBalAfter) = token.userRewardInfo(fromDelegate);
-            uint256 base = fromDelegateRewardBalBefore;
-            if (fromDelegate == toDelegate && globalRPTBefore > toRPTBefore) {
-                base += (recipientBalanceBefore * (globalRPTBefore - toRPTBefore)) / ACC_PRECISION;
-            }
-            assertEq(
-                fromDelegateRewardBalAfter,
-                base + expectedAccrual,
-                "Owner delegate reward accrual incorrect"
-            );
-        }
-        if (toDelegate != address(0) && globalRPTBefore > toRPTBefore) {
-            uint256 expectedAccrual = (recipientBalanceBefore * (globalRPTBefore - toRPTBefore)) / ACC_PRECISION;
-            (,, uint256 toDelegateRewardBalAfter) = token.userRewardInfo(toDelegate);
-            uint256 base = toDelegateRewardBalBefore;
-            if (fromDelegate == toDelegate && globalRPTBefore > fromRPTBefore) {
-                base += (ownerBalance * (globalRPTBefore - fromRPTBefore)) / ACC_PRECISION;
-            }
-            assertEq(
-                toDelegateRewardBalAfter,
-                base + expectedAccrual,
-                "Recipient delegate reward accrual incorrect"
-            );
-        }
+        _assertPostTransfer(token, owner, recipient, amount, s, "transferFrom");
 
         // Spender reward info must be unchanged when spender is not involved in _transfer
-        // and is not a reward delegate of either party
-        if (spender != owner && spender != recipient && spender != fromDelegate && spender != toDelegate) {
+        if (spender != owner && spender != recipient && spender != s.fromDelegate && spender != s.toDelegate) {
             (, uint256 spenderRPTAfter, uint256 spenderRewardBalAfter) = token.userRewardInfo(spender);
             assertEq(spenderRPTAfter, spenderRPTBefore, "Spender rewardPerToken changed");
             assertEq(spenderRewardBalAfter, spenderRewardBalBefore, "Spender rewardBalance changed");
-        }
-
-        // Verify Transfer event
-        {
-            Vm.Log[] memory entries = vm.getRecordedLogs();
-            bytes32 transferSig = keccak256("Transfer(address,address,uint256)");
-            bool found = false;
-            for (uint256 i = 0; i < entries.length; i++) {
-                if (entries[i].emitter == address(token) && entries[i].topics[0] == transferSig) {
-                    assertEq(
-                        entries[i].topics[1],
-                        bytes32(uint256(uint160(owner))),
-                        "Transfer event: wrong from"
-                    );
-                    assertEq(
-                        entries[i].topics[2],
-                        bytes32(uint256(uint160(recipient))),
-                        "Transfer event: wrong to"
-                    );
-                    assertEq(
-                        abi.decode(entries[i].data, (uint256)),
-                        amount,
-                        "Transfer event: wrong amount"
-                    );
-                    found = true;
-                    break;
-                }
-            }
-            assertTrue(found, "Transfer event not emitted on transferFrom");
         }
 
         if (_loggingEnabled) {
@@ -929,7 +712,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
     }
 
     /// @notice Handler for transferFrom self-transfer edge case (owner == recipient)
-    /// @dev Self-transfers via transferFrom are valid and must not change balances or optedInSupply
+    /// @dev Self-transfers via transferFrom are valid: balance unchanged, allowance consumed,
+    ///      reward accrual happens exactly once (not doubled)
     function handler_transferFromSelf(
         uint256 actorSeed,
         uint256 tokenSeed,
@@ -939,7 +723,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address owner = _selectAuthorizedActor(ownerSeed, address(token));
+        address owner = _selectAuthorizedSender(ownerSeed, address(token));
         address spender = _selectActorExcluding(actorSeed, owner);
 
         uint256 ownerBalance = token.balanceOf(owner);
@@ -950,30 +734,20 @@ contract TIP20InvariantTest is InvariantBaseTest {
 
         amount = bound(amount, 0, ownerBalance < currentAllowance ? ownerBalance : currentAllowance);
 
-        vm.assume(_isAuthorizedSender(address(token), owner));
         vm.assume(_isAuthorizedRecipient(address(token), owner));
         vm.assume(!token.paused());
 
-        uint256 totalSupplyBefore = token.totalSupply();
-        uint128 optedInSupplyBefore = token.optedInSupply();
-        uint256 globalRPTBefore = token.globalRewardPerToken();
+        TransferSnapshot memory s = _snapTransfer(token, owner, owner);
         bool isInfiniteAllowance = currentAllowance == type(uint256).max;
-        (address ownerDelegate, uint256 ownerRPTBefore,) = token.userRewardInfo(owner);
 
-        // Snapshot delegate reward balance before transfer
-        (,, uint256 delegateRewardBalBefore) =
-            ownerDelegate != address(0) ? token.userRewardInfo(ownerDelegate) : (address(0), uint256(0), uint256(0));
-
-        vm.recordLogs();
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.Transfer(owner, owner, amount);
 
         vm.startPrank(spender);
         bool success = token.transferFrom(owner, owner, amount);
         vm.stopPrank();
 
         assertTrue(success, "Self-transferFrom should return true");
-
-        // Balance must be unchanged
-        assertEq(token.balanceOf(owner), ownerBalance, "Balance changed on self-transferFrom");
 
         // Allowance handling still applies
         if (isInfiniteAllowance) {
@@ -990,67 +764,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
             );
         }
 
-        // Total supply unchanged
-        assertEq(token.totalSupply(), totalSupplyBefore, "Total supply changed on self-transferFrom");
-
-        // optedInSupply must be unchanged (from and to are the same, deltas cancel)
-        assertEq(
-            token.optedInSupply(),
-            optedInSupplyBefore,
-            "optedInSupply changed on self-transferFrom"
-        );
-
-        // globalRewardPerToken must not change
-        assertEq(
-            token.globalRewardPerToken(),
-            globalRPTBefore,
-            "globalRewardPerToken changed on self-transferFrom"
-        );
-
-        // rewardPerToken must be synced to global
-        (, uint256 ownerRPTAfter,) = token.userRewardInfo(owner);
-        assertEq(ownerRPTAfter, globalRPTBefore, "rewardPerToken not synced on self-transferFrom");
-
-        // Reward accrual: if opted-in, accrual happens exactly once (not doubled)
-        if (ownerDelegate != address(0) && globalRPTBefore > ownerRPTBefore) {
-            uint256 expectedAccrual =
-                (ownerBalance * (globalRPTBefore - ownerRPTBefore)) / ACC_PRECISION;
-            (,, uint256 delegateRewardBalAfter) = token.userRewardInfo(ownerDelegate);
-            assertEq(
-                delegateRewardBalAfter,
-                delegateRewardBalBefore + expectedAccrual,
-                "Self-transferFrom: delegate reward accrual should happen exactly once"
-            );
-        }
-
-        // Verify Transfer event (self-transfers must still emit)
-        {
-            Vm.Log[] memory entries = vm.getRecordedLogs();
-            bytes32 transferSig = keccak256("Transfer(address,address,uint256)");
-            bool found = false;
-            for (uint256 i = 0; i < entries.length; i++) {
-                if (entries[i].emitter == address(token) && entries[i].topics[0] == transferSig) {
-                    assertEq(
-                        entries[i].topics[1],
-                        bytes32(uint256(uint160(owner))),
-                        "Transfer event: wrong from on self-transferFrom"
-                    );
-                    assertEq(
-                        entries[i].topics[2],
-                        bytes32(uint256(uint160(owner))),
-                        "Transfer event: wrong to on self-transferFrom"
-                    );
-                    assertEq(
-                        abi.decode(entries[i].data, (uint256)),
-                        amount,
-                        "Transfer event: wrong amount on self-transferFrom"
-                    );
-                    found = true;
-                    break;
-                }
-            }
-            assertTrue(found, "Transfer event not emitted on self-transferFrom");
-        }
+        _assertPostTransfer(token, owner, owner, amount, s, "self-transferFrom");
 
         if (_loggingEnabled) {
             _log(
@@ -1068,178 +782,9 @@ contract TIP20InvariantTest is InvariantBaseTest {
         }
     }
 
-    /// @notice Handler for transferFrom where spender is also the owner (self-spend)
-    /// @dev TIP20 requires allowance even for self-spend (unlike some ERC20s)
-    function handler_transferFromSpenderIsOwner(
-        uint256 actorSeed,
-        uint256 tokenSeed,
-        uint256 recipientSeed,
-        uint256 amount
-    )
-        external
-    {
-        TIP20 token = _selectBaseToken(tokenSeed);
-        address owner = _selectAuthorizedActor(actorSeed, address(token));
-        address recipient = _selectActorExcluding(recipientSeed, owner);
-
-        uint256 ownerBalance = token.balanceOf(owner);
-        vm.assume(ownerBalance > 0);
-
-        // Spender == owner: must still check allowance[owner][owner]
-        uint256 currentAllowance = token.allowance(owner, owner);
-        vm.assume(currentAllowance > 0);
-
-        amount = bound(amount, 1, ownerBalance < currentAllowance ? ownerBalance : currentAllowance);
-
-        vm.assume(_isAuthorizedSender(address(token), owner));
-        vm.assume(_isAuthorizedRecipient(address(token), recipient));
-        vm.assume(!token.paused());
-
-        uint256 recipientBalanceBefore = token.balanceOf(recipient);
-        uint256 totalSupplyBefore = token.totalSupply();
-        bool isInfiniteAllowance = currentAllowance == type(uint256).max;
-
-        vm.startPrank(owner);
-        bool success = token.transferFrom(owner, recipient, amount);
-        vm.stopPrank();
-
-        assertTrue(success, "TransferFrom self-spend should return true");
-
-        // Balance conservation
-        assertEq(
-            token.balanceOf(owner),
-            ownerBalance - amount,
-            "Owner balance not decreased on self-spend transferFrom"
-        );
-        assertEq(
-            token.balanceOf(recipient),
-            recipientBalanceBefore + amount,
-            "Recipient balance not increased on self-spend transferFrom"
-        );
-
-        // Total supply unchanged
-        assertEq(token.totalSupply(), totalSupplyBefore, "Total supply changed on self-spend transferFrom");
-
-        // Allowance handling
-        if (isInfiniteAllowance) {
-            assertEq(
-                token.allowance(owner, owner),
-                type(uint256).max,
-                "Infinite self-allowance should remain infinite"
-            );
-        } else {
-            assertEq(
-                token.allowance(owner, owner),
-                currentAllowance - amount,
-                "Self-allowance not decreased correctly"
-            );
-        }
-
-        if (_loggingEnabled) {
-            _log(
-                string.concat(
-                    "TRANSFER_FROM_SELF_SPEND: ",
-                    _getActorIndex(owner),
-                    " -> ",
-                    _getActorIndex(recipient),
-                    " ",
-                    vm.toString(amount),
-                    " ",
-                    token.symbol()
-                )
-            );
-        }
-    }
-
-    /// @notice Handler for transferFrom where spender is also the recipient
-    /// @dev Tests that spender can transferFrom to themselves
-    function handler_transferFromSpenderIsRecipient(
-        uint256 actorSeed,
-        uint256 tokenSeed,
-        uint256 ownerSeed,
-        uint256 amount
-    )
-        external
-    {
-        TIP20 token = _selectBaseToken(tokenSeed);
-        address owner = _selectAuthorizedActor(ownerSeed, address(token));
-        address spender = _selectActorExcluding(actorSeed, owner);
-
-        uint256 ownerBalance = token.balanceOf(owner);
-        vm.assume(ownerBalance > 0);
-
-        uint256 currentAllowance = token.allowance(owner, spender);
-        vm.assume(currentAllowance > 0);
-
-        amount = bound(amount, 1, ownerBalance < currentAllowance ? ownerBalance : currentAllowance);
-
-        vm.assume(_isAuthorizedSender(address(token), owner));
-        vm.assume(_isAuthorizedRecipient(address(token), spender));
-        vm.assume(!token.paused());
-
-        // spender == recipient: spender receives the tokens
-        uint256 spenderBalanceBefore = token.balanceOf(spender);
-        uint256 totalSupplyBefore = token.totalSupply();
-        bool isInfiniteAllowance = currentAllowance == type(uint256).max;
-
-        vm.startPrank(spender);
-        bool success = token.transferFrom(owner, spender, amount);
-        vm.stopPrank();
-
-        assertTrue(success, "TransferFrom spender-is-recipient should return true");
-
-        // Balance conservation
-        assertEq(
-            token.balanceOf(owner),
-            ownerBalance - amount,
-            "Owner balance not decreased on spender-is-recipient transferFrom"
-        );
-        assertEq(
-            token.balanceOf(spender),
-            spenderBalanceBefore + amount,
-            "Spender/recipient balance not increased on spender-is-recipient transferFrom"
-        );
-
-        // Total supply unchanged
-        assertEq(
-            token.totalSupply(),
-            totalSupplyBefore,
-            "Total supply changed on spender-is-recipient transferFrom"
-        );
-
-        // Allowance handling
-        if (isInfiniteAllowance) {
-            assertEq(
-                token.allowance(owner, spender),
-                type(uint256).max,
-                "Infinite allowance should remain infinite"
-            );
-        } else {
-            assertEq(
-                token.allowance(owner, spender),
-                currentAllowance - amount,
-                "Allowance not decreased correctly on spender-is-recipient transferFrom"
-            );
-        }
-
-        if (_loggingEnabled) {
-            _log(
-                string.concat(
-                    "TRANSFER_FROM_SPENDER_IS_RECIPIENT: ",
-                    _getActorIndex(owner),
-                    " -> ",
-                    _getActorIndex(spender),
-                    " ",
-                    vm.toString(amount),
-                    " ",
-                    token.symbol()
-                )
-            );
-        }
-    }
-
     /// @notice Handler for zero-amount transferFrom edge case
-    /// @dev Tests that zero-amount transferFrom succeeds even with zero allowance
+    /// @dev Tests that zero-amount transferFrom succeeds, emits Transfer, leaves state unchanged.
+    ///      Allowance is unchanged since 0 is deducted.
     function handler_transferFromZeroAmount(
         uint256 actorSeed,
         uint256 tokenSeed,
@@ -1249,22 +794,18 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address owner = _selectAuthorizedActor(ownerSeed, address(token));
+        address owner = _selectAuthorizedSender(ownerSeed, address(token));
         address spender = _selectActorExcluding(actorSeed, owner);
         address recipient = _selectActorExcluding(recipientSeed, owner);
 
-        vm.assume(_isAuthorizedSender(address(token), owner));
         vm.assume(_isAuthorizedRecipient(address(token), recipient));
         vm.assume(!token.paused());
 
-        uint256 ownerBalanceBefore = token.balanceOf(owner);
-        uint256 recipientBalanceBefore = token.balanceOf(recipient);
-        uint256 totalSupplyBefore = token.totalSupply();
-        uint128 optedInSupplyBefore = token.optedInSupply();
-        uint256 globalRPTBefore = token.globalRewardPerToken();
+        TransferSnapshot memory s = _snapTransfer(token, owner, recipient);
         uint256 allowanceBefore = token.allowance(owner, spender);
 
-        vm.recordLogs();
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.Transfer(owner, recipient, 0);
 
         vm.startPrank(spender);
         bool success = token.transferFrom(owner, recipient, 0);
@@ -1272,70 +813,14 @@ contract TIP20InvariantTest is InvariantBaseTest {
 
         assertTrue(success, "Zero-amount transferFrom should return true");
 
-        // Balances unchanged
-        assertEq(token.balanceOf(owner), ownerBalanceBefore, "Owner balance changed on zero transferFrom");
-        assertEq(
-            token.balanceOf(recipient),
-            recipientBalanceBefore,
-            "Recipient balance changed on zero transferFrom"
-        );
-        assertEq(token.totalSupply(), totalSupplyBefore, "Total supply changed on zero transferFrom");
+        _assertPostTransfer(token, owner, recipient, 0, s, "zero-transferFrom");
 
-        // Allowance unchanged (0 deducted from any allowance is still the same)
+        // Allowance unchanged (0 deducted)
         assertEq(
             token.allowance(owner, spender),
             allowanceBefore,
             "Allowance changed on zero transferFrom"
         );
-
-        // optedInSupply unchanged
-        assertEq(
-            token.optedInSupply(),
-            optedInSupplyBefore,
-            "optedInSupply changed on zero transferFrom"
-        );
-
-        // globalRewardPerToken must not change
-        assertEq(
-            token.globalRewardPerToken(),
-            globalRPTBefore,
-            "globalRewardPerToken changed on zero transferFrom"
-        );
-
-        // rewardPerToken must be synced for both parties
-        (, uint256 fromRPTAfter,) = token.userRewardInfo(owner);
-        (, uint256 toRPTAfter,) = token.userRewardInfo(recipient);
-        assertEq(fromRPTAfter, globalRPTBefore, "Owner rewardPerToken not synced on zero transferFrom");
-        assertEq(toRPTAfter, globalRPTBefore, "Recipient rewardPerToken not synced on zero transferFrom");
-
-        // Transfer event must still be emitted for zero-amount transferFrom
-        {
-            Vm.Log[] memory entries = vm.getRecordedLogs();
-            bytes32 transferSig = keccak256("Transfer(address,address,uint256)");
-            bool found = false;
-            for (uint256 i = 0; i < entries.length; i++) {
-                if (entries[i].emitter == address(token) && entries[i].topics[0] == transferSig) {
-                    assertEq(
-                        entries[i].topics[1],
-                        bytes32(uint256(uint160(owner))),
-                        "Transfer event: wrong from on zero transferFrom"
-                    );
-                    assertEq(
-                        entries[i].topics[2],
-                        bytes32(uint256(uint160(recipient))),
-                        "Transfer event: wrong to on zero transferFrom"
-                    );
-                    assertEq(
-                        abi.decode(entries[i].data, (uint256)),
-                        0,
-                        "Transfer event: wrong amount on zero transferFrom"
-                    );
-                    found = true;
-                    break;
-                }
-            }
-            assertTrue(found, "Transfer event not emitted on zero transferFrom");
-        }
 
         if (_loggingEnabled) {
             _log(
@@ -1365,7 +850,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address owner = _selectAuthorizedActor(ownerSeed, address(token));
+        address owner = _selectAuthorizedSender(ownerSeed, address(token));
         address spender = _selectActorExcluding(actorSeed, owner);
         address recipient = _selectActorExcluding(recipientSeed, owner);
 
@@ -1379,7 +864,6 @@ contract TIP20InvariantTest is InvariantBaseTest {
         uint256 ownerBalance = token.balanceOf(owner);
         vm.assume(ownerBalance >= transferAmount);
 
-        vm.assume(_isAuthorizedSender(address(token), owner));
         vm.assume(_isAuthorizedRecipient(address(token), recipient));
         vm.assume(!token.paused());
 
@@ -1401,7 +885,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address owner = _selectAuthorizedActor(ownerSeed, address(token));
+        address owner = _selectAuthorizedSender(ownerSeed, address(token));
         address spender = _selectActorExcluding(actorSeed, owner);
         address recipient = _selectActorExcluding(recipientSeed, owner);
 
@@ -1413,7 +897,6 @@ contract TIP20InvariantTest is InvariantBaseTest {
         uint256 currentAllowance = token.allowance(owner, spender);
         vm.assume(currentAllowance >= transferAmount);
 
-        vm.assume(_isAuthorizedSender(address(token), owner));
         vm.assume(_isAuthorizedRecipient(address(token), recipient));
         vm.assume(!token.paused());
 
@@ -1428,7 +911,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
     }
 
     /// @notice Handler for transferFrom from blacklisted owner
-    /// @dev Tests that transferFrom from a blacklisted address reverts with PolicyForbids
+    /// @dev Tests that transferFrom from a blacklisted address reverts with PolicyForbids.
+    ///      Uses vm.snapshot/revertTo for clean state isolation.
     function handler_tryTransferFromPolicyForbidsSender(
         uint256 actorSeed,
         uint256 tokenSeed,
@@ -1452,26 +936,25 @@ contract TIP20InvariantTest is InvariantBaseTest {
 
         vm.assume(!token.paused());
 
-        // Blacklist the owner (sender)
+        uint256 snap = vm.snapshotState();
+
         uint64 policyId = _getPolicyId(address(token));
         address policyAdmin = _getPolicyAdmin(address(token));
 
         vm.prank(policyAdmin);
         registry.modifyPolicyBlacklist(policyId, owner, true);
 
-        // Owner is now blacklisted, transferFrom should revert
         vm.startPrank(spender);
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         token.transferFrom(owner, recipient, amount);
         vm.stopPrank();
 
-        // Clean up: remove from blacklist
-        vm.prank(policyAdmin);
-        registry.modifyPolicyBlacklist(policyId, owner, false);
+        vm.revertToStateAndDelete(snap);
     }
 
     /// @notice Handler for transferFrom to blacklisted recipient
-    /// @dev Tests that transferFrom to a blacklisted address reverts with PolicyForbids
+    /// @dev Tests that transferFrom to a blacklisted address reverts with PolicyForbids.
+    ///      Uses vm.snapshot/revertTo for clean state isolation.
     function handler_tryTransferFromPolicyForbidsRecipient(
         uint256 actorSeed,
         uint256 tokenSeed,
@@ -1482,7 +965,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address owner = _selectActor(ownerSeed);
+        address owner = _selectAuthorizedSender(ownerSeed, address(token));
         address spender = _selectActorExcluding(actorSeed, owner);
         address recipient = _selectActorExcluding(recipientSeed, owner);
 
@@ -1494,28 +977,26 @@ contract TIP20InvariantTest is InvariantBaseTest {
         vm.assume(currentAllowance >= amount);
 
         vm.assume(!token.paused());
-        vm.assume(_isAuthorizedSender(address(token), owner));
 
-        // Blacklist the recipient
+        uint256 snap = vm.snapshotState();
+
         uint64 policyId = _getPolicyId(address(token));
         address policyAdmin = _getPolicyAdmin(address(token));
 
         vm.prank(policyAdmin);
         registry.modifyPolicyBlacklist(policyId, recipient, true);
 
-        // Recipient is now blacklisted, transferFrom should revert
         vm.startPrank(spender);
         vm.expectRevert(ITIP20.PolicyForbids.selector);
         token.transferFrom(owner, recipient, amount);
         vm.stopPrank();
 
-        // Clean up: remove from blacklist
-        vm.prank(policyAdmin);
-        registry.modifyPolicyBlacklist(policyId, recipient, false);
+        vm.revertToStateAndDelete(snap);
     }
 
     /// @notice Handler for transferFrom when contract is paused
-    /// @dev Tests that transferFrom reverts with ContractPaused when paused
+    /// @dev Tests that transferFrom reverts with ContractPaused when paused.
+    ///      Ensures all other preconditions are met so the revert is from the pause check.
     function handler_tryTransferFromWhenPaused(
         uint256 actorSeed,
         uint256 tokenSeed,
@@ -1528,13 +1009,18 @@ contract TIP20InvariantTest is InvariantBaseTest {
         TIP20 token = _selectBaseToken(tokenSeed);
         vm.assume(token.paused());
 
-        address owner = _selectActor(ownerSeed);
+        address owner = _selectAuthorizedSender(ownerSeed, address(token));
         address spender = _selectActorExcluding(actorSeed, owner);
         address recipient = _selectActorExcluding(recipientSeed, owner);
 
         uint256 ownerBalance = token.balanceOf(owner);
         vm.assume(ownerBalance > 0);
         amount = bound(amount, 1, ownerBalance);
+
+        uint256 currentAllowance = token.allowance(owner, spender);
+        vm.assume(currentAllowance >= amount);
+
+        vm.assume(_isAuthorizedRecipient(address(token), recipient));
 
         vm.startPrank(spender);
         vm.expectRevert(ITIP20.ContractPaused.selector);
@@ -1553,7 +1039,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        address owner = _selectAuthorizedActor(ownerSeed, address(token));
+        address owner = _selectAuthorizedSender(ownerSeed, address(token));
         address spender = _selectActorExcluding(actorSeed, owner);
 
         uint256 ownerBalance = token.balanceOf(owner);
@@ -1563,7 +1049,6 @@ contract TIP20InvariantTest is InvariantBaseTest {
         uint256 currentAllowance = token.allowance(owner, spender);
         vm.assume(currentAllowance >= amount);
 
-        vm.assume(_isAuthorizedSender(address(token), owner));
         vm.assume(!token.paused());
 
         vm.startPrank(spender);
