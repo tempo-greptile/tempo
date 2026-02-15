@@ -331,6 +331,22 @@ abstract contract InvariantBaseTest is BaseTest {
         return registry.isAuthorized(_getPolicyId(token), actor);
     }
 
+    /// @dev Checks if an actor is authorized as sender for a token
+    /// @param token Token address
+    /// @param actor Actor address
+    /// @return True if authorized as sender
+    function _isAuthorizedSender(address token, address actor) internal view returns (bool) {
+        return registry.isAuthorizedSender(_getPolicyId(token), actor);
+    }
+
+    /// @dev Checks if an actor is authorized as recipient for a token
+    /// @param token Token address
+    /// @param actor Actor address
+    /// @return True if authorized as recipient
+    function _isAuthorizedRecipient(address token, address actor) internal view returns (bool) {
+        return registry.isAuthorizedRecipient(_getPolicyId(token), actor);
+    }
+
     /*//////////////////////////////////////////////////////////////
                               LOGGING
     //////////////////////////////////////////////////////////////*/
