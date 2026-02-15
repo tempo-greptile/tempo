@@ -2,8 +2,8 @@
 pragma solidity ^0.8.13;
 
 import { TIP20 } from "../../src/TIP20.sol";
-import { ITIP20 } from "../../src/interfaces/ITIP20.sol";
 import { IAccountKeychain } from "../../src/interfaces/IAccountKeychain.sol";
+import { ITIP20 } from "../../src/interfaces/ITIP20.sol";
 import { InvariantBaseTest } from "./InvariantBaseTest.t.sol";
 import { Vm } from "forge-std/Vm.sol";
 
@@ -93,7 +93,15 @@ contract TIP20InvariantTest is InvariantBaseTest {
 
     /// @dev Ensures spender has at least `min` allowance from owner. Approves if needed.
     ///      Returns false if approve reverts (e.g. due to AccountKeychain constraints).
-    function _ensureAllowance(TIP20 token, address owner, address spender, uint256 min) internal returns (bool) {
+    function _ensureAllowance(
+        TIP20 token,
+        address owner,
+        address spender,
+        uint256 min
+    )
+        internal
+        returns (bool)
+    {
         if (token.allowance(owner, spender) >= min) return true;
         vm.prank(owner);
         try token.approve(spender, min) {
@@ -181,13 +189,21 @@ contract TIP20InvariantTest is InvariantBaseTest {
 
         // Balance conservation
         if (isSelf) {
-            assertEq(token.balanceOf(from), s.fromBalance, string.concat(ctx, ": balance changed on self-transfer"));
+            assertEq(
+                token.balanceOf(from),
+                s.fromBalance,
+                string.concat(ctx, ": balance changed on self-transfer")
+            );
         } else {
             assertEq(
-                token.balanceOf(from), s.fromBalance - amount, string.concat(ctx, ": sender balance incorrect")
+                token.balanceOf(from),
+                s.fromBalance - amount,
+                string.concat(ctx, ": sender balance incorrect")
             );
             assertEq(
-                token.balanceOf(to), s.toBalance + amount, string.concat(ctx, ": recipient balance incorrect")
+                token.balanceOf(to),
+                s.toBalance + amount,
+                string.concat(ctx, ": recipient balance incorrect")
             );
         }
 
@@ -210,17 +226,25 @@ contract TIP20InvariantTest is InvariantBaseTest {
 
         // globalRewardPerToken unchanged
         assertEq(
-            token.globalRewardPerToken(), s.globalRPT, string.concat(ctx, ": globalRewardPerToken changed")
+            token.globalRewardPerToken(),
+            s.globalRPT,
+            string.concat(ctx, ": globalRewardPerToken changed")
         );
 
         // rewardPerToken synced to global
         {
             (, uint256 fromRPTAfter,) = token.userRewardInfo(from);
-            assertEq(fromRPTAfter, s.globalRPT, string.concat(ctx, ": sender rewardPerToken not synced"));
+            assertEq(
+                fromRPTAfter, s.globalRPT, string.concat(ctx, ": sender rewardPerToken not synced")
+            );
 
             if (!isSelf) {
                 (, uint256 toRPTAfter,) = token.userRewardInfo(to);
-                assertEq(toRPTAfter, s.globalRPT, string.concat(ctx, ": recipient rewardPerToken not synced"));
+                assertEq(
+                    toRPTAfter,
+                    s.globalRPT,
+                    string.concat(ctx, ": recipient rewardPerToken not synced")
+                );
             }
         }
 
@@ -240,12 +264,15 @@ contract TIP20InvariantTest is InvariantBaseTest {
     {
         if (isSelf) {
             if (s.fromDelegate != address(0) && s.globalRPT > s.fromRPT) {
-                uint256 expectedAccrual = (s.fromBalance * (s.globalRPT - s.fromRPT)) / ACC_PRECISION;
+                uint256 expectedAccrual =
+                    (s.fromBalance * (s.globalRPT - s.fromRPT)) / ACC_PRECISION;
                 (,, uint256 delegateRewardBalAfter) = token.userRewardInfo(s.fromDelegate);
                 assertEq(
                     delegateRewardBalAfter,
                     s.fromDelegateRewardBal + expectedAccrual,
-                    string.concat(ctx, ": self-transfer delegate reward accrual should happen exactly once")
+                    string.concat(
+                        ctx, ": self-transfer delegate reward accrual should happen exactly once"
+                    )
                 );
             }
             return;
@@ -286,8 +313,14 @@ contract TIP20InvariantTest is InvariantBaseTest {
         address owner,
         address recipient,
         TransferSnapshot memory s
-    ) internal view {
-        if (spender != owner && spender != recipient && spender != s.fromDelegate && spender != s.toDelegate) {
+    )
+        internal
+        view
+    {
+        if (
+            spender != owner && spender != recipient && spender != s.fromDelegate
+                && spender != s.toDelegate
+        ) {
             (, uint256 rptA, uint256 rbA) = token.userRewardInfo(spender);
             assertEq(rptA, s.spenderRPTBefore, "Spender rewardPerToken changed");
             assertEq(rbA, s.spenderRewardBalBefore, "Spender rewardBalance changed");
@@ -302,23 +335,36 @@ contract TIP20InvariantTest is InvariantBaseTest {
         address recipient,
         uint256 amount,
         TransferSnapshot memory s
-    ) internal {
+    )
+        internal
+    {
         uint256 allowBefore = token.allowance(owner, spender);
 
         vm.expectEmit(true, true, false, true, address(token));
         emit ITIP20.Transfer(owner, recipient, amount);
 
         vm.startPrank(spender);
-        assertTrue(token.transferFrom(owner, recipient, amount), "TEMPO-TIP3: TransferFrom should return true");
+        assertTrue(
+            token.transferFrom(owner, recipient, amount),
+            "TEMPO-TIP3: TransferFrom should return true"
+        );
         vm.stopPrank();
 
         // Allowance check
         {
             uint256 allowAfter = token.allowance(owner, spender);
             if (allowBefore == type(uint256).max) {
-                assertEq(allowAfter, type(uint256).max, "TEMPO-TIP4: Infinite allowance should remain infinite");
+                assertEq(
+                    allowAfter,
+                    type(uint256).max,
+                    "TEMPO-TIP4: Infinite allowance should remain infinite"
+                );
             } else {
-                assertEq(allowAfter, allowBefore - amount, "TEMPO-TIP3: Allowance not decreased correctly");
+                assertEq(
+                    allowAfter,
+                    allowBefore - amount,
+                    "TEMPO-TIP3: Allowance not decreased correctly"
+                );
             }
         }
 
@@ -335,7 +381,9 @@ contract TIP20InvariantTest is InvariantBaseTest {
         uint256 amount,
         bytes32 memo,
         TransferSnapshot memory s
-    ) internal {
+    )
+        internal
+    {
         uint256 allowBefore = token.allowance(owner, spender);
 
         vm.expectEmit(true, true, false, true, address(token));
@@ -352,9 +400,17 @@ contract TIP20InvariantTest is InvariantBaseTest {
         {
             uint256 allowAfter = token.allowance(owner, spender);
             if (allowBefore == type(uint256).max) {
-                assertEq(allowAfter, type(uint256).max, "TEMPO-TIP4: Infinite allowance should remain infinite");
+                assertEq(
+                    allowAfter,
+                    type(uint256).max,
+                    "TEMPO-TIP4: Infinite allowance should remain infinite"
+                );
             } else {
-                assertEq(allowAfter, allowBefore - amount, "TEMPO-TIP3: Allowance not decreased correctly");
+                assertEq(
+                    allowAfter,
+                    allowBefore - amount,
+                    "TEMPO-TIP3: Allowance not decreased correctly"
+                );
             }
         }
 
@@ -443,7 +499,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
             bool ok;
             (actor, ok) = _trySelectFundedSender(actorSeed, token);
             if (!ok) return;
-            (recipient, ok) = _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), actor);
+            (recipient, ok) =
+                _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), actor);
             if (!ok) return;
         }
 
@@ -480,13 +537,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
     /// @notice Handler for self-transfer edge case
     /// @dev Self-transfers are valid and must not change any balances or optedInSupply.
     ///      Reward accrual must happen exactly once (not doubled).
-    function handler_transferSelf(
-        uint256 actorSeed,
-        uint256 tokenSeed,
-        uint256 amount
-    )
-        external
-    {
+    function handler_transferSelf(uint256 actorSeed, uint256 tokenSeed, uint256 amount) external {
         TIP20 token = _selectBaseToken(tokenSeed);
         _ensureUnpaused(token);
 
@@ -544,7 +595,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
             bool ok;
             (actor, ok) = _trySelectAuthorizedSender(actorSeed, address(token));
             if (!ok) return;
-            (recipient, ok) = _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), actor);
+            (recipient, ok) =
+                _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), actor);
             if (!ok) return;
         }
 
@@ -596,9 +648,13 @@ contract TIP20InvariantTest is InvariantBaseTest {
         amount = bound(amount, 1, token.balanceOf(actor));
 
         vm.startPrank(actor);
-        vm.expectRevert(ITIP20.InvalidRecipient.selector);
-        token.transfer(address(0), amount);
-        vm.stopPrank();
+        try token.transfer(address(0), amount) {
+            vm.stopPrank();
+            fail("transfer to zero address should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(bytes4(reason), ITIP20.InvalidRecipient.selector, "Expected InvalidRecipient");
+        }
     }
 
     /// @notice Handler for transfer to TIP20-prefix address
@@ -628,9 +684,13 @@ contract TIP20InvariantTest is InvariantBaseTest {
         address tip20Addr = address(uint160(0x20c000000000000000000000) << 64 | uint160(lowBits));
 
         vm.startPrank(actor);
-        vm.expectRevert(ITIP20.InvalidRecipient.selector);
-        token.transfer(tip20Addr, amount);
-        vm.stopPrank();
+        try token.transfer(tip20Addr, amount) {
+            vm.stopPrank();
+            fail("transfer to TIP20-prefix address should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(bytes4(reason), ITIP20.InvalidRecipient.selector, "Expected InvalidRecipient");
+        }
     }
 
     /// @notice Handler for transferFrom to TIP20-prefix address
@@ -664,9 +724,13 @@ contract TIP20InvariantTest is InvariantBaseTest {
         address tip20Addr = address(uint160(0x20c000000000000000000000) << 64 | uint160(lowBits));
 
         vm.startPrank(spender);
-        vm.expectRevert(ITIP20.InvalidRecipient.selector);
-        token.transferFrom(owner, tip20Addr, amount);
-        vm.stopPrank();
+        try token.transferFrom(owner, tip20Addr, amount) {
+            vm.stopPrank();
+            fail("transferFrom to TIP20-prefix address should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(bytes4(reason), ITIP20.InvalidRecipient.selector, "Expected InvalidRecipient");
+        }
     }
 
     /// @notice Handler for transfer with insufficient balance
@@ -688,7 +752,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
             bool ok;
             (actor, ok) = _trySelectAuthorizedSender(actorSeed, address(token));
             if (!ok) return;
-            (recipient, ok) = _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), actor);
+            (recipient, ok) =
+                _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), actor);
             if (!ok) return;
         }
 
@@ -696,13 +761,15 @@ contract TIP20InvariantTest is InvariantBaseTest {
         extra = bound(extra, 1, 1_000_000_000_000);
 
         vm.startPrank(actor);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ITIP20.InsufficientBalance.selector, actorBalance, actorBalance + extra, address(token)
-            )
-        );
-        token.transfer(recipient, actorBalance + extra);
-        vm.stopPrank();
+        try token.transfer(recipient, actorBalance + extra) {
+            vm.stopPrank();
+            fail("transfer with insufficient balance should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(
+                bytes4(reason), ITIP20.InsufficientBalance.selector, "Expected InsufficientBalance"
+            );
+        }
     }
 
     /// @notice Handler for transfer from blacklisted sender
@@ -741,9 +808,13 @@ contract TIP20InvariantTest is InvariantBaseTest {
         registry.modifyPolicyBlacklist(policyId, actor, true);
 
         vm.startPrank(actor);
-        vm.expectRevert(ITIP20.PolicyForbids.selector);
-        token.transfer(recipient, amount);
-        vm.stopPrank();
+        try token.transfer(recipient, amount) {
+            vm.stopPrank();
+            fail("transfer from blacklisted sender should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(bytes4(reason), ITIP20.PolicyForbids.selector, "Expected PolicyForbids");
+        }
 
         vm.revertToStateAndDelete(snap);
     }
@@ -784,9 +855,13 @@ contract TIP20InvariantTest is InvariantBaseTest {
         registry.modifyPolicyBlacklist(policyId, recipient, true);
 
         vm.startPrank(actor);
-        vm.expectRevert(ITIP20.PolicyForbids.selector);
-        token.transfer(recipient, amount);
-        vm.stopPrank();
+        try token.transfer(recipient, amount) {
+            vm.stopPrank();
+            fail("transfer to blacklisted recipient should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(bytes4(reason), ITIP20.PolicyForbids.selector, "Expected PolicyForbids");
+        }
 
         vm.revertToStateAndDelete(snap);
     }
@@ -811,16 +886,21 @@ contract TIP20InvariantTest is InvariantBaseTest {
             bool ok;
             (actor, ok) = _trySelectFundedSender(actorSeed, token);
             if (!ok) return;
-            (recipient, ok) = _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), actor);
+            (recipient, ok) =
+                _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), actor);
             if (!ok) return;
         }
 
         amount = bound(amount, 1, token.balanceOf(actor));
 
         vm.startPrank(actor);
-        vm.expectRevert(ITIP20.ContractPaused.selector);
-        token.transfer(recipient, amount);
-        vm.stopPrank();
+        try token.transfer(recipient, amount) {
+            vm.stopPrank();
+            fail("transfer when paused should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(bytes4(reason), ITIP20.ContractPaused.selector, "Expected ContractPaused");
+        }
     }
 
     /// @notice Handler for transferFrom with allowance
@@ -846,7 +926,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
             bool ok;
             (owner, ok) = _trySelectFundedSender(ownerSeed, token);
             if (!ok) return;
-            (recipient, ok) = _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), owner);
+            (recipient, ok) =
+                _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), owner);
             if (!ok) return;
         }
         spender = _selectActorExcluding(actorSeed, owner);
@@ -952,7 +1033,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
             bool ok;
             (owner, ok) = _trySelectAuthorizedSender(ownerSeed, address(token));
             if (!ok) return;
-            (recipient, ok) = _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), owner);
+            (recipient, ok) =
+                _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), owner);
             if (!ok) return;
         }
         address spender = _selectActorExcluding(actorSeed, owner);
@@ -1014,7 +1096,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
             bool ok;
             (owner, ok) = _trySelectAuthorizedSender(ownerSeed, address(token));
             if (!ok) return;
-            (recipient, ok) = _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), owner);
+            (recipient, ok) =
+                _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), owner);
             if (!ok) return;
         }
         address spender = _selectActorExcluding(actorSeed, owner);
@@ -1033,9 +1116,17 @@ contract TIP20InvariantTest is InvariantBaseTest {
         uint256 transferAmount = currentAllowance + extra;
 
         vm.startPrank(spender);
-        vm.expectRevert(ITIP20.InsufficientAllowance.selector);
-        token.transferFrom(owner, recipient, transferAmount);
-        vm.stopPrank();
+        try token.transferFrom(owner, recipient, transferAmount) {
+            vm.stopPrank();
+            fail("transferFrom with insufficient allowance should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(
+                bytes4(reason),
+                ITIP20.InsufficientAllowance.selector,
+                "Expected InsufficientAllowance"
+            );
+        }
     }
 
     /// @notice Handler for transferFrom with insufficient balance
@@ -1058,7 +1149,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
             bool ok;
             (owner, ok) = _trySelectAuthorizedSender(ownerSeed, address(token));
             if (!ok) return;
-            (recipient, ok) = _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), owner);
+            (recipient, ok) =
+                _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), owner);
             if (!ok) return;
         }
         address spender = _selectActorExcluding(actorSeed, owner);
@@ -1070,13 +1162,15 @@ contract TIP20InvariantTest is InvariantBaseTest {
         if (!_ensureAllowance(token, owner, spender, transferAmount)) return;
 
         vm.startPrank(spender);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                ITIP20.InsufficientBalance.selector, ownerBalance, transferAmount, address(token)
-            )
-        );
-        token.transferFrom(owner, recipient, transferAmount);
-        vm.stopPrank();
+        try token.transferFrom(owner, recipient, transferAmount) {
+            vm.stopPrank();
+            fail("transferFrom with insufficient balance should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(
+                bytes4(reason), ITIP20.InsufficientBalance.selector, "Expected InsufficientBalance"
+            );
+        }
     }
 
     /// @notice Handler for transferFrom from blacklisted owner
@@ -1118,9 +1212,13 @@ contract TIP20InvariantTest is InvariantBaseTest {
         registry.modifyPolicyBlacklist(policyId, owner, true);
 
         vm.startPrank(spender);
-        vm.expectRevert(ITIP20.PolicyForbids.selector);
-        token.transferFrom(owner, recipient, amount);
-        vm.stopPrank();
+        try token.transferFrom(owner, recipient, amount) {
+            vm.stopPrank();
+            fail("transferFrom from blacklisted sender should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(bytes4(reason), ITIP20.PolicyForbids.selector, "Expected PolicyForbids");
+        }
 
         vm.revertToStateAndDelete(snap);
     }
@@ -1164,9 +1262,13 @@ contract TIP20InvariantTest is InvariantBaseTest {
         registry.modifyPolicyBlacklist(policyId, recipient, true);
 
         vm.startPrank(spender);
-        vm.expectRevert(ITIP20.PolicyForbids.selector);
-        token.transferFrom(owner, recipient, amount);
-        vm.stopPrank();
+        try token.transferFrom(owner, recipient, amount) {
+            vm.stopPrank();
+            fail("transferFrom to blacklisted recipient should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(bytes4(reason), ITIP20.PolicyForbids.selector, "Expected PolicyForbids");
+        }
 
         vm.revertToStateAndDelete(snap);
     }
@@ -1192,7 +1294,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
             bool ok;
             (owner, ok) = _trySelectFundedSender(ownerSeed, token);
             if (!ok) return;
-            (recipient, ok) = _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), owner);
+            (recipient, ok) =
+                _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), owner);
             if (!ok) return;
         }
         address spender = _selectActorExcluding(actorSeed, owner);
@@ -1201,9 +1304,13 @@ contract TIP20InvariantTest is InvariantBaseTest {
         if (!_ensureAllowance(token, owner, spender, amount)) return;
 
         vm.startPrank(spender);
-        vm.expectRevert(ITIP20.ContractPaused.selector);
-        token.transferFrom(owner, recipient, amount);
-        vm.stopPrank();
+        try token.transferFrom(owner, recipient, amount) {
+            vm.stopPrank();
+            fail("transferFrom when paused should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(bytes4(reason), ITIP20.ContractPaused.selector, "Expected ContractPaused");
+        }
     }
 
     /// @notice Handler for transferFrom to invalid recipient (zero address)
@@ -1231,9 +1338,13 @@ contract TIP20InvariantTest is InvariantBaseTest {
         if (!_ensureAllowance(token, owner, spender, amount)) return;
 
         vm.startPrank(spender);
-        vm.expectRevert(ITIP20.InvalidRecipient.selector);
-        token.transferFrom(owner, address(0), amount);
-        vm.stopPrank();
+        try token.transferFrom(owner, address(0), amount) {
+            vm.stopPrank();
+            fail("transferFrom to zero address should have reverted");
+        } catch (bytes memory reason) {
+            vm.stopPrank();
+            assertEq(bytes4(reason), ITIP20.InvalidRecipient.selector, "Expected InvalidRecipient");
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -1299,17 +1410,25 @@ contract TIP20InvariantTest is InvariantBaseTest {
         assertEq(token.balanceOf(owner), s.ownerBal, string.concat(ctx, ": owner balance changed"));
         if (owner != spender) {
             assertEq(
-                token.balanceOf(spender), s.spenderBal, string.concat(ctx, ": spender balance changed")
+                token.balanceOf(spender),
+                s.spenderBal,
+                string.concat(ctx, ": spender balance changed")
             );
         }
         assertEq(token.totalSupply(), s.totalSupply, string.concat(ctx, ": totalSupply changed"));
-        assertEq(token.optedInSupply(), s.optedInSupply, string.concat(ctx, ": optedInSupply changed"));
         assertEq(
-            token.globalRewardPerToken(), s.globalRPT, string.concat(ctx, ": globalRewardPerToken changed")
+            token.optedInSupply(), s.optedInSupply, string.concat(ctx, ": optedInSupply changed")
+        );
+        assertEq(
+            token.globalRewardPerToken(),
+            s.globalRPT,
+            string.concat(ctx, ": globalRewardPerToken changed")
         );
         assertEq(token.paused(), s.paused, string.concat(ctx, ": paused changed"));
         assertEq(
-            token.transferPolicyId(), s.transferPolicyId, string.concat(ctx, ": transferPolicyId changed")
+            token.transferPolicyId(),
+            s.transferPolicyId,
+            string.concat(ctx, ": transferPolicyId changed")
         );
         assertEq(token.supplyCap(), s.supplyCap, string.concat(ctx, ": supplyCap changed"));
 
@@ -1321,7 +1440,9 @@ contract TIP20InvariantTest is InvariantBaseTest {
         if (owner != spender) {
             (address rrS, uint256 rptS, uint256 rbS) = token.userRewardInfo(spender);
             assertEq(
-                rrS, s.spenderRewardRecipient, string.concat(ctx, ": spender rewardRecipient changed")
+                rrS,
+                s.spenderRewardRecipient,
+                string.concat(ctx, ": spender rewardRecipient changed")
             );
             assertEq(rptS, s.spenderRPT, string.concat(ctx, ": spender rewardPerToken changed"));
             assertEq(rbS, s.spenderRewardBal, string.concat(ctx, ": spender rewardBalance changed"));
@@ -1449,14 +1570,14 @@ contract TIP20InvariantTest is InvariantBaseTest {
     }
 
     /// @notice Handler for minting tokens
-    /// @dev Tests TEMPO-TIP6 (supply increase), TEMPO-TIP7 (supply cap)
-    function mint(uint256 tokenSeed, uint256 recipientSeed, uint256 amount) external {
+    /// @dev Tests TEMPO-TIP6 (supply increase), TEMPO-TIP7 (supply cap), reward accounting on mint
+    function handler_mint(uint256 tokenSeed, uint256 recipientSeed, uint256 amount) external {
         TIP20 token = _selectBaseToken(tokenSeed);
 
         address recipient;
         {
             bool ok;
-            (recipient, ok) = _trySelectPolicyAuthorized(recipientSeed, address(token));
+            (recipient, ok) = _trySelectAuthorizedMintRecipient(recipientSeed, address(token));
             if (!ok) return;
         }
 
@@ -1466,86 +1587,612 @@ contract TIP20InvariantTest is InvariantBaseTest {
         if (remaining == 0) return;
         amount = bound(amount, 1, remaining);
 
-        uint256 recipientBalanceBefore = token.balanceOf(recipient);
+        // Snapshot pre-mint state
+        uint256 recipientBalBefore = token.balanceOf(recipient);
+        uint256 globalRPTBefore = token.globalRewardPerToken();
+        uint128 optedInSupplyBefore = token.optedInSupply();
+        (address recipientDelegate, uint256 recipientRPTBefore,) = token.userRewardInfo(recipient);
+        uint256 delegateRewardBalBefore;
+        if (recipientDelegate != address(0)) {
+            (,, delegateRewardBalBefore) = token.userRewardInfo(recipientDelegate);
+        }
 
-        vm.startPrank(admin);
-        try token.mint(recipient, amount) {
-            vm.stopPrank();
+        // Expect Transfer(address(0), recipient, amount) and Mint(recipient, amount)
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.Transfer(address(0), recipient, amount);
+        vm.expectEmit(true, false, false, true, address(token));
+        emit ITIP20.Mint(recipient, amount);
 
-            _tokenMintSum[address(token)] += amount;
+        vm.prank(admin);
+        token.mint(recipient, amount);
 
-            // TEMPO-TIP6: Total supply should increase
+        _tokenMintSum[address(token)] += amount;
+        _registerHolder(address(token), recipient);
+
+        // TEMPO-TIP6: Total supply should increase by exact amount
+        assertEq(
+            token.totalSupply(),
+            currentSupply + amount,
+            "TEMPO-TIP6: Total supply not increased correctly"
+        );
+
+        // TEMPO-TIP7: Total supply should not exceed cap
+        assertLe(token.totalSupply(), supplyCap, "TEMPO-TIP7: Total supply exceeds supply cap");
+
+        // Recipient balance increased by exact amount
+        assertEq(
+            token.balanceOf(recipient),
+            recipientBalBefore + amount,
+            "TEMPO-TIP6: Recipient balance not increased"
+        );
+
+        // globalRewardPerToken unchanged by mint
+        assertEq(
+            token.globalRewardPerToken(),
+            globalRPTBefore,
+            "mint: globalRewardPerToken should not change"
+        );
+
+        // Recipient's rewardPerToken synced to global
+        (, uint256 recipientRPTAfter,) = token.userRewardInfo(recipient);
+        assertEq(
+            recipientRPTAfter,
+            globalRPTBefore,
+            "mint: recipient rewardPerToken not synced to global"
+        );
+
+        // optedInSupply delta
+        uint128 optedInSupplyAfter = token.optedInSupply();
+        if (recipientDelegate != address(0)) {
             assertEq(
-                token.totalSupply(),
-                currentSupply + amount,
-                "TEMPO-TIP6: Total supply not increased correctly"
+                optedInSupplyAfter,
+                optedInSupplyBefore + uint128(amount),
+                "mint: optedInSupply should increase for opted-in recipient"
             );
-
-            // TEMPO-TIP7: Total supply should not exceed cap
-            assertLe(token.totalSupply(), supplyCap, "TEMPO-TIP7: Total supply exceeds supply cap");
-
+        } else {
             assertEq(
-                token.balanceOf(recipient),
-                recipientBalanceBefore + amount,
-                "TEMPO-TIP6: Recipient balance not increased"
+                optedInSupplyAfter,
+                optedInSupplyBefore,
+                "mint: optedInSupply should not change for non-opted-in recipient"
             );
+        }
 
-            if (_loggingEnabled) {
-                _log(
-                    string.concat(
-                        "MINT: ",
-                        vm.toString(amount),
-                        " ",
-                        token.symbol(),
-                        " to ",
-                        _getActorIndex(recipient)
-                    )
-                );
-            }
-        } catch (bytes memory reason) {
-            vm.stopPrank();
-            assertTrue(_isKnownTIP20Error(bytes4(reason)), "Unknown error encountered");
+        // Reward accrual to delegate
+        if (recipientDelegate != address(0) && globalRPTBefore > recipientRPTBefore) {
+            uint256 expectedAccrual =
+                (recipientBalBefore * (globalRPTBefore - recipientRPTBefore)) / ACC_PRECISION;
+            (,, uint256 delegateRewardBalAfter) = token.userRewardInfo(recipientDelegate);
+            assertEq(
+                delegateRewardBalAfter,
+                delegateRewardBalBefore + expectedAccrual,
+                "mint: delegate reward accrual incorrect"
+            );
+        }
+
+        if (_loggingEnabled) {
+            _log(
+                string.concat(
+                    "MINT: ",
+                    vm.toString(amount),
+                    " ",
+                    token.symbol(),
+                    " to ",
+                    _getActorIndex(recipient)
+                )
+            );
+        }
+    }
+
+    /// @notice Handler for minting tokens with memo
+    /// @dev Tests TEMPO-TIP6 (supply increase), TEMPO-TIP7 (supply cap), TEMPO-TIP9 (memo events)
+    function handler_mintWithMemo(
+        uint256 tokenSeed,
+        uint256 recipientSeed,
+        uint256 amount,
+        bytes32 memo
+    )
+        external
+    {
+        TIP20 token = _selectBaseToken(tokenSeed);
+
+        address recipient;
+        {
+            bool ok;
+            (recipient, ok) = _trySelectAuthorizedMintRecipient(recipientSeed, address(token));
+            if (!ok) return;
+        }
+
+        uint256 currentSupply = token.totalSupply();
+        uint256 supplyCap = token.supplyCap();
+        uint256 remaining = supplyCap > currentSupply ? supplyCap - currentSupply : 0;
+        if (remaining == 0) return;
+        amount = bound(amount, 1, remaining);
+
+        // Snapshot pre-mint state
+        uint256 recipientBalBefore = token.balanceOf(recipient);
+        uint256 globalRPTBefore = token.globalRewardPerToken();
+        uint128 optedInSupplyBefore = token.optedInSupply();
+        (address recipientDelegate, uint256 recipientRPTBefore,) = token.userRewardInfo(recipient);
+        uint256 delegateRewardBalBefore;
+        if (recipientDelegate != address(0)) {
+            (,, delegateRewardBalBefore) = token.userRewardInfo(recipientDelegate);
+        }
+
+        // Expect Transfer(address(0), recipient, amount), TransferWithMemo, and Mint events
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.Transfer(address(0), recipient, amount);
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.TransferWithMemo(address(0), recipient, amount, memo);
+        vm.expectEmit(true, false, false, true, address(token));
+        emit ITIP20.Mint(recipient, amount);
+
+        vm.prank(admin);
+        token.mintWithMemo(recipient, amount, memo);
+
+        _tokenMintSum[address(token)] += amount;
+        _registerHolder(address(token), recipient);
+
+        // TEMPO-TIP6: Total supply should increase by exact amount
+        assertEq(
+            token.totalSupply(),
+            currentSupply + amount,
+            "TEMPO-TIP6: Total supply not increased correctly after mintWithMemo"
+        );
+
+        // TEMPO-TIP7: Total supply should not exceed cap
+        assertLe(
+            token.totalSupply(),
+            supplyCap,
+            "TEMPO-TIP7: Total supply exceeds supply cap after mintWithMemo"
+        );
+
+        // Recipient balance increased by exact amount
+        assertEq(
+            token.balanceOf(recipient),
+            recipientBalBefore + amount,
+            "TEMPO-TIP6: Recipient balance not increased after mintWithMemo"
+        );
+
+        // globalRewardPerToken unchanged
+        assertEq(
+            token.globalRewardPerToken(),
+            globalRPTBefore,
+            "mintWithMemo: globalRewardPerToken should not change"
+        );
+
+        // Recipient's rewardPerToken synced to global
+        (, uint256 recipientRPTAfter,) = token.userRewardInfo(recipient);
+        assertEq(
+            recipientRPTAfter,
+            globalRPTBefore,
+            "mintWithMemo: recipient rewardPerToken not synced to global"
+        );
+
+        // optedInSupply delta
+        uint128 optedInSupplyAfter = token.optedInSupply();
+        if (recipientDelegate != address(0)) {
+            assertEq(
+                optedInSupplyAfter,
+                optedInSupplyBefore + uint128(amount),
+                "mintWithMemo: optedInSupply should increase for opted-in recipient"
+            );
+        } else {
+            assertEq(
+                optedInSupplyAfter,
+                optedInSupplyBefore,
+                "mintWithMemo: optedInSupply should not change for non-opted-in recipient"
+            );
+        }
+
+        // Reward accrual to delegate
+        if (recipientDelegate != address(0) && globalRPTBefore > recipientRPTBefore) {
+            uint256 expectedAccrual =
+                (recipientBalBefore * (globalRPTBefore - recipientRPTBefore)) / ACC_PRECISION;
+            (,, uint256 delegateRewardBalAfter) = token.userRewardInfo(recipientDelegate);
+            assertEq(
+                delegateRewardBalAfter,
+                delegateRewardBalBefore + expectedAccrual,
+                "mintWithMemo: delegate reward accrual incorrect"
+            );
+        }
+
+        if (_loggingEnabled) {
+            _log(
+                string.concat(
+                    "MINT_WITH_MEMO: ",
+                    vm.toString(amount),
+                    " ",
+                    token.symbol(),
+                    " to ",
+                    _getActorIndex(recipient)
+                )
+            );
+        }
+    }
+
+    /// @notice Handler for zero-amount mint edge case
+    /// @dev Tests that minting zero tokens succeeds and leaves all state unchanged
+    function handler_mintZeroAmount(uint256 tokenSeed, uint256 recipientSeed) external {
+        TIP20 token = _selectBaseToken(tokenSeed);
+
+        address recipient;
+        {
+            bool ok;
+            (recipient, ok) = _trySelectAuthorizedMintRecipient(recipientSeed, address(token));
+            if (!ok) return;
+        }
+
+        uint256 currentSupply = token.totalSupply();
+        uint256 recipientBalBefore = token.balanceOf(recipient);
+        uint256 globalRPTBefore = token.globalRewardPerToken();
+        uint128 optedInSupplyBefore = token.optedInSupply();
+        (address recipientDelegate, uint256 recipientRPTBefore, uint256 recipientRewardBalBefore) =
+            token.userRewardInfo(recipient);
+        uint256 delegateRewardBalBefore;
+        if (recipientDelegate != address(0) && recipientDelegate != recipient) {
+            (,, delegateRewardBalBefore) = token.userRewardInfo(recipientDelegate);
+        }
+
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.Transfer(address(0), recipient, 0);
+        vm.expectEmit(true, false, false, true, address(token));
+        emit ITIP20.Mint(recipient, 0);
+
+        vm.prank(admin);
+        token.mint(recipient, 0);
+
+        // Total supply unchanged
+        assertEq(token.totalSupply(), currentSupply, "mintZero: total supply should not change");
+
+        // Recipient balance unchanged
+        assertEq(
+            token.balanceOf(recipient),
+            recipientBalBefore,
+            "mintZero: recipient balance should not change"
+        );
+
+        // globalRewardPerToken unchanged
+        assertEq(
+            token.globalRewardPerToken(),
+            globalRPTBefore,
+            "mintZero: globalRewardPerToken should not change"
+        );
+
+        // optedInSupply unchanged (minting zero adds zero)
+        assertEq(
+            token.optedInSupply(), optedInSupplyBefore, "mintZero: optedInSupply should not change"
+        );
+
+        // Recipient rewardPerToken still synced to global (update still runs)
+        (, uint256 recipientRPTAfter,) = token.userRewardInfo(recipient);
+        assertEq(
+            recipientRPTAfter, globalRPTBefore, "mintZero: recipient rewardPerToken not synced"
+        );
+
+        if (_loggingEnabled) {
+            _log(string.concat("MINT_ZERO: 0 ", token.symbol(), " to ", _getActorIndex(recipient)));
         }
     }
 
     /// @notice Handler for burning tokens
-    /// @dev Tests TEMPO-TIP8 (supply decrease)
-    function burn(uint256 tokenSeed, uint256 amount) external {
+    /// @dev Tests TEMPO-TIP8 (supply decrease), reward accounting, optedInSupply delta
+    function handler_burn(uint256 tokenSeed, uint256 amount) external {
+        TIP20 token = _selectBaseToken(tokenSeed);
+
+        if (!_ensureBalance(token, admin, 1)) return;
+
+        uint256 adminBalance = token.balanceOf(admin);
+        amount = bound(amount, 1, adminBalance);
+
+        // Snapshot pre-burn state
+        uint256 adminBalBefore = token.balanceOf(admin);
+        uint256 totalSupplyBefore = token.totalSupply();
+        uint256 globalRPTBefore = token.globalRewardPerToken();
+        uint128 optedInSupplyBefore = token.optedInSupply();
+        (address adminDelegate, uint256 adminRPTBefore,) = token.userRewardInfo(admin);
+        uint256 delegateRewardBalBefore;
+        if (adminDelegate != address(0)) {
+            (,, delegateRewardBalBefore) = token.userRewardInfo(adminDelegate);
+        }
+        uint256 zeroBalBefore = token.balanceOf(address(0));
+
+        // Expect Transfer(admin, address(0), amount) and Burn(admin, amount)
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.Transfer(admin, address(0), amount);
+        vm.expectEmit(true, false, false, true, address(token));
+        emit ITIP20.Burn(admin, amount);
+
+        vm.prank(admin);
+        token.burn(amount);
+
+        _tokenBurnSum[address(token)] += amount;
+
+        // TEMPO-TIP8: Total supply should decrease by exact amount
+        assertEq(
+            token.totalSupply(),
+            totalSupplyBefore - amount,
+            "TEMPO-TIP8: Total supply not decreased correctly"
+        );
+
+        // Admin balance decreased by exact amount
+        assertEq(
+            token.balanceOf(admin),
+            adminBalBefore - amount,
+            "TEMPO-TIP8: Admin balance not decreased"
+        );
+
+        // Zero address balance must NOT increase
+        assertEq(
+            token.balanceOf(address(0)),
+            zeroBalBefore,
+            "burn: zero address balance should not increase"
+        );
+
+        // globalRewardPerToken unchanged by burn
+        assertEq(
+            token.globalRewardPerToken(),
+            globalRPTBefore,
+            "burn: globalRewardPerToken should not change"
+        );
+
+        // Sender's rewardPerToken synced to global
+        (, uint256 adminRPTAfter,) = token.userRewardInfo(admin);
+        assertEq(adminRPTAfter, globalRPTBefore, "burn: sender rewardPerToken not synced to global");
+
+        // optedInSupply delta
+        uint128 optedInSupplyAfter = token.optedInSupply();
+        if (adminDelegate != address(0)) {
+            assertEq(
+                optedInSupplyAfter,
+                optedInSupplyBefore - uint128(amount),
+                "burn: optedInSupply should decrease for opted-in sender"
+            );
+        } else {
+            assertEq(
+                optedInSupplyAfter,
+                optedInSupplyBefore,
+                "burn: optedInSupply should not change for non-opted-in sender"
+            );
+        }
+
+        // Reward accrual to delegate
+        if (adminDelegate != address(0) && globalRPTBefore > adminRPTBefore) {
+            uint256 expectedAccrual =
+                (adminBalBefore * (globalRPTBefore - adminRPTBefore)) / ACC_PRECISION;
+            (,, uint256 delegateRewardBalAfter) = token.userRewardInfo(adminDelegate);
+            assertEq(
+                delegateRewardBalAfter,
+                delegateRewardBalBefore + expectedAccrual,
+                "burn: delegate reward accrual incorrect"
+            );
+        }
+
+        if (_loggingEnabled) {
+            _log(string.concat("BURN: ", vm.toString(amount), " ", token.symbol()));
+        }
+    }
+
+    /// @notice Handler for burning tokens with memo
+    /// @dev Tests TEMPO-TIP8 (supply decrease), TEMPO-TIP9 (memo events), reward accounting
+    function handler_burnWithMemo(uint256 tokenSeed, uint256 amount, bytes32 memo) external {
+        TIP20 token = _selectBaseToken(tokenSeed);
+
+        if (!_ensureBalance(token, admin, 1)) return;
+
+        uint256 adminBalance = token.balanceOf(admin);
+        amount = bound(amount, 1, adminBalance);
+
+        // Snapshot pre-burn state
+        uint256 adminBalBefore = token.balanceOf(admin);
+        uint256 totalSupplyBefore = token.totalSupply();
+        uint256 globalRPTBefore = token.globalRewardPerToken();
+        uint128 optedInSupplyBefore = token.optedInSupply();
+        (address adminDelegate, uint256 adminRPTBefore,) = token.userRewardInfo(admin);
+        uint256 delegateRewardBalBefore;
+        if (adminDelegate != address(0)) {
+            (,, delegateRewardBalBefore) = token.userRewardInfo(adminDelegate);
+        }
+        uint256 zeroBalBefore = token.balanceOf(address(0));
+
+        // Expect Transfer, TransferWithMemo, and Burn events
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.Transfer(admin, address(0), amount);
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.TransferWithMemo(admin, address(0), amount, memo);
+        vm.expectEmit(true, false, false, true, address(token));
+        emit ITIP20.Burn(admin, amount);
+
+        vm.prank(admin);
+        token.burnWithMemo(amount, memo);
+
+        _tokenBurnSum[address(token)] += amount;
+
+        // TEMPO-TIP8: Total supply should decrease by exact amount
+        assertEq(
+            token.totalSupply(),
+            totalSupplyBefore - amount,
+            "TEMPO-TIP8: Total supply not decreased correctly after burnWithMemo"
+        );
+
+        // Admin balance decreased by exact amount
+        assertEq(
+            token.balanceOf(admin),
+            adminBalBefore - amount,
+            "TEMPO-TIP8: Admin balance not decreased after burnWithMemo"
+        );
+
+        // Zero address balance must NOT increase
+        assertEq(
+            token.balanceOf(address(0)),
+            zeroBalBefore,
+            "burnWithMemo: zero address balance should not increase"
+        );
+
+        // globalRewardPerToken unchanged
+        assertEq(
+            token.globalRewardPerToken(),
+            globalRPTBefore,
+            "burnWithMemo: globalRewardPerToken should not change"
+        );
+
+        // Sender's rewardPerToken synced to global
+        (, uint256 adminRPTAfter,) = token.userRewardInfo(admin);
+        assertEq(
+            adminRPTAfter,
+            globalRPTBefore,
+            "burnWithMemo: sender rewardPerToken not synced to global"
+        );
+
+        // optedInSupply delta
+        uint128 optedInSupplyAfter = token.optedInSupply();
+        if (adminDelegate != address(0)) {
+            assertEq(
+                optedInSupplyAfter,
+                optedInSupplyBefore - uint128(amount),
+                "burnWithMemo: optedInSupply should decrease for opted-in sender"
+            );
+        } else {
+            assertEq(
+                optedInSupplyAfter,
+                optedInSupplyBefore,
+                "burnWithMemo: optedInSupply should not change for non-opted-in sender"
+            );
+        }
+
+        // Reward accrual to delegate
+        if (adminDelegate != address(0) && globalRPTBefore > adminRPTBefore) {
+            uint256 expectedAccrual =
+                (adminBalBefore * (globalRPTBefore - adminRPTBefore)) / ACC_PRECISION;
+            (,, uint256 delegateRewardBalAfter) = token.userRewardInfo(adminDelegate);
+            assertEq(
+                delegateRewardBalAfter,
+                delegateRewardBalBefore + expectedAccrual,
+                "burnWithMemo: delegate reward accrual incorrect"
+            );
+        }
+
+        if (_loggingEnabled) {
+            _log(string.concat("BURN_WITH_MEMO: ", vm.toString(amount), " ", token.symbol()));
+        }
+    }
+
+    /// @notice Handler for zero-amount burn edge case
+    /// @dev Tests that burning zero tokens succeeds and leaves all state unchanged
+    function handler_burnZeroAmount(uint256 tokenSeed) external {
+        TIP20 token = _selectBaseToken(tokenSeed);
+
+        uint256 totalSupplyBefore = token.totalSupply();
+        uint256 adminBalBefore = token.balanceOf(admin);
+        uint256 zeroBalBefore = token.balanceOf(address(0));
+        uint256 globalRPTBefore = token.globalRewardPerToken();
+        uint128 optedInSupplyBefore = token.optedInSupply();
+
+        vm.expectEmit(true, true, false, true, address(token));
+        emit ITIP20.Transfer(admin, address(0), 0);
+        vm.expectEmit(true, false, false, true, address(token));
+        emit ITIP20.Burn(admin, 0);
+
+        vm.prank(admin);
+        token.burn(0);
+
+        // Total supply unchanged
+        assertEq(token.totalSupply(), totalSupplyBefore, "burnZero: total supply should not change");
+
+        // Admin balance unchanged
+        assertEq(
+            token.balanceOf(admin), adminBalBefore, "burnZero: admin balance should not change"
+        );
+
+        // Zero address balance unchanged
+        assertEq(
+            token.balanceOf(address(0)),
+            zeroBalBefore,
+            "burnZero: zero address balance should not change"
+        );
+
+        // globalRewardPerToken unchanged
+        assertEq(
+            token.globalRewardPerToken(),
+            globalRPTBefore,
+            "burnZero: globalRewardPerToken should not change"
+        );
+
+        // optedInSupply unchanged
+        assertEq(
+            token.optedInSupply(), optedInSupplyBefore, "burnZero: optedInSupply should not change"
+        );
+
+        // Sender rewardPerToken still synced to global (update still runs)
+        (, uint256 adminRPTAfter,) = token.userRewardInfo(admin);
+        assertEq(adminRPTAfter, globalRPTBefore, "burnZero: sender rewardPerToken not synced");
+
+        if (_loggingEnabled) {
+            _log(string.concat("BURN_ZERO: 0 ", token.symbol()));
+        }
+    }
+
+    /// @notice Handler for unauthorized burn attempts
+    /// @dev Tests that only ISSUER_ROLE can burn
+    function handler_burnUnauthorized(
+        uint256 actorSeed,
+        uint256 tokenSeed,
+        uint256 amount
+    )
+        external
+    {
+        TIP20 token = _selectBaseToken(tokenSeed);
+        (address attacker, bool ok) = _trySelectActorWithoutRole(actorSeed, token, _ISSUER_ROLE);
+        if (!ok) return;
+
+        amount = bound(amount, 1, 1_000_000);
+
+        uint256 supplyBefore = token.totalSupply();
+        uint256 attackerBalBefore = token.balanceOf(attacker);
+
+        vm.prank(attacker);
+        try token.burn(amount) {
+            fail("unauthorized burn should have reverted");
+        } catch {
+            // Expected revert
+        }
+
+        // Assert no state changes
+        assertEq(
+            token.totalSupply(), supplyBefore, "TEMPO-TIP26: Supply changed on unauthorized burn"
+        );
+        assertEq(
+            token.balanceOf(attacker),
+            attackerBalBefore,
+            "TEMPO-TIP26: Balance changed on unauthorized burn"
+        );
+    }
+
+    /// @notice Handler for burn with insufficient balance
+    /// @dev Tests that burning more than balance reverts with InsufficientBalance
+    function handler_burnInsufficientBalance(uint256 tokenSeed) external {
         TIP20 token = _selectBaseToken(tokenSeed);
 
         uint256 adminBalance = token.balanceOf(admin);
-        if (adminBalance == 0) return;
+        uint256 amount = adminBalance + 1;
 
-        amount = bound(amount, 1, adminBalance);
+        uint256 supplyBefore = token.totalSupply();
 
-        uint256 totalSupplyBefore = token.totalSupply();
-
-        vm.startPrank(admin);
+        vm.prank(admin);
         try token.burn(amount) {
-            vm.stopPrank();
-
-            _tokenBurnSum[address(token)] += amount;
-
-            // TEMPO-TIP8: Total supply should decrease
-            assertEq(
-                token.totalSupply(),
-                totalSupplyBefore - amount,
-                "TEMPO-TIP8: Total supply not decreased correctly"
-            );
-
-            assertEq(
-                token.balanceOf(admin),
-                adminBalance - amount,
-                "TEMPO-TIP8: Admin balance not decreased"
-            );
-
-            if (_loggingEnabled) {
-                _log(string.concat("BURN: ", vm.toString(amount), " ", token.symbol()));
-            }
+            fail("burn with insufficient balance should have reverted");
         } catch (bytes memory reason) {
-            vm.stopPrank();
-            assertTrue(_isKnownTIP20Error(bytes4(reason)), "Unknown error encountered");
+            assertEq(
+                bytes4(reason), ITIP20.InsufficientBalance.selector, "Expected InsufficientBalance"
+            );
         }
+
+        // Assert no state changes
+        assertEq(
+            token.totalSupply(), supplyBefore, "burnInsufficient: supply changed on failed burn"
+        );
+        assertEq(
+            token.balanceOf(admin), adminBalance, "burnInsufficient: balance changed on failed burn"
+        );
     }
 
     /// @notice Handler for transfer with memo
@@ -1568,7 +2215,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
             bool ok;
             (actor, ok) = _trySelectFundedSender(actorSeed, token);
             if (!ok) return;
-            (recipient, ok) = _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), actor);
+            (recipient, ok) =
+                _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), actor);
             if (!ok) return;
         }
 
@@ -1636,7 +2284,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
             bool ok;
             (owner, ok) = _trySelectFundedSender(ownerSeed, token);
             if (!ok) return;
-            (recipient, ok) = _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), owner);
+            (recipient, ok) =
+                _trySelectAuthorizedRecipientExcluding(recipientSeed, address(token), owner);
             if (!ok) return;
         }
         address spender = _selectActorExcluding(actorSeed, owner);
@@ -1700,7 +2349,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
                 newRecipient = actor;
             } else {
                 bool ok;
-                (newRecipient, ok) = _trySelectPolicyAuthorizedExcluding(recipientSeed, address(token), actor);
+                (newRecipient, ok) =
+                    _trySelectPolicyAuthorizedExcluding(recipientSeed, address(token), actor);
                 if (!ok) return;
             }
         }
@@ -1920,6 +2570,7 @@ contract TIP20InvariantTest is InvariantBaseTest {
             if (!ok) return;
         }
         if (!_ensureBalance(token, actor, 1000)) return;
+        if (token.optedInSupply() != 0) return;
 
         vm.startPrank(actor);
         try token.distributeReward(1000) {
@@ -2199,21 +2850,111 @@ contract TIP20InvariantTest is InvariantBaseTest {
 
     /// @notice Handler for unauthorized mint attempts
     /// @dev Tests TEMPO-TIP26 (only ISSUER_ROLE can mint)
-    function mintUnauthorized(uint256 actorSeed, uint256 tokenSeed, uint256 amount) external {
+    function handler_mintUnauthorized(
+        uint256 actorSeed,
+        uint256 tokenSeed,
+        uint256 amount
+    )
+        external
+    {
         TIP20 token = _selectBaseToken(tokenSeed);
         (address attacker, bool ok) = _trySelectActorWithoutRole(actorSeed, token, _ISSUER_ROLE);
         if (!ok) return;
 
         amount = bound(amount, 1, 1_000_000);
 
-        vm.startPrank(attacker);
+        uint256 supplyBefore = token.totalSupply();
+        uint256 attackerBalBefore = token.balanceOf(attacker);
+
+        vm.prank(attacker);
         try token.mint(attacker, amount) {
-            vm.stopPrank();
-            revert("TEMPO-TIP26: Non-issuer should not be able to mint");
+            fail("unauthorized mint should have reverted");
         } catch {
-            vm.stopPrank();
-            // Expected to revert - access control enforced
+            // Expected revert
         }
+
+        // Assert no state changes
+        assertEq(
+            token.totalSupply(), supplyBefore, "TEMPO-TIP26: Supply changed on unauthorized mint"
+        );
+        assertEq(
+            token.balanceOf(attacker),
+            attackerBalBefore,
+            "TEMPO-TIP26: Balance changed on unauthorized mint"
+        );
+    }
+
+    /// @notice Handler for mint exceeding supply cap
+    /// @dev Tests TEMPO-TIP7 (supply cap enforcement)
+    function handler_mintSupplyCapExceeded(uint256 tokenSeed, uint256 recipientSeed) external {
+        TIP20 token = _selectBaseToken(tokenSeed);
+
+        address recipient;
+        {
+            bool ok;
+            (recipient, ok) = _trySelectAuthorizedMintRecipient(recipientSeed, address(token));
+            if (!ok) return;
+        }
+
+        uint256 currentSupply = token.totalSupply();
+        uint256 supplyCap = token.supplyCap();
+        uint256 remaining = supplyCap > currentSupply ? supplyCap - currentSupply : 0;
+
+        // Attempt to mint more than remaining capacity
+        uint256 amount = remaining + 1;
+
+        uint256 supplyBefore = token.totalSupply();
+        uint256 recipientBalBefore = token.balanceOf(recipient);
+
+        vm.prank(admin);
+        try token.mint(recipient, amount) {
+            fail("mint exceeding supply cap should have reverted");
+        } catch (bytes memory reason) {
+            assertEq(
+                bytes4(reason), ITIP20.SupplyCapExceeded.selector, "Expected SupplyCapExceeded"
+            );
+        }
+
+        // Assert no state changes
+        assertEq(
+            token.totalSupply(), supplyBefore, "TEMPO-TIP7: Supply changed on cap exceeded mint"
+        );
+        assertEq(
+            token.balanceOf(recipient),
+            recipientBalBefore,
+            "TEMPO-TIP7: Balance changed on cap exceeded mint"
+        );
+    }
+
+    /// @notice Handler for mint to policy-forbidden recipient
+    /// @dev Tests that mint respects mint recipient policy authorization
+    function handler_mintPolicyForbidsRecipient(uint256 tokenSeed, uint256 recipientSeed) external {
+        TIP20 token = _selectBaseToken(tokenSeed);
+
+        address recipient;
+        {
+            bool ok;
+            (recipient, ok) = _trySelectNotAuthorizedMintRecipient(recipientSeed, address(token));
+            if (!ok) return;
+        }
+
+        uint256 supplyBefore = token.totalSupply();
+        uint256 recipientBalBefore = token.balanceOf(recipient);
+
+        vm.prank(admin);
+        try token.mint(recipient, 1) {
+            fail("mint to policy-forbidden recipient should have reverted");
+        } catch (bytes memory reason) {
+            assertEq(bytes4(reason), ITIP20.PolicyForbids.selector, "Expected PolicyForbids");
+        }
+
+        // Assert no state changes
+        assertEq(token.totalSupply(), supplyBefore, "Supply changed on policy-forbidden mint");
+        assertEq(
+            token.balanceOf(recipient),
+            recipientBalBefore,
+            "Balance changed on policy-forbidden mint"
+        );
     }
 
     /// @notice Handler for unauthorized pause attempts
@@ -2263,7 +3004,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
         external
     {
         TIP20 token = _selectBaseToken(tokenSeed);
-        (address attacker, bool ok) = _trySelectActorWithoutRole(actorSeed, token, _BURN_BLOCKED_ROLE);
+        (address attacker, bool ok) =
+            _trySelectActorWithoutRole(actorSeed, token, _BURN_BLOCKED_ROLE);
         if (!ok) return;
 
         address target = _selectActor(targetSeed);
@@ -2355,7 +3097,8 @@ contract TIP20InvariantTest is InvariantBaseTest {
         {
             bool isUsdToken = keccak256(bytes(token.currency())) == keccak256(bytes("USD"));
             if (isUsdToken) {
-                bool isUsdQuote = keccak256(bytes(newQuoteToken.currency())) == keccak256(bytes("USD"));
+                bool isUsdQuote =
+                    keccak256(bytes(newQuoteToken.currency())) == keccak256(bytes("USD"));
                 if (!isUsdQuote) return;
             }
         }

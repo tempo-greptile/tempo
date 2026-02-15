@@ -279,7 +279,14 @@ abstract contract InvariantBaseTest is BaseTest {
     /// @param seed Random seed for selection
     /// @param token Token to check recipient authorization for
     /// @return The selected authorized recipient
-    function _selectAuthorizedRecipient(uint256 seed, address token) internal view returns (address) {
+    function _selectAuthorizedRecipient(
+        uint256 seed,
+        address token
+    )
+        internal
+        view
+        returns (address)
+    {
         uint64 policyId = _getPolicyId(token);
 
         address[] memory authorized = new address[](_actors.length);
@@ -295,7 +302,14 @@ abstract contract InvariantBaseTest is BaseTest {
     }
 
     /// @dev Tries to select an authorized actor. Returns (actor, true) or (address(0), false).
-    function _trySelectPolicyAuthorized(uint256 seed, address token) internal view returns (address, bool) {
+    function _trySelectPolicyAuthorized(
+        uint256 seed,
+        address token
+    )
+        internal
+        view
+        returns (address, bool)
+    {
         uint64 policyId = _getPolicyId(token);
         uint256 start = seed % _actors.length;
         for (uint256 i = 0; i < _actors.length; i++) {
@@ -306,7 +320,14 @@ abstract contract InvariantBaseTest is BaseTest {
     }
 
     /// @dev Tries to select an authorized sender. Returns (actor, true) or (address(0), false).
-    function _trySelectAuthorizedSender(uint256 seed, address token) internal view returns (address, bool) {
+    function _trySelectAuthorizedSender(
+        uint256 seed,
+        address token
+    )
+        internal
+        view
+        returns (address, bool)
+    {
         uint64 policyId = _getPolicyId(token);
         uint256 start = seed % _actors.length;
         for (uint256 i = 0; i < _actors.length; i++) {
@@ -317,7 +338,14 @@ abstract contract InvariantBaseTest is BaseTest {
     }
 
     /// @dev Tries to select an authorized recipient. Returns (actor, true) or (address(0), false).
-    function _trySelectAuthorizedRecipient(uint256 seed, address token) internal view returns (address, bool) {
+    function _trySelectAuthorizedRecipient(
+        uint256 seed,
+        address token
+    )
+        internal
+        view
+        returns (address, bool)
+    {
         uint64 policyId = _getPolicyId(token);
         uint256 start = seed % _actors.length;
         for (uint256 i = 0; i < _actors.length; i++) {
@@ -332,7 +360,11 @@ abstract contract InvariantBaseTest is BaseTest {
         uint256 seed,
         address token,
         address excluded
-    ) internal view returns (address, bool) {
+    )
+        internal
+        view
+        returns (address, bool)
+    {
         uint64 policyId = _getPolicyId(token);
         uint256 start = seed % _actors.length;
         for (uint256 i = 0; i < _actors.length; i++) {
@@ -346,7 +378,11 @@ abstract contract InvariantBaseTest is BaseTest {
     function _trySelectFundedSender(
         uint256 seed,
         TIP20 token
-    ) internal view returns (address, bool) {
+    )
+        internal
+        view
+        returns (address, bool)
+    {
         uint64 policyId = _getPolicyId(address(token));
         uint256 start = seed % _actors.length;
         for (uint256 i = 0; i < _actors.length; i++) {
@@ -363,12 +399,54 @@ abstract contract InvariantBaseTest is BaseTest {
         uint256 seed,
         address token,
         address excluded
-    ) internal view returns (address, bool) {
+    )
+        internal
+        view
+        returns (address, bool)
+    {
         uint64 policyId = _getPolicyId(token);
         uint256 start = seed % _actors.length;
         for (uint256 i = 0; i < _actors.length; i++) {
             address cand = _actors[addmod(start, i, _actors.length)];
-            if (cand != excluded && registry.isAuthorizedRecipient(policyId, cand)) return (cand, true);
+            if (cand != excluded && registry.isAuthorizedRecipient(policyId, cand)) {
+                return (cand, true);
+            }
+        }
+        return (address(0), false);
+    }
+
+    /// @dev Tries to select a mint-authorized recipient. Returns (actor, true) or (address(0), false).
+    function _trySelectAuthorizedMintRecipient(
+        uint256 seed,
+        address token
+    )
+        internal
+        view
+        returns (address, bool)
+    {
+        uint64 policyId = _getPolicyId(token);
+        uint256 start = seed % _actors.length;
+        for (uint256 i = 0; i < _actors.length; i++) {
+            address cand = _actors[addmod(start, i, _actors.length)];
+            if (registry.isAuthorizedMintRecipient(policyId, cand)) return (cand, true);
+        }
+        return (address(0), false);
+    }
+
+    /// @dev Tries to select an actor NOT authorized as mint recipient. Returns (actor, true) or (address(0), false).
+    function _trySelectNotAuthorizedMintRecipient(
+        uint256 seed,
+        address token
+    )
+        internal
+        view
+        returns (address, bool)
+    {
+        uint64 policyId = _getPolicyId(token);
+        uint256 start = seed % _actors.length;
+        for (uint256 i = 0; i < _actors.length; i++) {
+            address cand = _actors[addmod(start, i, _actors.length)];
+            if (!registry.isAuthorizedMintRecipient(policyId, cand)) return (cand, true);
         }
         return (address(0), false);
     }
@@ -378,7 +456,11 @@ abstract contract InvariantBaseTest is BaseTest {
         uint256 seed,
         TIP20 token,
         bytes32 role
-    ) internal view returns (address, bool) {
+    )
+        internal
+        view
+        returns (address, bool)
+    {
         uint256 start = seed % _actors.length;
         for (uint256 i = 0; i < _actors.length; i++) {
             address cand = _actors[addmod(start, i, _actors.length)];
@@ -476,6 +558,14 @@ abstract contract InvariantBaseTest is BaseTest {
     /// @return True if authorized as recipient
     function _isAuthorizedRecipient(address token, address actor) internal view returns (bool) {
         return registry.isAuthorizedRecipient(_getPolicyId(token), actor);
+    }
+
+    /// @dev Checks if an actor is authorized as mint recipient for a token
+    /// @param token Token address
+    /// @param actor Actor address
+    /// @return True if authorized as mint recipient
+    function _isAuthorizedMintRecipient(address token, address actor) internal view returns (bool) {
+        return registry.isAuthorizedMintRecipient(_getPolicyId(token), actor);
     }
 
     /*//////////////////////////////////////////////////////////////
