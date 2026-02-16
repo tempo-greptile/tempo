@@ -10,6 +10,10 @@ pub trait TempoGasParams {
     fn tx_tip1000_auth_account_creation_cost(&self) -> u64 {
         self.gas_params().get(GasId::new(255))
     }
+
+    fn tx_tip1000_auth_account_creation_state_gas(&self) -> u64 {
+        self.gas_params().get(GasId::new(254))
+    }
 }
 
 impl TempoGasParams for GasParams {
@@ -62,6 +66,7 @@ pub fn tempo_gas_params(spec: TempoHardfork) -> GasParams {
                 EIP7702_PER_EMPTY_ACCOUNT_COST,
             ),
             (GasId::new(255), T2_EXEC_GAS),
+            (GasId::new(254), AUTH_ACCOUNT_CREATION_COST - T2_EXEC_GAS),
         ]);
     } else if spec.is_t1() {
         // TIP-1000: All storage creation costs in regular gas (no state gas split).
@@ -142,6 +147,7 @@ mod tests {
 
         // Auth account creation also split
         assert_eq!(gas_params.get(GasId::new(255)), 5_000);
+        assert_eq!(gas_params.get(GasId::new(254)), 245_000);
     }
 
     #[test]
@@ -175,6 +181,13 @@ mod tests {
             t2.get(GasId::code_deposit_cost()) + t2.get(GasId::code_deposit_state_gas()),
             2_500,
             "code_deposit: T2 total should be 2,500/byte per TIP-1016"
+        );
+
+        // Auth account creation: exec + state should equal T1 total
+        assert_eq!(
+            t2.get(GasId::new(255)) + t2.get(GasId::new(254)),
+            t1.get(GasId::new(255)),
+            "auth_account_creation: T2 exec + state must equal T1 total"
         );
     }
 }
