@@ -1052,7 +1052,7 @@ mod tests {
     use tempo_primitives::{
         Block, TempoHeader, TempoPrimitives, TempoTxEnvelope,
         transaction::{
-            TempoTransaction,
+            KeyAuthorization, SignatureType, TempoTransaction, TokenLimit,
             envelope::TEMPO_SYSTEM_TX_SIGNATURE,
             tempo_transaction::Call,
             tt_signature::{PrimitiveSignature, TempoSignature},
@@ -1324,6 +1324,65 @@ mod tests {
                 err.downcast_other_ref::<TempoPoolTransactionError>(),
                 Some(TempoPoolTransactionError::InvalidValidBefore { .. })
             ));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_expiring_nonce_missing_valid_before_rejected() {
+        // MODERATO T1 activation timestamp: 1770303600
+        let current_time = 1_770_303_601u64;
+
+        let transaction = TxBuilder::aa(Address::random())
+            .fee_token(PATH_USD_ADDRESS)
+            .nonce_key(TEMPO_EXPIRING_NONCE_KEY)
+            .nonce(0)
+            .build();
+        let validator = setup_validator(&transaction, current_time);
+
+        let outcome = validator
+            .validate_transaction(TransactionOrigin::External, transaction)
+            .await;
+
+        match outcome {
+            TransactionValidationOutcome::Invalid(_, ref err) => {
+                assert!(matches!(
+                    err.downcast_other_ref::<TempoPoolTransactionError>(),
+                    Some(TempoPoolTransactionError::ExpiringNonceMissingValidBefore)
+                ));
+            }
+            _ => panic!(
+                "Expected Invalid outcome with ExpiringNonceMissingValidBefore error, got: {outcome:?}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_expiring_nonce_nonce_not_zero_rejected() {
+        // MODERATO T1 activation timestamp: 1770303600
+        let current_time = 1_770_303_601u64;
+
+        let transaction = TxBuilder::aa(Address::random())
+            .fee_token(PATH_USD_ADDRESS)
+            .nonce_key(TEMPO_EXPIRING_NONCE_KEY)
+            .nonce(1)
+            .valid_before(current_time + TEST_VALIDITY_WINDOW)
+            .build();
+        let validator = setup_validator(&transaction, current_time);
+
+        let outcome = validator
+            .validate_transaction(TransactionOrigin::External, transaction)
+            .await;
+
+        match outcome {
+            TransactionValidationOutcome::Invalid(_, ref err) => {
+                assert!(matches!(
+                    err.downcast_other_ref::<TempoPoolTransactionError>(),
+                    Some(TempoPoolTransactionError::ExpiringNonceNonceNotZero)
+                ));
+            }
+            _ => panic!(
+                "Expected Invalid outcome with ExpiringNonceNonceNotZero error, got: {outcome:?}"
+            ),
         }
     }
 
@@ -4370,6 +4429,65 @@ mod tests {
                 "Expected Invalid outcome with TooManyTotalStorageKeys error, got: {outcome:?}"
             ),
         }
+    }
+
+    #[test]
+    fn test_aa_too_many_token_limits_rejected() {
+        let limits: Vec<TokenLimit> = (0..MAX_TOKEN_LIMITS + 1)
+            .map(|_| TokenLimit {
+                token: Address::random(),
+                limit: U256::from(1),
+            })
+            .collect();
+
+        let signed_key_auth = KeyAuthorization {
+            chain_id: MODERATO.chain_id(),
+            key_type: SignatureType::Secp256k1,
+            key_id: Address::random(),
+            expiry: None,
+            limits: Some(limits),
+        }
+        .into_signed(PrimitiveSignature::Secp256k1(Signature::test_signature()));
+
+        let tx = TempoTransaction {
+            chain_id: MODERATO.chain_id(),
+            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: 20_000_000_000,
+            gas_limit: TEMPO_T1_TX_GAS_LIMIT_CAP,
+            calls: vec![Call {
+                to: TxKind::Call(Address::random()),
+                value: U256::ZERO,
+                input: Default::default(),
+            }],
+            nonce_key: U256::ZERO,
+            nonce: 0,
+            fee_token: Some(PATH_USD_ADDRESS),
+            fee_payer_signature: None,
+            valid_after: None,
+            valid_before: None,
+            access_list: Default::default(),
+            tempo_authorization_list: vec![],
+            key_authorization: Some(signed_key_auth),
+        };
+
+        let signed = AASigned::new_unhashed(
+            tx,
+            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(Signature::test_signature())),
+        );
+        let transaction = TempoPooledTransaction::new(
+            TempoTxEnvelope::from(signed).try_into_recovered().unwrap(),
+        );
+        let validator = setup_validator(&transaction, 0);
+
+        let result = validator.ensure_aa_field_limits(&transaction);
+        assert!(
+            matches!(
+                result,
+                Err(TempoPoolTransactionError::TooManyTokenLimits { count, max_allowed })
+                if count == MAX_TOKEN_LIMITS + 1 && max_allowed == MAX_TOKEN_LIMITS
+            ),
+            "Expected TooManyTokenLimits error, got: {result:?}"
+        );
     }
 
     #[test]
