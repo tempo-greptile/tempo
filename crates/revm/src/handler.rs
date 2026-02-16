@@ -381,10 +381,11 @@ where
 
                 // Include gas from all previous successful calls + failed call
                 let gas_spent_by_failed_call = frame_result.gas().spent();
-                let failed_call_state_gas = frame_result.gas().state_gas_spent();
                 let total_gas_spent = (gas_limit - remaining_gas) + gas_spent_by_failed_call;
-                let total_state_gas =
-                    accumulated_state_gas_spent.saturating_add(failed_call_state_gas);
+                // State gas only applies to successful calls that create state.
+                // On revert/halt no new state is created, so the failed call's
+                // state gas is not charged.
+                let total_state_gas = accumulated_state_gas_spent;
 
                 // Use flattened gas reconstruction (Gas::new_spent + erase_cost) for robustness
                 // under the EIP-8037 reservoir model. This avoids ambiguity from Gas::new's
