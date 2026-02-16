@@ -2011,4 +2011,236 @@ mod tests {
         };
         assert!(valid_expiring_tx.validate().is_ok());
     }
+
+    #[test]
+    fn test_signature_type_from_u8() {
+        assert_eq!(u8::from(SignatureType::Secp256k1), 0);
+        assert_eq!(u8::from(SignatureType::P256), 1);
+        assert_eq!(u8::from(SignatureType::WebAuthn), 2);
+        // Ensure no Default::default() (0) for all variants
+        assert_ne!(u8::from(SignatureType::P256), 0);
+        assert_ne!(u8::from(SignatureType::WebAuthn), 0);
+    }
+
+    #[test]
+    fn test_call_size() {
+        let call = Call {
+            to: TxKind::Call(Address::repeat_byte(0x01)),
+            value: U256::from(42),
+            input: Bytes::from(vec![1, 2, 3, 4, 5]),
+        };
+        let sz = call.size();
+        // size = size_of::<Self>() + input.len()
+        let expected = size_of::<Call>() + 5;
+        assert_eq!(sz, expected);
+        assert!(sz > 1); // kills return 0 or 1
+        // size_of::<Call>() is > 5, so + vs - would give very different results
+        assert_ne!(sz, size_of::<Call>().wrapping_sub(5)); // kills + -> -
+        assert_ne!(sz, size_of::<Call>() * 5); // kills + -> *
+    }
+
+    #[test]
+    fn test_is_expiring_nonce_tx() {
+        let dummy_call = Call {
+            to: TxKind::Call(Address::ZERO),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        };
+        // Expiring nonce key = U256::MAX
+        let tx_expiring = TempoTransaction {
+            nonce_key: TEMPO_EXPIRING_NONCE_KEY,
+            calls: vec![dummy_call.clone()],
+            ..Default::default()
+        };
+        assert!(tx_expiring.is_expiring_nonce_tx());
+
+        // Non-expiring nonce key = 0
+        let tx_normal = TempoTransaction {
+            nonce_key: U256::ZERO,
+            calls: vec![dummy_call.clone()],
+            ..Default::default()
+        };
+        assert!(!tx_normal.is_expiring_nonce_tx());
+
+        // Non-expiring nonce key = 1
+        let tx_one = TempoTransaction {
+            nonce_key: U256::from(1),
+            calls: vec![dummy_call],
+            ..Default::default()
+        };
+        assert!(!tx_one.is_expiring_nonce_tx());
+    }
+
+    #[test]
+    fn test_tempo_transaction_size() {
+        let call = Call {
+            to: TxKind::Call(Address::repeat_byte(0x01)),
+            value: U256::from(42),
+            input: Bytes::from(vec![1, 2, 3, 4, 5]),
+        };
+        let tx = TempoTransaction {
+            chain_id: 1,
+            gas_limit: 21000,
+            calls: vec![call],
+            ..Default::default()
+        };
+        let sz = tx.size();
+        // Must be > 1 (kills return 0 or 1)
+        assert!(sz > 1);
+        // Must include the Call size
+        let call_sizes: usize = tx.calls.iter().map(|c| c.size()).sum();
+        let expected = size_of::<TempoTransaction>()
+            + call_sizes
+            + tx.access_list.size()
+            + tx.key_authorization.as_ref().map_or(0, |k| k.size())
+            + tx
+                .tempo_authorization_list
+                .iter()
+                .map(|a| a.size())
+                .sum::<usize>();
+        assert_eq!(sz, expected);
+    }
+
+    #[test]
+    fn test_tempo_transaction_trait_accessors() {
+        let call = Call {
+            to: TxKind::Call(Address::repeat_byte(0x42)),
+            value: U256::from(999),
+            input: Bytes::from(vec![0xAB, 0xCD]),
+        };
+        let tx = TempoTransaction {
+            chain_id: 42,
+            fee_token: Some(Address::repeat_byte(0xFF)),
+            max_priority_fee_per_gas: 5_000_000_000,
+            max_fee_per_gas: 10_000_000_000,
+            gas_limit: 100_000,
+            calls: vec![call],
+            access_list: Default::default(),
+            nonce_key: U256::from(7),
+            nonce: 99,
+            fee_payer_signature: None,
+            valid_before: None,
+            valid_after: None,
+            key_authorization: None,
+            tempo_authorization_list: vec![],
+        };
+
+        // Transaction trait
+        assert_eq!(tx.chain_id(), Some(42));
+        assert_eq!(tx.nonce(), 99);
+        assert_eq!(tx.gas_limit(), 100_000);
+        assert_eq!(tx.gas_price(), None); // EIP-1559, no legacy gas price
+        assert_eq!(tx.max_fee_per_gas(), 10_000_000_000);
+        assert_eq!(tx.max_priority_fee_per_gas(), Some(5_000_000_000));
+        assert_eq!(tx.max_fee_per_blob_gas(), None);
+        assert!(tx.is_dynamic_fee());
+        assert_eq!(tx.kind(), TxKind::Call(Address::repeat_byte(0x42)));
+        assert!(tx.is_create() == false);
+        assert_eq!(tx.value(), U256::from(999));
+        assert_eq!(tx.input(), &Bytes::from(vec![0xAB, 0xCD]));
+        assert!(!tx.input().is_empty());
+        assert!(tx.access_list().is_some());
+        assert_eq!(tx.blob_versioned_hashes(), None);
+        assert_eq!(tx.authorization_list(), None);
+
+        // Typed2718
+        assert_eq!(Typed2718::ty(&tx), TEMPO_TX_TYPE_ID);
+        assert_ne!(Typed2718::ty(&tx), 0);
+        assert_ne!(Typed2718::ty(&tx), 1);
+    }
+
+    #[test]
+    fn test_has_sub_block_nonce_key_prefix_and_subblock_proposer() {
+        use crate::subblock::TEMPO_SUBBLOCK_NONCE_KEY_PREFIX;
+
+        // Non-subblock tx: nonce_key = 0
+        let tx_normal = TempoTransaction {
+            nonce_key: U256::ZERO,
+            calls: vec![Call {
+                to: TxKind::Call(Address::ZERO),
+                value: U256::ZERO,
+                input: Bytes::new(),
+            }],
+            ..Default::default()
+        };
+        assert!(!tx_normal.has_sub_block_nonce_key_prefix());
+        assert_eq!(tx_normal.subblock_proposer(), None);
+
+        // Subblock tx: nonce_key with TEMPO_SUBBLOCK_NONCE_KEY_PREFIX in MSB
+        let mut nonce_key_bytes = [0u8; 32];
+        nonce_key_bytes[0] = TEMPO_SUBBLOCK_NONCE_KEY_PREFIX;
+        // Fill bytes 1..16 with recognizable data for partial validator key
+        for i in 1..16 {
+            nonce_key_bytes[i] = i as u8;
+        }
+        let nonce_key = U256::from_be_bytes(nonce_key_bytes);
+        let tx_subblock = TempoTransaction {
+            nonce_key,
+            calls: vec![Call {
+                to: TxKind::Call(Address::ZERO),
+                value: U256::ZERO,
+                input: Bytes::new(),
+            }],
+            ..Default::default()
+        };
+        assert!(tx_subblock.has_sub_block_nonce_key_prefix());
+        let proposer = tx_subblock.subblock_proposer();
+        assert!(proposer.is_some());
+        let pk = proposer.unwrap();
+        // Verify the partial key matches bytes 1..16
+        assert_eq!(pk.as_slice(), &nonce_key_bytes[1..16]);
+    }
+
+    #[test]
+    fn test_recover_fee_payer() {
+        use crate::transaction::tt_authorization::tests::generate_secp256k1_keypair;
+        use alloy_signer::SignerSync;
+
+        let (fee_payer_signer, fee_payer_address) = generate_secp256k1_keypair();
+        let sender = Address::repeat_byte(0x01);
+
+        let mut tx = TempoTransaction {
+            chain_id: 1,
+            gas_limit: 21000,
+            calls: vec![Call {
+                to: TxKind::Call(Address::repeat_byte(0x02)),
+                value: U256::ZERO,
+                input: Bytes::new(),
+            }],
+            ..Default::default()
+        };
+
+        // No fee payer signature -> returns sender
+        assert_eq!(tx.recover_fee_payer(sender).unwrap(), sender);
+
+        // With fee payer signature -> returns fee_payer_address
+        let fee_payer_hash = tx.fee_payer_signature_hash(sender);
+        let sig = fee_payer_signer.sign_hash_sync(&fee_payer_hash).unwrap();
+        tx.fee_payer_signature = Some(sig);
+        let recovered = tx.recover_fee_payer(sender).unwrap();
+        assert_eq!(recovered, fee_payer_address);
+        assert_ne!(recovered, Address::default()); // kills Ok(Default::default())
+    }
+
+    #[test]
+    fn test_payload_len_for_signature() {
+        let tx = TempoTransaction {
+            chain_id: 1,
+            gas_limit: 21000,
+            calls: vec![Call {
+                to: TxKind::Call(Address::repeat_byte(0x02)),
+                value: U256::ZERO,
+                input: Bytes::new(),
+            }],
+            ..Default::default()
+        };
+
+        let len = tx.payload_len_for_signature();
+        assert!(len > 1); // kills return 0 or 1
+
+        // Verify it matches actual encoding length
+        let mut buf = Vec::new();
+        tx.encode_for_signing(&mut buf);
+        assert_eq!(len, buf.len());
+    }
 }

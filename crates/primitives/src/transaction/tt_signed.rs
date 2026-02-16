@@ -572,6 +572,162 @@ mod tests {
     }
 
     #[test]
+    fn test_transaction_trait_accessors() {
+        use reth_primitives_traits::InMemorySize;
+
+        let tx = TempoTransaction {
+            chain_id: 42,
+            fee_token: None,
+            max_priority_fee_per_gas: 5_000_000_000,
+            max_fee_per_gas: 10_000_000_000,
+            gas_limit: 100_000,
+            calls: vec![
+                Call {
+                    to: TxKind::Call(Address::repeat_byte(0xAA)),
+                    value: U256::from(100),
+                    input: Bytes::from(vec![0xDE, 0xAD]),
+                },
+                Call {
+                    to: TxKind::Call(Address::repeat_byte(0xBB)),
+                    value: U256::from(200),
+                    input: Bytes::from(vec![0xBE, 0xEF]),
+                },
+            ],
+            access_list: Default::default(),
+            nonce_key: U256::from(7),
+            nonce: 42,
+            fee_payer_signature: None,
+            valid_before: None,
+            valid_after: None,
+            key_authorization: None,
+            tempo_authorization_list: vec![],
+        };
+        let sig =
+            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(Signature::test_signature()));
+        let signed = AASigned::new_unhashed(tx, sig);
+
+        // chain_id: must be Some(42), not None/Some(0)/Some(1)
+        assert_eq!(signed.chain_id(), Some(42));
+
+        // nonce: must be 42, not 0 or 1
+        assert_eq!(signed.nonce(), 42);
+
+        // gas_limit: must be 100_000, not 0 or 1
+        assert_eq!(signed.gas_limit(), 100_000);
+
+        // gas_price: for EIP-1559 style tx, delegated to inner tx
+        // TempoTransaction::gas_price() returns None
+        assert_eq!(signed.gas_price(), None);
+
+        // max_fee_per_gas: must be 10_000_000_000, not 0 or 1
+        assert_eq!(signed.max_fee_per_gas(), 10_000_000_000);
+
+        // max_priority_fee_per_gas: must be Some(5_000_000_000), not None/Some(0)/Some(1)
+        assert_eq!(signed.max_priority_fee_per_gas(), Some(5_000_000_000));
+
+        // max_fee_per_blob_gas: always None
+        assert_eq!(signed.max_fee_per_blob_gas(), None);
+
+        // effective_gas_price with base_fee
+        let effective = signed.effective_gas_price(Some(3_000_000_000));
+        assert!(effective > 0);
+        assert!(effective > 1);
+
+        // is_dynamic_fee: always true
+        assert!(signed.is_dynamic_fee());
+
+        // kind: returns first call's `to`
+        assert_eq!(signed.kind(), TxKind::Call(Address::repeat_byte(0xAA)));
+
+        // is_create: first call is a CALL, not Create
+        assert!(!signed.is_create());
+
+        // value: sum of all call values = 100 + 200 = 300
+        assert_eq!(signed.value(), U256::from(300));
+        // Specifically not 0 (Default) and not 100*200 = 20000 (multiply)
+        assert_ne!(signed.value(), U256::ZERO);
+        assert_ne!(signed.value(), U256::from(100) * U256::from(200));
+        // Not 100 - 200 which would underflow to a huge number
+        assert_ne!(signed.value(), U256::from(100).wrapping_sub(U256::from(200)));
+
+        // input: returns first call's input
+        assert_eq!(signed.input(), &Bytes::from(vec![0xDE, 0xAD]));
+        assert!(!signed.input().is_empty());
+
+        // access_list: always Some
+        assert!(signed.access_list().is_some());
+
+        // blob_versioned_hashes: always None
+        assert_eq!(signed.blob_versioned_hashes(), None);
+
+        // authorization_list: always None
+        assert_eq!(signed.authorization_list(), None);
+
+        // ty: TEMPO_TX_TYPE_ID = 0x76
+        assert_eq!(Typed2718::ty(&signed), TEMPO_TX_TYPE_ID);
+        assert_ne!(Typed2718::ty(&signed), 0);
+        assert_ne!(Typed2718::ty(&signed), 1);
+
+        // signature_hash: must not be default
+        assert_ne!(signed.signature_hash(), B256::default());
+
+        // InMemorySize: must not be 0 or 1, and must reflect actual content
+        let sz = signed.size();
+        assert!(sz > 1);
+        // Verify it's actually sum-based: size_of::<Self>() + tx.size() + sig.size()
+        let expected_sz = size_of::<AASigned>() + signed.tx().size() + signed.signature().size();
+        assert_eq!(sz, expected_sz);
+    }
+
+    #[test]
+    fn test_transaction_trait_create_call() {
+        // Test is_create with a Create TxKind as first call
+        let tx = TempoTransaction {
+            chain_id: 1,
+            gas_limit: 21000,
+            calls: vec![Call {
+                to: TxKind::Create,
+                value: U256::from(500),
+                input: Bytes::from(vec![1, 2, 3]),
+            }],
+            ..Default::default()
+        };
+        let sig =
+            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(Signature::test_signature()));
+        let signed = AASigned::new_unhashed(tx, sig);
+
+        assert!(signed.is_create());
+        assert_eq!(signed.kind(), TxKind::Create);
+        // value must be 500, not default
+        assert_eq!(signed.value(), U256::from(500));
+    }
+
+    #[test]
+    fn test_partial_eq_correct() {
+        let tx1 = make_tx();
+        let tx2 = TempoTransaction {
+            chain_id: 999,
+            gas_limit: 42000,
+            calls: vec![Call {
+                to: TxKind::Call(Address::repeat_byte(0x42)),
+                value: U256::ZERO,
+                input: Bytes::new(),
+            }],
+            ..Default::default()
+        };
+        let sig =
+            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(Signature::test_signature()));
+        let signed1 = AASigned::new_unhashed(tx1.clone(), sig.clone());
+        let signed1b = AASigned::new_unhashed(tx1, sig.clone());
+        let signed2 = AASigned::new_unhashed(tx2, sig);
+
+        // Same tx/sig => equal
+        assert_eq!(signed1, signed1b);
+        // Different tx => not equal (kills && -> || mutant)
+        assert_ne!(signed1, signed2);
+    }
+
+    #[test]
     fn test_recover_signer() {
         let (signing_key, expected_address) = generate_secp256k1_keypair();
 

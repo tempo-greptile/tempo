@@ -247,4 +247,61 @@ mod tests {
         assert!(!make_auth(Some(1000), None).never_expires());
         assert!(!make_auth(Some(0), None).never_expires()); // 0 is still Some
     }
+
+    #[test]
+    fn test_key_authorization_size() {
+        // Without limits: size = size_of::<KeyAuthorization>()
+        let auth_no_limits = make_auth(None, None);
+        let sz_no_limits = auth_no_limits.size();
+        assert_eq!(sz_no_limits, size_of::<KeyAuthorization>());
+        assert!(sz_no_limits > 1); // kills return 0 or 1
+
+        // With empty limits: capacity is 0, so no extra
+        let auth_empty = make_auth(None, Some(vec![]));
+        let sz_empty = auth_empty.size();
+        assert_eq!(sz_empty, size_of::<KeyAuthorization>());
+
+        // With limits: size = size_of::<Self>() + capacity * size_of::<TokenLimit>()
+        let limits = vec![
+            TokenLimit {
+                token: Address::repeat_byte(0x01),
+                limit: U256::from(100),
+            },
+            TokenLimit {
+                token: Address::repeat_byte(0x02),
+                limit: U256::from(200),
+            },
+        ];
+        let auth_with_limits = make_auth(None, Some(limits));
+        let sz_with_limits = auth_with_limits.size();
+        let cap = auth_with_limits.limits.as_ref().unwrap().capacity();
+        let expected = size_of::<KeyAuthorization>() + cap * size_of::<TokenLimit>();
+        assert_eq!(sz_with_limits, expected);
+        // + vs - kills: without vs with limits should differ
+        assert!(sz_with_limits >= sz_no_limits);
+        // * vs + kills: capacity * size_of is not capacity + size_of
+        assert_ne!(sz_with_limits, size_of::<KeyAuthorization>() + cap + size_of::<TokenLimit>());
+    }
+
+    #[test]
+    fn test_signed_key_authorization_size() {
+        let auth = make_auth(Some(1000), None);
+        let inner_sig = match sign_hash(
+            &generate_secp256k1_keypair().0,
+            &auth.signature_hash(),
+        ) {
+            TempoSignature::Primitive(p) => p,
+            _ => panic!("Expected primitive signature"),
+        };
+        let signed = auth.into_signed(inner_sig);
+
+        let sz = signed.size();
+        let expected = signed.authorization.size() + signed.signature.size();
+        assert_eq!(sz, expected);
+        assert!(sz > 1); // kills return 0 or 1
+        // + vs - kills
+        assert_ne!(sz, signed.authorization.size().wrapping_sub(signed.signature.size()));
+        // + vs * kills
+        assert_ne!(sz, signed.authorization.size() * signed.signature.size());
+    }
 }

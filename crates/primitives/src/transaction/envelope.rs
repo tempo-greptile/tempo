@@ -934,6 +934,135 @@ mod tests {
     }
 
     #[test]
+    fn test_envelope_aa_accessors_and_size() {
+        use alloy_consensus::transaction::{SignerRecoverable, TxHashRef};
+        use reth_primitives_traits::InMemorySize;
+
+        use crate::subblock::TEMPO_SUBBLOCK_NONCE_KEY_PREFIX;
+        use crate::transaction::{
+            TempoSignature,
+            tt_authorization::tests::{generate_secp256k1_keypair, sign_hash},
+            tt_signature::PrimitiveSignature,
+        };
+
+        // Build an AA envelope with non-default values
+        let fee_token_addr = address!("20c0000000000000000000000000000000000001");
+        let mut nonce_key_bytes = [0u8; 32];
+        nonce_key_bytes[0] = TEMPO_SUBBLOCK_NONCE_KEY_PREFIX;
+        for i in 1..16 {
+            nonce_key_bytes[i] = (i * 3) as u8;
+        }
+        let nonce_key = U256::from_be_bytes(nonce_key_bytes);
+
+        let tx = TempoTransaction {
+            chain_id: 42,
+            fee_token: Some(fee_token_addr),
+            max_fee_per_gas: 10_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            gas_limit: 100_000,
+            nonce_key,
+            nonce: 7,
+            calls: vec![Call {
+                to: TxKind::Call(Address::repeat_byte(0xAA)),
+                value: U256::from(100),
+                input: Bytes::from(vec![1, 2, 3]),
+            }],
+            ..Default::default()
+        };
+        let sig = TempoSignature::from(Signature::test_signature());
+        let aa_signed = AASigned::new_unhashed(tx, sig);
+        let envelope = TempoTxEnvelope::AA(aa_signed);
+
+        // fee_payer for AA returns sender (no fee_payer_signature)
+        let sender = Address::repeat_byte(0x01);
+        assert_eq!(envelope.fee_payer(sender).unwrap(), sender);
+
+        // is_fee_token
+        assert!(envelope.is_fee_token());
+        // Non-AA variant: is_fee_token false
+        let legacy_env =
+            TempoTxEnvelope::Legacy(Signed::new_unhashed(TxLegacy::default(), Signature::test_signature()));
+        assert!(!legacy_env.is_fee_token());
+
+        // subblock_proposer - should return Some for subblock nonce key prefix
+        let proposer = envelope.subblock_proposer();
+        assert!(proposer.is_some());
+        let pk = proposer.unwrap();
+        assert_eq!(pk.as_slice(), &nonce_key_bytes[1..16]);
+
+        // Non-AA returns None
+        assert!(legacy_env.subblock_proposer().is_none());
+
+        // nonce_key
+        let nk = envelope.nonce_key();
+        assert!(nk.is_some());
+        assert_eq!(nk.unwrap(), nonce_key);
+        assert_ne!(nk, Some(U256::ZERO)); // kills Some(Default::default())
+        assert_ne!(nk, None); // kills None
+
+        // InMemorySize: not 0, not 1
+        let sz = envelope.size();
+        assert!(sz > 1);
+
+        // TxHashRef
+        let hash = envelope.tx_hash();
+        assert_ne!(*hash, B256::default());
+
+        // Display for TempoTxType
+        assert_eq!(format!("{}", TempoTxType::Legacy), "Legacy");
+        assert_eq!(format!("{}", TempoTxType::AA), "AA");
+
+        // SignerRecoverable for TempoTxEnvelope - AA variant
+        // Use a properly signed tx for recovery test
+        let (signing_key, expected_address) = generate_secp256k1_keypair();
+        let tx2 = TempoTransaction {
+            chain_id: 1,
+            gas_limit: 21000,
+            calls: vec![Call {
+                to: TxKind::Call(Address::repeat_byte(0x42)),
+                value: U256::ZERO,
+                input: Bytes::new(),
+            }],
+            ..Default::default()
+        };
+        let placeholder =
+            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(Signature::test_signature()));
+        let temp_signed = AASigned::new_unhashed(tx2.clone(), placeholder);
+        let sig_hash = temp_signed.signature_hash();
+        let real_sig = sign_hash(&signing_key, &sig_hash);
+        let signed = AASigned::new_unhashed(tx2, real_sig);
+        let envelope_aa = TempoTxEnvelope::AA(signed);
+
+        // recover_signer
+        let recovered = envelope_aa.recover_signer().unwrap();
+        assert_eq!(recovered, expected_address);
+        assert_ne!(recovered, Address::default());
+
+        // recover_signer_unchecked - same result
+        let recovered_unchecked = envelope_aa.recover_signer_unchecked().unwrap();
+        assert_eq!(recovered_unchecked, expected_address);
+
+        // System tx: recover_signer returns Address::ZERO
+        let system_tx = TempoTxEnvelope::Legacy(Signed::new_unhashed(
+            TxLegacy {
+                chain_id: Some(1),
+                ..Default::default()
+            },
+            TEMPO_SYSTEM_TX_SIGNATURE,
+        ));
+        assert_eq!(system_tx.recover_signer().unwrap(), Address::ZERO);
+        assert_eq!(system_tx.recover_signer_unchecked().unwrap(), Address::ZERO);
+
+        // Non-system legacy tx with test_signature: recover_signer_unchecked should not return default
+        let normal_legacy = TempoTxEnvelope::Legacy(Signed::new_unhashed(
+            TxLegacy::default(),
+            Signature::test_signature(),
+        ));
+        let normal_recovered = normal_legacy.recover_signer_unchecked().unwrap();
+        assert_ne!(normal_recovered, Address::ZERO);
+    }
+
+    #[test]
     fn test_tx_type_conversions() {
         // TxType -> TempoTxType: EIP-4844 rejected
         assert!(TempoTxType::try_from(TxType::Legacy).is_ok());

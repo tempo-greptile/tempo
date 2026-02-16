@@ -1648,4 +1648,140 @@ mod tests {
         let sig = TempoSignature::Keychain(KeychainSignature::new(Address::ZERO, inner));
         assert!(sig.is_keychain());
     }
+
+    #[test]
+    fn test_primitive_signature_size() {
+        // Secp256k1 size = size_of::<PrimitiveSignature>() + 0
+        let secp_sig = PrimitiveSignature::Secp256k1(Signature::test_signature());
+        let secp_sz = secp_sig.size();
+        assert_eq!(secp_sz, size_of::<PrimitiveSignature>());
+        assert!(secp_sz > 1); // kills return 0 or 1
+
+        // P256 size = size_of::<PrimitiveSignature>() + 0
+        let p256_sig = PrimitiveSignature::P256(P256SignatureWithPreHash {
+            r: B256::from([1u8; 32]),
+            s: B256::from([2u8; 32]),
+            pub_key_x: B256::from([3u8; 32]),
+            pub_key_y: B256::from([4u8; 32]),
+            pre_hash: false,
+        });
+        let p256_sz = p256_sig.size();
+        assert_eq!(p256_sz, size_of::<PrimitiveSignature>());
+
+        // WebAuthn size = size_of::<PrimitiveSignature>() + webauthn_data.len()
+        let webauthn_data = Bytes::from(vec![0u8; 50]);
+        let webauthn_sig = PrimitiveSignature::WebAuthn(WebAuthnSignature {
+            r: B256::from([1u8; 32]),
+            s: B256::from([2u8; 32]),
+            pub_key_x: B256::from([3u8; 32]),
+            pub_key_y: B256::from([4u8; 32]),
+            webauthn_data: webauthn_data.clone(),
+        });
+        let webauthn_sz = webauthn_sig.size();
+        let expected = size_of::<PrimitiveSignature>() + 50;
+        assert_eq!(webauthn_sz, expected);
+        // + vs - kills: size_of - 50 is very different
+        assert_ne!(webauthn_sz, size_of::<PrimitiveSignature>().wrapping_sub(50));
+        // + vs * kills: size_of * 50 is very different
+        assert_ne!(webauthn_sz, size_of::<PrimitiveSignature>() * 50);
+    }
+
+    #[test]
+    fn test_tempo_signature_size() {
+        // Primitive: delegates to PrimitiveSignature::size()
+        let prim = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(Signature::test_signature()));
+        let prim_sz = prim.size();
+        assert!(prim_sz > 1);
+        assert_eq!(prim_sz, size_of::<PrimitiveSignature>());
+
+        // Keychain: 1 + 20 + inner.size()
+        let inner = PrimitiveSignature::Secp256k1(Signature::test_signature());
+        let inner_size = inner.size();
+        let keychain = TempoSignature::Keychain(KeychainSignature::new(Address::repeat_byte(0x01), inner));
+        let kc_sz = keychain.size();
+        assert_eq!(kc_sz, 1 + 20 + inner_size);
+        assert!(kc_sz > 1);
+        // + vs - kills
+        assert_ne!(kc_sz, 1usize.wrapping_sub(20).wrapping_add(inner_size));
+        // + vs * kills
+        assert_ne!(kc_sz, 1 * 20 + inner_size);
+    }
+
+    #[test]
+    fn test_primitive_signature_from_bytes_boundary() {
+        // Test exact boundary: PrimitiveSignature::from_bytes with data.len() < 2
+        // (after the secp256k1 65-byte check)
+        // Single byte that is NOT length 65: should fail
+        let result = PrimitiveSignature::from_bytes(&[0x01]);
+        assert!(result.is_err());
+
+        // Exactly 2 bytes with unknown type id
+        let result = PrimitiveSignature::from_bytes(&[0xFF, 0x00]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown signature type"));
+    }
+
+    #[test]
+    fn test_tempo_signature_from_bytes_keychain_boundary() {
+        // Keychain with exactly 20 bytes for address + inner sig (too short for inner)
+        let mut data = vec![SIGNATURE_TYPE_KEYCHAIN];
+        data.extend_from_slice(&[0u8; 20]); // address
+        // No inner sig bytes at all -> inner is empty -> should fail
+        let result = TempoSignature::from_bytes(&data);
+        assert!(result.is_err());
+
+        // Keychain with < 20 bytes for address -> should fail with "too short"
+        let mut data = vec![SIGNATURE_TYPE_KEYCHAIN];
+        data.extend_from_slice(&[0u8; 19]);
+        let result = TempoSignature::from_bytes(&data);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too short"));
+    }
+
+    #[test]
+    fn test_verify_p256_boundary_high_s() {
+        // Test with s = P256N_HALF (should pass, boundary is >)
+        let s_half = P256N_HALF.to_be_bytes::<32>();
+
+        // We can't easily construct a valid P256 signature with exactly P256N_HALF as s,
+        // but we can test the boundary check by using the verify function directly
+        // s > P256N_HALF should fail
+        let s_high = (P256N_HALF + U256::from(1)).to_be_bytes::<32>();
+        let r_dummy = [0u8; 32];
+        let pk_x = [0u8; 32];
+        let pk_y = [0u8; 32];
+        let hash = B256::from([0xAA; 32]);
+
+        let result = verify_p256_signature_internal(&r_dummy, &s_high, &pk_x, &pk_y, &hash);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("high s value"));
+
+        // s == P256N_HALF should NOT be rejected by the high-s check
+        // (it may still fail on "Invalid P256 public key" but that's a later check)
+        let result = verify_p256_signature_internal(&r_dummy, &s_half, &pk_x, &pk_y, &hash);
+        // Should NOT fail with "high s value"
+        if let Err(e) = &result {
+            assert!(!e.contains("high s value"), "s == P256N_HALF should be accepted (>= vs >)");
+        }
+    }
+
+    #[test]
+    fn test_verify_webauthn_data_boundary() {
+        // Test MIN_AUTH_DATA_LEN + 32 boundary
+        // Data shorter than MIN_AUTH_DATA_LEN + 32 should fail
+        let short_data = vec![0u8; MIN_AUTH_DATA_LEN + 31];
+        let tx_hash = B256::from([0xAA; 32]);
+        let result = verify_webauthn_data_internal(&short_data, &tx_hash);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too short"));
+
+        // Exactly MIN_AUTH_DATA_LEN + 32 should NOT fail with "too short"
+        // (it'll fail on flags or JSON parsing instead)
+        let mut exact_data = vec![0u8; MIN_AUTH_DATA_LEN + 32];
+        exact_data[32] = 0x01; // Set UP flag
+        let result = verify_webauthn_data_internal(&exact_data, &tx_hash);
+        if let Err(e) = &result {
+            assert!(!e.contains("too short"), "len == MIN_AUTH_DATA_LEN + 32 should not be 'too short'");
+        }
+    }
 }

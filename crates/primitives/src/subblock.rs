@@ -448,4 +448,106 @@ mod tests {
         let invalid_buf = [2u8];
         assert!(SubBlockVersion::decode(&mut invalid_buf.as_slice()).is_err());
     }
+
+    #[test]
+    fn test_subblock_version_encodable_length() {
+        // SubBlockVersion::V1 encodes as u8(1), which has RLP length 1
+        let v1_len = SubBlockVersion::V1.length();
+        assert_eq!(v1_len, 1u8.length());
+        // Mutant replaces length() with 1 - let's verify it's actually 1 here
+        // (u8 value 1 encodes as single byte 0x01, so length is 1)
+        assert_eq!(v1_len, 1);
+    }
+
+    #[test]
+    fn test_subblock_rlp_header() {
+        let subblock = SubBlock {
+            version: SubBlockVersion::V1,
+            parent_hash: B256::repeat_byte(0xAB),
+            fee_recipient: Address::repeat_byte(0xCD),
+            transactions: vec![],
+        };
+
+        // Encode and decode to verify rlp_header produces valid RLP
+        let mut buf = Vec::new();
+        subblock.encode(&mut buf);
+        assert!(!buf.is_empty());
+
+        // Verify the header is not Default (which would have list: false, payload_length: 0)
+        // by checking that the encoded data starts with a list header
+        assert!(buf[0] >= 0xc0, "SubBlock should encode as RLP list");
+
+        // Verify that length() is consistent
+        let encoded_len = subblock.length();
+        assert_eq!(encoded_len, buf.len());
+    }
+
+    #[test]
+    fn test_recovered_subblock_transactions_recovered() {
+        use crate::transaction::{
+            AASigned, TempoTransaction, TempoSignature,
+            tempo_transaction::Call,
+            tt_signature::PrimitiveSignature,
+        };
+
+        // Create a subblock with transactions and senders
+        let tx1 = TempoTransaction {
+            chain_id: 1,
+            gas_limit: 21000,
+            calls: vec![Call {
+                to: alloy_primitives::TxKind::Call(Address::repeat_byte(0x42)),
+                value: U256::ZERO,
+                input: alloy_primitives::Bytes::new(),
+            }],
+            ..Default::default()
+        };
+        let sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(
+            alloy_primitives::Signature::test_signature(),
+        ));
+        let signed_tx = AASigned::new_unhashed(tx1, sig);
+        let envelope = TempoTxEnvelope::from(signed_tx);
+
+        let sender1 = Address::repeat_byte(0x01);
+        let sender2 = Address::repeat_byte(0x02);
+
+        let tx2 = TempoTransaction {
+            chain_id: 1,
+            gas_limit: 42000,
+            max_fee_per_gas: 100,
+            calls: vec![Call {
+                to: alloy_primitives::TxKind::Call(Address::repeat_byte(0x99)),
+                value: U256::from(500),
+                input: alloy_primitives::Bytes::new(),
+            }],
+            ..Default::default()
+        };
+        let sig2 = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(
+            alloy_primitives::Signature::test_signature(),
+        ));
+        let signed_tx2 = AASigned::new_unhashed(tx2, sig2);
+        let envelope2 = TempoTxEnvelope::from(signed_tx2);
+
+        let subblock = SubBlock {
+            version: SubBlockVersion::V1,
+            parent_hash: B256::repeat_byte(0xAB),
+            fee_recipient: Address::repeat_byte(0xCD),
+            transactions: vec![envelope, envelope2],
+        };
+        let signed = SignedSubBlock {
+            inner: subblock,
+            signature: alloy_primitives::Bytes::from(vec![1, 2, 3]),
+        };
+        let recovered = RecoveredSubBlock::new_unchecked(
+            signed,
+            vec![sender1, sender2],
+            B256::repeat_byte(0xFF),
+        );
+
+        // transactions_recovered should return 2 items with correct senders
+        let txs: Vec<_> = recovered.transactions_recovered().collect();
+        assert_eq!(txs.len(), 2);
+        assert_eq!(txs[0].signer(), sender1);
+        assert_eq!(txs[1].signer(), sender2);
+        // Kills the "return empty iterator" mutant
+    }
 }

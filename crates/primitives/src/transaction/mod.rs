@@ -40,3 +40,17 @@ pub fn calc_gas_balance_spending(gas_limit: u64, gas_price: u128) -> U256 {
         .saturating_mul(U256::from(gas_price))
         .div_ceil(TEMPO_GAS_PRICE_SCALING_FACTOR)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calc_gas_balance_spending() {
+        // 21000 gas * 1_000_000_000 (1 gwei) = 21_000_000_000_000 attodollars
+        // / 10^12 = 21 microdollars
+        let result = calc_gas_balance_spending(21000, 1_000_000_000);
+        assert_eq!(result, U256::from(21));
+        assert_ne!(result, U256::ZERO); // kills Default::default()
+    }
+}
