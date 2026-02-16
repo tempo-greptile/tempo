@@ -251,4 +251,184 @@ mod tests {
         pool.insert_batch(fee_token, vec![entry]);
         assert!(pool.contains(&tx_hash));
     }
+
+    // ============================================
+    // is_empty tests
+    // ============================================
+
+    #[test]
+    fn test_is_empty_true_when_empty() {
+        let pool = PausedFeeTokenPool::new();
+        assert!(pool.is_empty(), "New pool should be empty");
+    }
+
+    #[test]
+    fn test_is_empty_false_when_not_empty() {
+        let mut pool = PausedFeeTokenPool::new();
+        let fee_token = Address::random();
+        let entry = PausedEntry {
+            tx: create_valid_tx(Address::random()),
+            valid_before: None,
+        };
+        pool.insert_batch(fee_token, vec![entry]);
+        assert!(!pool.is_empty(), "Pool with entries should not be empty");
+    }
+
+    #[test]
+    fn test_insert_empty_batch_does_nothing() {
+        let mut pool = PausedFeeTokenPool::new();
+        let fee_token = Address::random();
+        pool.insert_batch(fee_token, vec![]);
+        assert!(pool.is_empty(), "Inserting empty batch should keep pool empty");
+    }
+
+    // ============================================
+    // evict_expired boundary tests
+    // ============================================
+
+    #[test]
+    fn test_evict_expired_boundary_exact_timestamp() {
+        let mut pool = PausedFeeTokenPool::new();
+        let fee_token = Address::random();
+
+        let entries = vec![
+            PausedEntry {
+                tx: create_valid_tx(Address::random()),
+                valid_before: Some(100),
+            },
+        ];
+
+        pool.insert_batch(fee_token, entries);
+
+        // At timestamp 99, should not expire (100 > 99)
+        let evicted = pool.evict_expired(99);
+        assert_eq!(evicted, 0, "Should not evict at timestamp before valid_before");
+        assert_eq!(pool.len(), 1);
+
+        // At timestamp 100, should expire (100 > 100 is false, so retained)
+        let evicted = pool.evict_expired(100);
+        assert_eq!(evicted, 1, "Should evict at exact valid_before timestamp");
+        assert_eq!(pool.len(), 0);
+    }
+
+    #[test]
+    fn test_evict_expired_subtraction_not_division() {
+        // Tests that count uses `before - after` not `before / after`
+        let mut pool = PausedFeeTokenPool::new();
+        let fee_token = Address::random();
+
+        // Insert 5 entries, 3 will expire
+        let entries: Vec<_> = (0..5).map(|i| {
+            PausedEntry {
+                tx: create_valid_tx(Address::random()),
+                valid_before: if i < 3 { Some(50) } else { Some(200) },
+            }
+        }).collect();
+
+        pool.insert_batch(fee_token, entries);
+        assert_eq!(pool.len(), 5);
+
+        let evicted = pool.evict_expired(100);
+        // 5 - 2 = 3, not 5 / 2 = 2
+        assert_eq!(evicted, 3, "Should evict exactly 3 entries");
+        assert_eq!(pool.len(), 2);
+    }
+
+    // ============================================
+    // evict_timed_out tests
+    // ============================================
+
+    #[test]
+    fn test_evict_timed_out_returns_zero_when_empty() {
+        let mut pool = PausedFeeTokenPool::new();
+        let count = pool.evict_timed_out();
+        assert_eq!(count, 0, "Empty pool should return 0");
+    }
+
+    #[test]
+    fn test_evict_timed_out_returns_zero_for_fresh_entries() {
+        let mut pool = PausedFeeTokenPool::new();
+        let fee_token = Address::random();
+        let entries = vec![PausedEntry {
+            tx: create_valid_tx(Address::random()),
+            valid_before: None,
+        }];
+        pool.insert_batch(fee_token, entries);
+
+        // Just inserted, so should not be timed out
+        let count = pool.evict_timed_out();
+        assert_eq!(count, 0, "Fresh entries should not be timed out");
+        assert_eq!(pool.len(), 1);
+    }
+
+    // ============================================
+    // evict_invalidated tests
+    // ============================================
+
+    #[test]
+    fn test_evict_invalidated_returns_zero_when_both_empty() {
+        let mut pool = PausedFeeTokenPool::new();
+        let fee_token = Address::random();
+        let entries = vec![PausedEntry {
+            tx: create_valid_tx(Address::random()),
+            valid_before: None,
+        }];
+        pool.insert_batch(fee_token, entries);
+
+        let revoked = crate::RevokedKeys::new();
+        let spending = crate::SpendingLimitUpdates::new();
+        let count = pool.evict_invalidated(&revoked, &spending);
+        assert_eq!(count, 0, "Should return 0 when both revoked and spending are empty");
+        assert_eq!(pool.len(), 1);
+    }
+
+    #[test]
+    fn test_evict_invalidated_short_circuits_when_empty() {
+        // Tests the && short-circuit: if both are empty, should return 0 immediately
+        let mut pool = PausedFeeTokenPool::new();
+        let revoked = crate::RevokedKeys::new();
+        let spending = crate::SpendingLimitUpdates::new();
+        assert!(revoked.is_empty() && spending.is_empty());
+        let count = pool.evict_invalidated(&revoked, &spending);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_evict_invalidated_retains_non_keychain_txs() {
+        // Non-keychain transactions should be retained (keychain_subject returns None)
+        let mut pool = PausedFeeTokenPool::new();
+        let fee_token = Address::random();
+        let entries = vec![PausedEntry {
+            tx: create_valid_tx(Address::random()),
+            valid_before: None,
+        }];
+        pool.insert_batch(fee_token, entries);
+
+        let mut revoked = crate::RevokedKeys::new();
+        revoked.insert(Address::random(), Address::random());
+        let spending = crate::SpendingLimitUpdates::new();
+
+        let count = pool.evict_invalidated(&revoked, &spending);
+        // Non-keychain txs should not be evicted
+        assert_eq!(count, 0, "Non-keychain txs should be retained");
+        assert_eq!(pool.len(), 1);
+    }
+
+    #[test]
+    fn test_evict_expired_cleans_up_empty_tokens() {
+        let mut pool = PausedFeeTokenPool::new();
+        let fee_token = Address::random();
+
+        let entries = vec![PausedEntry {
+            tx: create_valid_tx(Address::random()),
+            valid_before: Some(50),
+        }];
+
+        pool.insert_batch(fee_token, entries);
+        assert!(!pool.is_empty());
+
+        pool.evict_expired(100);
+        // After evicting all entries for a token, the token entry should be cleaned up
+        assert!(pool.is_empty(), "Pool should be empty after evicting all entries");
+    }
 }

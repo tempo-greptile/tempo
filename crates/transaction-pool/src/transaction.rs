@@ -950,6 +950,311 @@ mod tests {
         // PoolTransaction::cost() returns &U256::ZERO for Tempo
         assert_eq!(*tx.cost(), U256::ZERO);
     }
+
+    // ============================================
+    // Accessor return value tests (kill mutants that replace returns with defaults)
+    // ============================================
+
+    #[test]
+    fn test_size_returns_nonzero() {
+        let tx = TxBuilder::aa(Address::random())
+            .gas_limit(1_000_000)
+            .build();
+        let size = tx.size();
+        assert!(size > 1, "size() should return a meaningful value, got {size}");
+    }
+
+    #[test]
+    fn test_ty_returns_aa_type() {
+        let tx = TxBuilder::aa(Address::random()).build();
+        let ty = tx.ty();
+        // AA transaction type should be non-zero and non-one (it's a Tempo-specific type)
+        // The important thing is the value is correct (not mutated to 0 or 1)
+        assert!(ty != 0 && ty != 1, "ty() should return the AA tx type, got {ty}");
+    }
+
+    #[test]
+    fn test_encoded_length_returns_nonzero() {
+        let tx = TxBuilder::aa(Address::random())
+            .gas_limit(1_000_000)
+            .build();
+        let len = tx.encoded_length();
+        assert!(len > 1, "encoded_length() should be > 1, got {len}");
+    }
+
+    #[test]
+    fn test_max_fee_per_blob_gas_returns_none() {
+        let tx = TxBuilder::aa(Address::random()).build();
+        assert_eq!(tx.max_fee_per_blob_gas(), None, "AA tx should have no blob gas");
+    }
+
+    #[test]
+    fn test_effective_gas_price_forwards_correctly() {
+        let tx = TxBuilder::aa(Address::random())
+            .max_fee(20_000_000_000)
+            .max_priority_fee(1_000_000_000)
+            .build();
+        let effective = tx.effective_gas_price(Some(5_000_000_000));
+        // effective_gas_price = min(max_fee, base_fee + priority_fee)
+        // = min(20_000_000_000, 5_000_000_000 + 1_000_000_000) = 6_000_000_000
+        assert_eq!(effective, 6_000_000_000, "effective_gas_price should forward correctly");
+        // Ensure it's not 0 or 1 (mutant replacements)
+        assert!(effective > 1);
+    }
+
+    #[test]
+    fn test_is_dynamic_fee_returns_true_for_aa() {
+        let tx = TxBuilder::aa(Address::random()).build();
+        assert!(tx.is_dynamic_fee(), "AA tx should be dynamic fee");
+    }
+
+    #[test]
+    fn test_is_create_returns_false_for_call_tx() {
+        let tx = TxBuilder::aa(Address::random()).build();
+        assert!(!tx.is_create(), "AA tx with Call should not be create");
+    }
+
+    #[test]
+    fn test_is_create_returns_true_for_create_tx() {
+        use tempo_primitives::transaction::tempo_transaction::Call;
+        let tx = TxBuilder::aa(Address::random())
+            .calls(vec![Call {
+                to: TxKind::Create,
+                value: U256::ZERO,
+                input: Default::default(),
+            }])
+            .build();
+        assert!(tx.is_create(), "AA tx with Create should be is_create");
+    }
+
+    #[test]
+    fn test_value_returns_tx_value() {
+        let tx = TxBuilder::aa(Address::random())
+            .value(U256::from(42))
+            .build();
+        assert_eq!(tx.value(), U256::from(42), "value() should return tx value");
+    }
+
+    #[test]
+    fn test_input_returns_tx_input() {
+        use tempo_primitives::transaction::tempo_transaction::Call;
+        let input_data = Bytes::from(vec![1, 2, 3, 4]);
+        let tx = TxBuilder::aa(Address::random())
+            .calls(vec![Call {
+                to: TxKind::Call(Address::random()),
+                value: U256::ZERO,
+                input: input_data.clone(),
+            }])
+            .build();
+        assert_eq!(tx.input(), &input_data, "input() should return call input");
+    }
+
+    #[test]
+    fn test_access_list_returns_some_for_aa() {
+        let tx = TxBuilder::aa(Address::random()).build();
+        // AA transactions should have an access list (even if empty)
+        let al = tx.access_list();
+        assert!(al.is_some(), "AA tx should have access_list Some");
+    }
+
+    #[test]
+    fn test_authorization_list_returns_none_for_aa() {
+        // AA transactions always return None for alloy's authorization_list trait method
+        // because Tempo uses TempoSignedAuthorization, not alloy's SignedAuthorization
+        let tx = TxBuilder::aa(Address::random()).build();
+        assert!(tx.authorization_list().is_none(), "AA tx should have no alloy authorization_list");
+    }
+
+    #[test]
+    fn test_eip1559_authorization_list_returns_none() {
+        let tx = TxBuilder::eip1559(Address::random())
+            .gas_limit(21000)
+            .build_eip1559();
+        assert!(tx.authorization_list().is_none(), "EIP-1559 tx should have no authorization_list");
+    }
+
+    #[test]
+    fn test_keychain_subject_returns_none_for_non_keychain_tx() {
+        // Regular AA tx with primitive signature - not a keychain tx
+        let tx = TxBuilder::aa(Address::random()).build();
+        assert!(tx.keychain_subject().is_none(), "Non-keychain tx should return None");
+    }
+
+    #[test]
+    fn test_tx_env_slow_returns_valid_env() {
+        let sender = Address::random();
+        let tx = TxBuilder::aa(sender).gas_limit(1_000_000).build();
+        // Test that tx_env_slow doesn't return Default::default()
+        let env = tx.tx_env_slow();
+        // TempoTxEnv should have the sender address set
+        assert_eq!(env.caller, sender, "tx_env should have correct caller");
+    }
+
+    #[test]
+    fn test_prepare_tx_env_caches_value() {
+        let sender = Address::random();
+        let tx = TxBuilder::aa(sender).gas_limit(1_000_000).build();
+        // prepare_tx_env should cache the result
+        tx.prepare_tx_env();
+        // Calling it again should not panic and the cached value should be set
+        assert!(tx.tx_env.get().is_some(), "tx_env should be cached after prepare_tx_env");
+    }
+
+    // ============================================
+    // RevokedKeys tests
+    // ============================================
+
+    #[test]
+    fn test_revoked_keys_empty() {
+        let keys = RevokedKeys::new();
+        assert!(keys.is_empty(), "New RevokedKeys should be empty");
+        assert_eq!(keys.len(), 0);
+    }
+
+    #[test]
+    fn test_revoked_keys_insert_and_is_empty() {
+        let mut keys = RevokedKeys::new();
+        assert!(keys.is_empty());
+        keys.insert(Address::random(), Address::random());
+        assert!(!keys.is_empty(), "RevokedKeys should not be empty after insert");
+        assert_eq!(keys.len(), 1);
+    }
+
+    #[test]
+    fn test_revoked_keys_contains() {
+        let mut keys = RevokedKeys::new();
+        let account = Address::random();
+        let key_id = Address::random();
+        let other_account = Address::random();
+        let other_key_id = Address::random();
+
+        keys.insert(account, key_id);
+        assert!(keys.contains(account, key_id), "Should contain inserted key");
+        assert!(!keys.contains(other_account, key_id), "Should not match different account");
+        assert!(!keys.contains(account, other_key_id), "Should not match different key_id");
+        assert!(!keys.contains(other_account, other_key_id), "Should not match unrelated pair");
+    }
+
+    #[test]
+    fn test_revoked_keys_multiple_keys_per_account() {
+        let mut keys = RevokedKeys::new();
+        let account = Address::random();
+        let key1 = Address::random();
+        let key2 = Address::random();
+
+        keys.insert(account, key1);
+        keys.insert(account, key2);
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(account, key1));
+        assert!(keys.contains(account, key2));
+    }
+
+    // ============================================
+    // SpendingLimitUpdates tests
+    // ============================================
+
+    #[test]
+    fn test_spending_limit_updates_empty() {
+        let updates = SpendingLimitUpdates::new();
+        assert!(updates.is_empty(), "New SpendingLimitUpdates should be empty");
+        assert_eq!(updates.len(), 0);
+    }
+
+    #[test]
+    fn test_spending_limit_updates_insert_and_is_empty() {
+        let mut updates = SpendingLimitUpdates::new();
+        assert!(updates.is_empty());
+        updates.insert(Address::random(), Address::random(), Address::random());
+        assert!(!updates.is_empty(), "SpendingLimitUpdates should not be empty after insert");
+        assert_eq!(updates.len(), 1);
+    }
+
+    #[test]
+    fn test_spending_limit_updates_contains() {
+        let mut updates = SpendingLimitUpdates::new();
+        let account = Address::random();
+        let key_id = Address::random();
+        let token = Address::random();
+        let other_account = Address::random();
+        let other_key_id = Address::random();
+        let other_token = Address::random();
+
+        updates.insert(account, key_id, token);
+
+        assert!(updates.contains(account, key_id, token), "Should match exact triple");
+        assert!(!updates.contains(other_account, key_id, token), "Should not match different account");
+        assert!(!updates.contains(account, other_key_id, token), "Should not match different key_id");
+        assert!(!updates.contains(account, key_id, other_token), "Should not match different token");
+        assert!(!updates.contains(other_account, other_key_id, other_token), "Should not match unrelated triple");
+    }
+
+    #[test]
+    fn test_spending_limit_updates_contains_and_logic() {
+        // Test that both key_id AND token must match (kills && -> || mutant)
+        let mut updates = SpendingLimitUpdates::new();
+        let account = Address::random();
+        let key_id = Address::random();
+        let token = Address::random();
+        let other_key_id = Address::random();
+        let other_token = Address::random();
+
+        updates.insert(account, key_id, token);
+
+        // Same key_id but different token - should NOT match
+        assert!(!updates.contains(account, key_id, other_token));
+        // Different key_id but same token - should NOT match
+        assert!(!updates.contains(account, other_key_id, token));
+    }
+
+    // ============================================
+    // KeychainSubject matching tests
+    // ============================================
+
+    #[test]
+    fn test_keychain_subject_matches_revoked() {
+        let mut revoked = RevokedKeys::new();
+        let account = Address::random();
+        let key_id = Address::random();
+        let fee_token = Address::random();
+
+        let subject = KeychainSubject { account, key_id, fee_token };
+
+        assert!(!subject.matches_revoked(&revoked), "Should not match empty revoked keys");
+
+        revoked.insert(account, key_id);
+        assert!(subject.matches_revoked(&revoked), "Should match after insert");
+
+        // Different account should not match
+        let other_subject = KeychainSubject {
+            account: Address::random(),
+            key_id,
+            fee_token,
+        };
+        assert!(!other_subject.matches_revoked(&revoked), "Different account should not match");
+    }
+
+    #[test]
+    fn test_keychain_subject_matches_spending_limit_update() {
+        let mut updates = SpendingLimitUpdates::new();
+        let account = Address::random();
+        let key_id = Address::random();
+        let fee_token = Address::random();
+
+        let subject = KeychainSubject { account, key_id, fee_token };
+
+        assert!(!subject.matches_spending_limit_update(&updates), "Should not match empty updates");
+
+        updates.insert(account, key_id, fee_token);
+        assert!(subject.matches_spending_limit_update(&updates), "Should match after insert");
+
+        // Different fee_token should not match
+        let other_subject = KeychainSubject {
+            account,
+            key_id,
+            fee_token: Address::random(),
+        };
+        assert!(!other_subject.matches_spending_limit_update(&updates), "Different fee_token should not match");
+    }
 }
 
 // ========================================

@@ -995,6 +995,159 @@ mod tests {
         }
     }
 
+    // ============================================
+    // TempoPoolUpdates tests
+    // ============================================
+
+    #[test]
+    fn test_from_chain_empty_execution_outcome() {
+        // A chain with no receipts should produce empty updates
+        let chain = create_test_chain(vec![create_block_with_txs(1, vec![], vec![])]);
+        let updates = TempoPoolUpdates::from_chain(&chain);
+        assert!(updates.is_empty(), "Empty chain should produce empty updates");
+        assert!(!updates.has_invalidation_events());
+    }
+
+    #[test]
+    fn test_has_invalidation_events_with_only_revoked_keys() {
+        let mut updates = TempoPoolUpdates::new();
+        assert!(!updates.has_invalidation_events(), "Empty updates should have no invalidation events");
+        updates.revoked_keys.insert(Address::random(), Address::random());
+        assert!(updates.has_invalidation_events(), "Should have invalidation events when revoked_keys is non-empty");
+    }
+
+    #[test]
+    fn test_has_invalidation_events_with_only_spending_limit_changes() {
+        let mut updates = TempoPoolUpdates::new();
+        updates.spending_limit_changes.insert(Address::random(), Address::random(), Address::random());
+        assert!(updates.has_invalidation_events(), "Should have invalidation events when spending_limit_changes is non-empty");
+    }
+
+    #[test]
+    fn test_has_invalidation_events_with_only_validator_token_changes() {
+        let mut updates = TempoPoolUpdates::new();
+        updates.validator_token_changes.push((Address::random(), Address::random()));
+        assert!(updates.has_invalidation_events(), "Should have invalidation events when validator_token_changes is non-empty");
+    }
+
+    #[test]
+    fn test_has_invalidation_events_with_only_user_token_changes() {
+        let mut updates = TempoPoolUpdates::new();
+        updates.user_token_changes.insert(Address::random());
+        assert!(updates.has_invalidation_events(), "Should have invalidation events when user_token_changes is non-empty");
+    }
+
+    #[test]
+    fn test_has_invalidation_events_with_only_blacklist_additions() {
+        let mut updates = TempoPoolUpdates::new();
+        updates.blacklist_additions.push((1, Address::random()));
+        assert!(updates.has_invalidation_events(), "Should have invalidation events when blacklist_additions is non-empty");
+    }
+
+    #[test]
+    fn test_has_invalidation_events_with_only_whitelist_removals() {
+        let mut updates = TempoPoolUpdates::new();
+        updates.whitelist_removals.push((1, Address::random()));
+        assert!(updates.has_invalidation_events(), "Should have invalidation events when whitelist_removals is non-empty");
+    }
+
+    #[test]
+    fn test_has_invalidation_events_does_not_include_pause_events() {
+        let mut updates = TempoPoolUpdates::new();
+        updates.pause_events.push((Address::random(), true));
+        // pause_events are not included in has_invalidation_events
+        assert!(!updates.has_invalidation_events(), "pause_events should not trigger has_invalidation_events");
+    }
+
+    // ============================================
+    // TempoPoolState tests
+    // ============================================
+
+    #[test]
+    fn test_track_expiry_with_valid_before() {
+        let mut state = TempoPoolState::default();
+        let tx = TxBuilder::aa(Address::random())
+            .valid_before(1000)
+            .build();
+        state.track_expiry(tx.inner().as_aa());
+        assert!(!state.expiry_map.is_empty(), "Should track transaction with valid_before");
+        assert!(!state.tx_to_expiry.is_empty());
+    }
+
+    #[test]
+    fn test_track_expiry_without_valid_before() {
+        let mut state = TempoPoolState::default();
+        let tx = TxBuilder::aa(Address::random()).build();
+        state.track_expiry(tx.inner().as_aa());
+        assert!(state.expiry_map.is_empty(), "Should not track tx without valid_before");
+        assert!(state.tx_to_expiry.is_empty());
+    }
+
+    #[test]
+    fn test_drain_expired_boundary() {
+        let mut state = TempoPoolState::default();
+
+        let tx1 = TxBuilder::aa(Address::random()).valid_before(100).build();
+        let tx2 = TxBuilder::aa(Address::random()).valid_before(200).build();
+        let tx3 = TxBuilder::aa(Address::random()).valid_before(300).build();
+
+        state.track_expiry(tx1.inner().as_aa());
+        state.track_expiry(tx2.inner().as_aa());
+        state.track_expiry(tx3.inner().as_aa());
+
+        // At timestamp 99, nothing should be expired (key 100 > 99)
+        let expired = state.drain_expired(99);
+        assert!(expired.is_empty(), "Nothing should expire at timestamp 99");
+
+        // At timestamp 100, tx1 should expire (100 <= 100)
+        let expired = state.drain_expired(100);
+        assert_eq!(expired.len(), 1, "Exactly 1 tx should expire at boundary");
+        assert_eq!(expired[0], *tx1.hash());
+
+        // At timestamp 200, tx2 should expire
+        let expired = state.drain_expired(200);
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0], *tx2.hash());
+
+        // At timestamp 500, tx3 should expire
+        let expired = state.drain_expired(500);
+        assert_eq!(expired.len(), 1);
+    }
+
+    #[test]
+    fn test_drain_expired_returns_empty_for_future_timestamps() {
+        let mut state = TempoPoolState::default();
+        let expired = state.drain_expired(1000);
+        assert!(expired.is_empty(), "Empty state should return empty vec");
+    }
+
+    #[test]
+    fn test_drain_expired_returns_vec_not_default() {
+        let mut state = TempoPoolState::default();
+        let tx = TxBuilder::aa(Address::random()).valid_before(100).build();
+        let tx_hash = *tx.hash();
+        state.track_expiry(tx.inner().as_aa());
+
+        let expired = state.drain_expired(100);
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0], tx_hash);
+        // Ensure it's not vec![Default::default()]
+        assert!(!expired[0].is_zero(), "Expired hash should not be zero");
+    }
+
+    #[test]
+    fn test_track_key_expiry_records_correctly() {
+        let mut state = TempoPoolState::default();
+        let tx = TxBuilder::aa(Address::random()).build();
+        tx.set_key_expiry(Some(5000));
+        // track_key_expiry needs a keychain_subject, which regular AA txs don't have
+        // So this should be a no-op for non-keychain txs
+        state.track_key_expiry(&tx);
+        // Since this is a primitive sig tx, key_expiry is set but no keychain_subject
+        // so it won't be tracked
+        assert!(state.key_expiry.key_to_txs.is_empty());
+    }
+
     fn create_test_chain(
         blocks: Vec<reth_primitives_traits::RecoveredBlock<Block>>,
     ) -> Arc<Chain<TempoPrimitives>> {

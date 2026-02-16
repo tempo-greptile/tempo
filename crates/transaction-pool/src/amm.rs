@@ -784,4 +784,137 @@ mod tests {
             assert_eq!(cache.is_active_validator(&query), expected, "{desc}");
         }
     }
+
+    // ============================================
+    // is_active_validator_token tests
+    // ============================================
+
+    #[test]
+    fn test_is_active_validator_token_true() {
+        let token = address!("1111111111111111111111111111111111111111");
+        let cache = AmmLiquidityCache::with_unique_tokens(vec![token]);
+        assert!(cache.is_active_validator_token(&token), "Token in unique_tokens should be active");
+    }
+
+    #[test]
+    fn test_is_active_validator_token_false() {
+        let token = address!("1111111111111111111111111111111111111111");
+        let other = address!("2222222222222222222222222222222222222222");
+        let cache = AmmLiquidityCache::with_unique_tokens(vec![token]);
+        assert!(!cache.is_active_validator_token(&other), "Token not in unique_tokens should not be active");
+    }
+
+    #[test]
+    fn test_is_active_validator_token_empty() {
+        let token = address!("1111111111111111111111111111111111111111");
+        let cache = AmmLiquidityCache::with_unique_tokens(vec![]);
+        assert!(!cache.is_active_validator_token(&token), "Empty unique_tokens should return false");
+    }
+
+    // ============================================
+    // on_new_block sliding window boundary tests
+    // ============================================
+
+    #[test]
+    fn test_on_new_block_window_eviction_at_boundary() {
+        use alloy_consensus::Header;
+        // Test that the window eviction uses > (not >= or ==)
+        // LAST_SEEN_WINDOW = 10
+        let provider = create_mock_provider();
+        let cache = AmmLiquidityCache {
+            inner: Default::default(),
+        };
+
+        // Add exactly LAST_SEEN_WINDOW (10) blocks
+        for i in 0..LAST_SEEN_WINDOW as u64 {
+            let validator = Address::random();
+            let header = Header {
+                number: i,
+                beneficiary: validator,
+                ..Default::default()
+            };
+            provider.add_header(alloy_primitives::B256::random(), header.clone());
+            let sealed = SealedHeader::new(header, alloy_primitives::B256::random());
+            cache.on_new_block(&sealed, &provider).unwrap();
+        }
+
+        {
+            let inner = cache.inner.read();
+            // At exactly LAST_SEEN_WINDOW, no eviction should have happened
+            assert_eq!(inner.last_seen_tokens.len(), LAST_SEEN_WINDOW,
+                "At exactly LAST_SEEN_WINDOW, should have {LAST_SEEN_WINDOW} tokens");
+            assert_eq!(inner.last_seen_validators.len(), LAST_SEEN_WINDOW);
+        }
+
+        // Add one more (11th), should trigger pop_front
+        let validator = Address::random();
+        let header = Header {
+            number: LAST_SEEN_WINDOW as u64,
+            beneficiary: validator,
+            ..Default::default()
+        };
+        provider.add_header(alloy_primitives::B256::random(), header.clone());
+        let sealed = SealedHeader::new(header, alloy_primitives::B256::random());
+        cache.on_new_block(&sealed, &provider).unwrap();
+
+        {
+            let inner = cache.inner.read();
+            // After exceeding LAST_SEEN_WINDOW, should still be capped at LAST_SEEN_WINDOW
+            assert_eq!(inner.last_seen_tokens.len(), LAST_SEEN_WINDOW,
+                "After exceeding window, should still be {LAST_SEEN_WINDOW}");
+            assert_eq!(inner.last_seen_validators.len(), LAST_SEEN_WINDOW);
+        }
+    }
+
+    // ============================================
+    // repopulate arithmetic test
+    // ============================================
+
+    #[test]
+    fn test_repopulate_range_uses_addition() {
+        use alloy_consensus::Header;
+        // Test that repopulate uses tip.saturating_sub(LAST_SEEN_WINDOW + 1)
+        // by verifying it processes the expected number of headers
+        let provider = create_mock_provider();
+
+        // Add 5 headers (fewer than LAST_SEEN_WINDOW)
+        let validators: Vec<Address> = (0..5).map(|_| Address::random()).collect();
+        for (i, &validator) in validators.iter().enumerate() {
+            let header = Header {
+                number: i as u64,
+                beneficiary: validator,
+                ..Default::default()
+            };
+            provider.add_header(alloy_primitives::B256::random(), header);
+        }
+
+        let cache = AmmLiquidityCache {
+            inner: Default::default(),
+        };
+        cache.repopulate(&provider).unwrap();
+
+        let inner = cache.inner.read();
+        // Should have processed all 5 headers
+        assert_eq!(inner.last_seen_validators.len(), 5,
+            "Should process all available headers");
+    }
+
+    // ============================================
+    // on_new_state tests
+    // ============================================
+
+    #[test]
+    fn test_on_new_state_early_return_with_empty_outcome() {
+        use reth_provider::ExecutionOutcome;
+        let cache = AmmLiquidityCache {
+            inner: Default::default(),
+        };
+
+        // Empty execution outcome should be a no-op (test the replace-with-() mutant)
+        let outcome = ExecutionOutcome::default();
+        cache.on_new_state(&outcome);
+
+        let inner = cache.inner.read();
+        assert!(inner.cache.is_empty(), "Should be no-op for empty outcome");
+    }
 }
