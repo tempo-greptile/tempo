@@ -282,4 +282,135 @@ mod tests {
         let deserialized: TempoHardfork = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized, fork);
     }
+
+    #[test]
+    fn test_base_fee_values() {
+        // Pre-T1 variants use T0 base fee (10 billion)
+        assert_eq!(TempoHardfork::Genesis.base_fee(), 10_000_000_000);
+        assert_eq!(TempoHardfork::T0.base_fee(), 10_000_000_000);
+        // T1+ variants use T1 base fee (20 billion)
+        assert_eq!(TempoHardfork::T1.base_fee(), 20_000_000_000);
+        assert_eq!(TempoHardfork::T2.base_fee(), 20_000_000_000);
+        // Ensure no variant returns 0 or 1
+        for fork in [
+            TempoHardfork::Genesis,
+            TempoHardfork::T0,
+            TempoHardfork::T1,
+            TempoHardfork::T2,
+        ] {
+            assert!(fork.base_fee() > 1, "base_fee must not be 0 or 1");
+        }
+    }
+
+    #[test]
+    fn test_general_gas_limit_values() {
+        // Pre-T1 returns None
+        assert_eq!(TempoHardfork::Genesis.general_gas_limit(), None);
+        assert_eq!(TempoHardfork::T0.general_gas_limit(), None);
+        // T1+ returns Some(30_000_000)
+        assert_eq!(TempoHardfork::T1.general_gas_limit(), Some(30_000_000));
+        assert_eq!(TempoHardfork::T2.general_gas_limit(), Some(30_000_000));
+        // Ensure T1+ values are not 0 or 1
+        assert_ne!(TempoHardfork::T1.general_gas_limit(), Some(0));
+        assert_ne!(TempoHardfork::T1.general_gas_limit(), Some(1));
+    }
+
+    #[test]
+    fn test_tx_gas_limit_cap_values() {
+        // Pre-T1 returns Some(u64::MAX)
+        assert_eq!(TempoHardfork::Genesis.tx_gas_limit_cap(), Some(u64::MAX));
+        assert_eq!(TempoHardfork::T0.tx_gas_limit_cap(), Some(u64::MAX));
+        // T1+ returns Some(30_000_000)
+        assert_eq!(TempoHardfork::T1.tx_gas_limit_cap(), Some(30_000_000));
+        assert_eq!(TempoHardfork::T2.tx_gas_limit_cap(), Some(30_000_000));
+        // All variants return Some (never None)
+        for fork in [
+            TempoHardfork::Genesis,
+            TempoHardfork::T0,
+            TempoHardfork::T1,
+            TempoHardfork::T2,
+        ] {
+            assert!(fork.tx_gas_limit_cap().is_some());
+            assert_ne!(fork.tx_gas_limit_cap(), Some(0));
+            assert_ne!(fork.tx_gas_limit_cap(), Some(1));
+        }
+    }
+
+    #[test]
+    fn test_gas_existing_nonce_key_values() {
+        // COLD_SLOAD(2100) + WARM_SSTORE_RESET(2900) = 5000
+        assert_eq!(TempoHardfork::Genesis.gas_existing_nonce_key(), 5000);
+        assert_eq!(TempoHardfork::T0.gas_existing_nonce_key(), 5000);
+        assert_eq!(TempoHardfork::T1.gas_existing_nonce_key(), 5000);
+        // T2: 5000 + 2*WARM_SLOAD(100) = 5200
+        assert_eq!(TempoHardfork::T2.gas_existing_nonce_key(), 5200);
+        // Ensure no variant returns 0 or 1
+        for fork in [
+            TempoHardfork::Genesis,
+            TempoHardfork::T0,
+            TempoHardfork::T1,
+            TempoHardfork::T2,
+        ] {
+            assert!(fork.gas_existing_nonce_key() > 1);
+        }
+    }
+
+    #[test]
+    fn test_gas_new_nonce_key_values() {
+        // COLD_SLOAD(2100) + SSTORE_SET(20000) = 22100
+        assert_eq!(TempoHardfork::Genesis.gas_new_nonce_key(), 22100);
+        assert_eq!(TempoHardfork::T0.gas_new_nonce_key(), 22100);
+        assert_eq!(TempoHardfork::T1.gas_new_nonce_key(), 22100);
+        // T2: 22100 + 2*WARM_SLOAD(100) = 22300
+        assert_eq!(TempoHardfork::T2.gas_new_nonce_key(), 22300);
+        // Ensure no variant returns 0 or 1
+        for fork in [
+            TempoHardfork::Genesis,
+            TempoHardfork::T0,
+            TempoHardfork::T1,
+            TempoHardfork::T2,
+        ] {
+            assert!(fork.gas_new_nonce_key() > 1);
+        }
+    }
+
+    #[test]
+    fn test_from_tempo_hardfork_for_spec_id() {
+        // All TempoHardfork variants map to SpecId::OSAKA
+        assert_eq!(SpecId::from(TempoHardfork::Genesis), SpecId::OSAKA);
+        assert_eq!(SpecId::from(TempoHardfork::T0), SpecId::OSAKA);
+        assert_eq!(SpecId::from(TempoHardfork::T1), SpecId::OSAKA);
+        assert_eq!(SpecId::from(TempoHardfork::T2), SpecId::OSAKA);
+        // Ensure it doesn't return default (which would be FRONTIER = 0)
+        assert_ne!(SpecId::from(TempoHardfork::Genesis), SpecId::default());
+    }
+
+    #[test]
+    fn test_general_gas_limit_at_arithmetic() {
+        use crate::spec::TempoChainSpec;
+
+        // Build a chain spec with T1 active at timestamp 100
+        let genesis: alloy_genesis::Genesis = serde_json::from_str(
+            r#"{
+                "config": { "chainId": 9999, "t0Time": 0, "t1Time": 100 },
+                "alloc": {}
+            }"#,
+        )
+        .unwrap();
+        let cs = TempoChainSpec::from_genesis(genesis);
+
+        // At T1 (timestamp >= 100), general_gas_limit_at returns the fixed value
+        assert_eq!(cs.general_gas_limit_at(100, 60_000_000, 10_000_000), 30_000_000);
+        assert_eq!(cs.general_gas_limit_at(200, 100_000_000, 0), 30_000_000);
+
+        // Pre-T1 (timestamp < 100), formula: (gas_limit - shared_gas_limit) / 2
+        // (60_000_000 - 10_000_000) / 2 = 25_000_000
+        assert_eq!(cs.general_gas_limit_at(50, 60_000_000, 10_000_000), 25_000_000);
+        // (100_000_000 - 0) / 2 = 50_000_000
+        assert_eq!(cs.general_gas_limit_at(0, 100_000_000, 0), 50_000_000);
+        // (1000 - 0) / 2 = 500 (detects / vs %, / vs *, - vs +, - vs /)
+        assert_eq!(cs.general_gas_limit_at(0, 1000, 0), 500);
+        // (100 - 50) / 2 = 25
+        assert_eq!(cs.general_gas_limit_at(0, 100, 50), 25);
+    }
 }

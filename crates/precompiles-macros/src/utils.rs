@@ -305,4 +305,111 @@ mod tests {
         let result = extract_mapping_types(&ty);
         assert!(result.is_none());
     }
+
+    #[test]
+    fn test_parse_slot_value_int_decimal() {
+        let lit: Lit = parse_quote!(42);
+        let result = parse_slot_value(&lit).unwrap();
+        assert_eq!(result, U256::from(42));
+        assert_ne!(result, U256::ZERO);
+    }
+
+    #[test]
+    fn test_parse_slot_value_int_hex() {
+        let lit: Lit = parse_quote!(0x2a);
+        let result = parse_slot_value(&lit).unwrap();
+        assert_eq!(result, U256::from(42));
+        assert_ne!(result, U256::ZERO);
+    }
+
+    #[test]
+    fn test_parse_slot_value_str() {
+        let lit: Lit = parse_quote!("balances");
+        let result = parse_slot_value(&lit).unwrap();
+        let expected: U256 = keccak256("balances".as_bytes()).into();
+        assert_eq!(result, expected);
+        assert_ne!(result, U256::ZERO);
+    }
+
+    #[test]
+    fn test_parse_slot_value_invalid() {
+        let lit: Lit = parse_quote!(true);
+        assert!(parse_slot_value(&lit).is_err());
+    }
+
+    #[test]
+    fn test_to_snake_case_uppercase_followed_by_lowercase() {
+        // "ABCdef" — the `||` condition matters: prev_upper=true and next is lowercase
+        // With `||` replaced by `&&`: the underscore before lowercase-following-uppercase would be skipped
+        assert_eq!(to_snake_case("ABCdef"), "ab_cdef");
+        assert_eq!(to_snake_case("XMLParser"), "xml_parser");
+        assert_eq!(to_snake_case("getHTTPResponse"), "get_http_response");
+    }
+
+    #[test]
+    fn test_to_snake_case_single_uppercase() {
+        // "A" — single upper char
+        assert_eq!(to_snake_case("A"), "A");
+        // "aB" — uppercase at end without next char
+        assert_eq!(to_snake_case("aB"), "a_b");
+    }
+
+    #[test]
+    fn test_extract_attributes_slot_int() {
+        let attrs: Vec<Attribute> = vec![parse_quote!(#[slot(5)])];
+        let (slot, base_slot) = extract_attributes(&attrs).unwrap();
+        assert_eq!(slot, Some(U256::from(5)));
+        assert!(base_slot.is_none());
+    }
+
+    #[test]
+    fn test_extract_attributes_base_slot_str() {
+        let attrs: Vec<Attribute> = vec![parse_quote!(#[base_slot("my_mapping")])];
+        let (slot, base_slot) = extract_attributes(&attrs).unwrap();
+        assert!(slot.is_none());
+        let expected: U256 = keccak256("my_mapping".as_bytes()).into();
+        assert_eq!(base_slot, Some(expected));
+    }
+
+    #[test]
+    fn test_extract_attributes_empty() {
+        let attrs: Vec<Attribute> = vec![];
+        let (slot, base_slot) = extract_attributes(&attrs).unwrap();
+        assert!(slot.is_none());
+        assert!(base_slot.is_none());
+    }
+
+    #[test]
+    fn test_extract_attributes_unrelated() {
+        let attrs: Vec<Attribute> = vec![parse_quote!(#[doc = "hello"])];
+        let (slot, base_slot) = extract_attributes(&attrs).unwrap();
+        assert!(slot.is_none());
+        assert!(base_slot.is_none());
+    }
+
+    #[test]
+    fn test_extract_storable_array_sizes_present() {
+        let attrs: Vec<Attribute> = vec![parse_quote!(#[storable_arrays(1, 2, 4, 8)])];
+        let result = extract_storable_array_sizes(&attrs).unwrap();
+        assert!(result.is_some());
+        let sizes = result.unwrap();
+        assert_eq!(sizes, vec![1, 2, 4, 8]);
+        assert!(!sizes.is_empty());
+        assert_ne!(sizes, vec![0]);
+        assert_ne!(sizes, vec![1]);
+    }
+
+    #[test]
+    fn test_extract_storable_array_sizes_absent() {
+        let attrs: Vec<Attribute> = vec![parse_quote!(#[doc = "hello"])];
+        let result = extract_storable_array_sizes(&attrs).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_storable_array_sizes_single() {
+        let attrs: Vec<Attribute> = vec![parse_quote!(#[storable_arrays(16)])];
+        let result = extract_storable_array_sizes(&attrs).unwrap();
+        assert_eq!(result, Some(vec![16]));
+    }
 }

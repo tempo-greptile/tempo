@@ -566,4 +566,138 @@ mod tests {
         assert_eq!(chainspec.tempo_hardfork_at(1000), TempoHardfork::T2);
         assert_eq!(chainspec.tempo_hardfork_at(u64::MAX), TempoHardfork::T2);
     }
+
+    #[test]
+    fn test_from_genesis_timestamp_modulo() {
+        use alloy_genesis::Genesis;
+
+        // Use a genesis timestamp that exercises the % 1000 operation.
+        // If mutated to / or +, the resulting timestamp_millis_part will differ.
+        let genesis: Genesis = serde_json::from_str(
+            r#"{
+                "config": { "chainId": 5555, "t0Time": 0 },
+                "timestamp": "0x3e7",
+                "alloc": {}
+            }"#,
+        )
+        .unwrap();
+        // 0x3e7 = 999
+        let chainspec = super::TempoChainSpec::from_genesis(genesis);
+        // 999 % 1000 = 999 (/ would give 0, + would give 1999)
+        assert_eq!(chainspec.inner.genesis_header().timestamp_millis_part, 999);
+
+        // Another value: timestamp = 1500 = 0x5DC
+        let genesis2: Genesis = serde_json::from_str(
+            r#"{
+                "config": { "chainId": 5555, "t0Time": 0 },
+                "timestamp": "0x5dc",
+                "alloc": {}
+            }"#,
+        )
+        .unwrap();
+        let cs2 = super::TempoChainSpec::from_genesis(genesis2);
+        // 1500 % 1000 = 500
+        assert_eq!(cs2.inner.genesis_header().timestamp_millis_part, 500);
+    }
+
+    #[test]
+    fn test_eth_chain_spec_accessors() {
+        use alloy_evm::eth::spec::EthExecutorSpec;
+        use alloy_primitives::U256;
+        use reth_chainspec::EthChainSpec;
+
+        // Load mainnet (presto, chain_id = 4217)
+        let cs = super::TempoChainSpecParser::parse("mainnet")
+            .expect("mainnet must load");
+
+        // chain() returns the correct non-default chain
+        let chain = cs.chain();
+        assert_eq!(chain.id(), 4217);
+        assert_ne!(chain, reth_chainspec::Chain::default());
+
+        // genesis_hash is non-zero
+        let hash = cs.genesis_hash();
+        assert_ne!(hash, alloy_primitives::B256::default());
+
+        // genesis_header is non-default (has allocations)
+        let header = cs.genesis_header();
+        assert_eq!(header.inner.timestamp, 0);
+
+        // genesis returns non-default genesis
+        let genesis = cs.genesis();
+        assert_eq!(genesis.config.chain_id, 4217);
+
+        // final_paris_total_difficulty is Some (non-default)
+        let difficulty = cs.final_paris_total_difficulty();
+        assert!(difficulty.is_some());
+        assert_eq!(difficulty, Some(U256::ZERO));
+
+        // next_block_base_fee returns Some with correct value for T0 timestamp
+        let base_fee = cs.next_block_base_fee(cs.genesis_header(), 0);
+        assert!(base_fee.is_some());
+        assert_eq!(base_fee, Some(10_000_000_000));
+        assert_ne!(base_fee, Some(0));
+        assert_ne!(base_fee, Some(1));
+
+        // blob_params at genesis timestamp returns Some
+        let blob = cs.blob_params_at_timestamp(0);
+        assert!(blob.is_some());
+
+        // ethereum_fork_activation returns non-default
+        use reth_chainspec::EthereumHardforks;
+        let activation = cs.ethereum_fork_activation(reth_chainspec::EthereumHardfork::Frontier);
+        assert_ne!(activation, ForkCondition::default());
+
+        // deposit_contract_address — mainnet has one configured at Address::ZERO
+        let deposit = cs.deposit_contract_address();
+        assert!(deposit.is_some());
+
+        // A custom chain without deposit contract should return None
+        let custom_genesis: alloy_genesis::Genesis = serde_json::from_str(
+            r#"{ "config": { "chainId": 77777 }, "alloc": {} }"#,
+        )
+        .unwrap();
+        let custom = super::TempoChainSpec::from_genesis(custom_genesis);
+        assert!(custom.deposit_contract_address().is_none());
+    }
+
+    #[test]
+    fn test_bootnodes_moderato() {
+        use reth_chainspec::EthChainSpec;
+
+        let cs = super::TempoChainSpecParser::parse("moderato")
+            .expect("moderato must load");
+
+        let boots = cs.bootnodes();
+        assert!(boots.is_some(), "moderato bootnodes must be Some");
+        let nodes = boots.unwrap();
+        assert!(!nodes.is_empty(), "moderato bootnodes must not be empty");
+        assert_eq!(nodes.len(), 7, "moderato has 7 bootnodes");
+    }
+
+    #[test]
+    fn test_bootnodes_per_chain() {
+        use reth_chainspec::EthChainSpec;
+
+        // presto (4217)
+        let presto = super::TempoChainSpecParser::parse("mainnet").unwrap();
+        let boots = presto.bootnodes();
+        assert!(boots.is_some());
+        assert_eq!(boots.unwrap().len(), 9);
+
+        // andantino (42429)
+        let andantino = super::TempoChainSpecParser::parse("testnet").unwrap();
+        let boots = andantino.bootnodes();
+        assert!(boots.is_some());
+        assert_eq!(boots.unwrap().len(), 4);
+
+        // custom chain without matching id falls through
+        let genesis: alloy_genesis::Genesis = serde_json::from_str(
+            r#"{ "config": { "chainId": 99999 }, "alloc": {} }"#,
+        )
+        .unwrap();
+        let custom = super::TempoChainSpec::from_genesis(genesis);
+        // inner chain spec has no bootnodes → returns None
+        assert!(custom.bootnodes().is_none());
+    }
 }
