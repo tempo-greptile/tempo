@@ -38,3 +38,11 @@ alloy-rlp = "0.3"
 
 metrics.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tempo-chainspec = { workspace = true }
+tempo-transaction-pool = { workspace = true, features = ["test-utils"] }
+reth-provider = { workspace = true, features = ["test-utils"] }
+reth-transaction-pool = { workspace = true, features = ["test-utils"] }
+reth-ethereum-primitives = { workspace = true, features = ["test-utils"] }
+tokio.workspace = true

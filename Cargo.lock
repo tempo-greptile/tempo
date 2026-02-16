@@ -12225,11 +12225,13 @@ dependencies = [
  "reth-consensus-common",
  "reth-engine-tree",
  "reth-errors",
+ "reth-ethereum-primitives",
  "reth-evm",
  "reth-metrics",
  "reth-payload-builder",
  "reth-payload-primitives",
  "reth-primitives-traits",
+ "reth-provider",
  "reth-revm",
  "reth-storage-api",
  "reth-transaction-pool",
@@ -12239,6 +12241,7 @@ dependencies = [
  "tempo-payload-types",
  "tempo-primitives",
  "tempo-transaction-pool",
+ "tokio",
  "tracing",
 ]
 
