@@ -400,12 +400,18 @@ mod tests {
         let cs = TempoChainSpec::from_genesis(genesis);
 
         // At T1 (timestamp >= 100), general_gas_limit_at returns the fixed value
-        assert_eq!(cs.general_gas_limit_at(100, 60_000_000, 10_000_000), 30_000_000);
+        assert_eq!(
+            cs.general_gas_limit_at(100, 60_000_000, 10_000_000),
+            30_000_000
+        );
         assert_eq!(cs.general_gas_limit_at(200, 100_000_000, 0), 30_000_000);
 
         // Pre-T1 (timestamp < 100), formula: (gas_limit - shared_gas_limit) / 2
         // (60_000_000 - 10_000_000) / 2 = 25_000_000
-        assert_eq!(cs.general_gas_limit_at(50, 60_000_000, 10_000_000), 25_000_000);
+        assert_eq!(
+            cs.general_gas_limit_at(50, 60_000_000, 10_000_000),
+            25_000_000
+        );
         // (100_000_000 - 0) / 2 = 50_000_000
         assert_eq!(cs.general_gas_limit_at(0, 100_000_000, 0), 50_000_000);
         // (1000 - 0) / 2 = 500 (detects / vs %, / vs *, - vs +, - vs /)

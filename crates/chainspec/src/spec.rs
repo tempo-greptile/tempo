@@ -607,8 +607,7 @@ mod tests {
         use reth_chainspec::EthChainSpec;
 
         // Load mainnet (presto, chain_id = 4217)
-        let cs = super::TempoChainSpecParser::parse("mainnet")
-            .expect("mainnet must load");
+        let cs = super::TempoChainSpecParser::parse("mainnet").expect("mainnet must load");
 
         // chain() returns the correct non-default chain
         let chain = cs.chain();
@@ -653,10 +652,8 @@ mod tests {
         assert!(deposit.is_some());
 
         // A custom chain without deposit contract should return None
-        let custom_genesis: alloy_genesis::Genesis = serde_json::from_str(
-            r#"{ "config": { "chainId": 77777 }, "alloc": {} }"#,
-        )
-        .unwrap();
+        let custom_genesis: alloy_genesis::Genesis =
+            serde_json::from_str(r#"{ "config": { "chainId": 77777 }, "alloc": {} }"#).unwrap();
         let custom = super::TempoChainSpec::from_genesis(custom_genesis);
         assert!(custom.deposit_contract_address().is_none());
     }
@@ -665,8 +662,7 @@ mod tests {
     fn test_bootnodes_moderato() {
         use reth_chainspec::EthChainSpec;
 
-        let cs = super::TempoChainSpecParser::parse("moderato")
-            .expect("moderato must load");
+        let cs = super::TempoChainSpecParser::parse("moderato").expect("moderato must load");
 
         let boots = cs.bootnodes();
         assert!(boots.is_some(), "moderato bootnodes must be Some");
@@ -692,10 +688,8 @@ mod tests {
         assert_eq!(boots.unwrap().len(), 4);
 
         // custom chain without matching id falls through
-        let genesis: alloy_genesis::Genesis = serde_json::from_str(
-            r#"{ "config": { "chainId": 99999 }, "alloc": {} }"#,
-        )
-        .unwrap();
+        let genesis: alloy_genesis::Genesis =
+            serde_json::from_str(r#"{ "config": { "chainId": 99999 }, "alloc": {} }"#).unwrap();
         let custom = super::TempoChainSpec::from_genesis(genesis);
         // inner chain spec has no bootnodes → returns None
         assert!(custom.bootnodes().is_none());
