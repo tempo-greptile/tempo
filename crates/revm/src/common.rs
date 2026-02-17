@@ -470,9 +470,10 @@ mod tests {
 
         // Legacy variant: no fee_token, not AA
         let system_sig = Signature::new(U256::ZERO, U256::ZERO, false);
-        let legacy_envelope = TempoTxEnvelope::Legacy(
-            alloy_consensus::Signed::new_unhashed(Default::default(), system_sig),
-        );
+        let legacy_envelope = TempoTxEnvelope::Legacy(alloy_consensus::Signed::new_unhashed(
+            Default::default(),
+            system_sig,
+        ));
         let recovered_legacy = Recovered::new_unchecked(legacy_envelope, signer);
         assert_eq!(TempoTx::fee_token(&recovered_legacy), None);
         assert!(!TempoTx::is_aa(&recovered_legacy));
@@ -488,9 +489,10 @@ mod tests {
 
         let signer = Address::repeat_byte(0x42);
         let system_sig = Signature::new(U256::ZERO, U256::ZERO, false);
-        let envelope = TempoTxEnvelope::Legacy(
-            alloy_consensus::Signed::new_unhashed(Default::default(), system_sig),
-        );
+        let envelope = TempoTxEnvelope::Legacy(alloy_consensus::Signed::new_unhashed(
+            Default::default(),
+            system_sig,
+        ));
         let recovered = Recovered::new_unchecked(envelope, signer);
 
         assert_eq!(TempoTx::caller(&recovered), signer);

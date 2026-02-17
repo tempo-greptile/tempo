@@ -1059,7 +1059,10 @@ mod tests {
             Transaction::kind(&tx_env),
             TxKind::Call(alloy_primitives::Address::repeat_byte(0x22))
         );
-        assert_eq!(Transaction::value(&tx_env), alloy_primitives::U256::from(100));
+        assert_eq!(
+            Transaction::value(&tx_env),
+            alloy_primitives::U256::from(100)
+        );
         assert!(tx_env.is_system_tx);
         assert!(tx_env.fee_token.is_none());
         assert!(tx_env.tempo_tx_env.is_none());
