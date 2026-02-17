@@ -961,7 +961,10 @@ mod tests {
             .gas_limit(1_000_000)
             .build();
         let size = tx.size();
-        assert!(size > 1, "size() should return a meaningful value, got {size}");
+        assert!(
+            size > 1,
+            "size() should return a meaningful value, got {size}"
+        );
     }
 
     #[test]
@@ -970,7 +973,10 @@ mod tests {
         let ty = tx.ty();
         // AA transaction type should be non-zero and non-one (it's a Tempo-specific type)
         // The important thing is the value is correct (not mutated to 0 or 1)
-        assert!(ty != 0 && ty != 1, "ty() should return the AA tx type, got {ty}");
+        assert!(
+            ty != 0 && ty != 1,
+            "ty() should return the AA tx type, got {ty}"
+        );
     }
 
     #[test]
@@ -985,7 +991,11 @@ mod tests {
     #[test]
     fn test_max_fee_per_blob_gas_returns_none() {
         let tx = TxBuilder::aa(Address::random()).build();
-        assert_eq!(tx.max_fee_per_blob_gas(), None, "AA tx should have no blob gas");
+        assert_eq!(
+            tx.max_fee_per_blob_gas(),
+            None,
+            "AA tx should have no blob gas"
+        );
     }
 
     #[test]
@@ -997,7 +1007,10 @@ mod tests {
         let effective = tx.effective_gas_price(Some(5_000_000_000));
         // effective_gas_price = min(max_fee, base_fee + priority_fee)
         // = min(20_000_000_000, 5_000_000_000 + 1_000_000_000) = 6_000_000_000
-        assert_eq!(effective, 6_000_000_000, "effective_gas_price should forward correctly");
+        assert_eq!(
+            effective, 6_000_000_000,
+            "effective_gas_price should forward correctly"
+        );
         // Ensure it's not 0 or 1 (mutant replacements)
         assert!(effective > 1);
     }
@@ -1062,7 +1075,10 @@ mod tests {
         // AA transactions always return None for alloy's authorization_list trait method
         // because Tempo uses TempoSignedAuthorization, not alloy's SignedAuthorization
         let tx = TxBuilder::aa(Address::random()).build();
-        assert!(tx.authorization_list().is_none(), "AA tx should have no alloy authorization_list");
+        assert!(
+            tx.authorization_list().is_none(),
+            "AA tx should have no alloy authorization_list"
+        );
     }
 
     #[test]
@@ -1070,14 +1086,20 @@ mod tests {
         let tx = TxBuilder::eip1559(Address::random())
             .gas_limit(21000)
             .build_eip1559();
-        assert!(tx.authorization_list().is_none(), "EIP-1559 tx should have no authorization_list");
+        assert!(
+            tx.authorization_list().is_none(),
+            "EIP-1559 tx should have no authorization_list"
+        );
     }
 
     #[test]
     fn test_keychain_subject_returns_none_for_non_keychain_tx() {
         // Regular AA tx with primitive signature - not a keychain tx
         let tx = TxBuilder::aa(Address::random()).build();
-        assert!(tx.keychain_subject().is_none(), "Non-keychain tx should return None");
+        assert!(
+            tx.keychain_subject().is_none(),
+            "Non-keychain tx should return None"
+        );
     }
 
     #[test]
@@ -1097,7 +1119,10 @@ mod tests {
         // prepare_tx_env should cache the result
         tx.prepare_tx_env();
         // Calling it again should not panic and the cached value should be set
-        assert!(tx.tx_env.get().is_some(), "tx_env should be cached after prepare_tx_env");
+        assert!(
+            tx.tx_env.get().is_some(),
+            "tx_env should be cached after prepare_tx_env"
+        );
     }
 
     // ============================================
@@ -1116,7 +1141,10 @@ mod tests {
         let mut keys = RevokedKeys::new();
         assert!(keys.is_empty());
         keys.insert(Address::random(), Address::random());
-        assert!(!keys.is_empty(), "RevokedKeys should not be empty after insert");
+        assert!(
+            !keys.is_empty(),
+            "RevokedKeys should not be empty after insert"
+        );
         assert_eq!(keys.len(), 1);
     }
 
@@ -1129,10 +1157,22 @@ mod tests {
         let other_key_id = Address::random();
 
         keys.insert(account, key_id);
-        assert!(keys.contains(account, key_id), "Should contain inserted key");
-        assert!(!keys.contains(other_account, key_id), "Should not match different account");
-        assert!(!keys.contains(account, other_key_id), "Should not match different key_id");
-        assert!(!keys.contains(other_account, other_key_id), "Should not match unrelated pair");
+        assert!(
+            keys.contains(account, key_id),
+            "Should contain inserted key"
+        );
+        assert!(
+            !keys.contains(other_account, key_id),
+            "Should not match different account"
+        );
+        assert!(
+            !keys.contains(account, other_key_id),
+            "Should not match different key_id"
+        );
+        assert!(
+            !keys.contains(other_account, other_key_id),
+            "Should not match unrelated pair"
+        );
     }
 
     #[test]
@@ -1156,7 +1196,10 @@ mod tests {
     #[test]
     fn test_spending_limit_updates_empty() {
         let updates = SpendingLimitUpdates::new();
-        assert!(updates.is_empty(), "New SpendingLimitUpdates should be empty");
+        assert!(
+            updates.is_empty(),
+            "New SpendingLimitUpdates should be empty"
+        );
         assert_eq!(updates.len(), 0);
     }
 
@@ -1165,7 +1208,10 @@ mod tests {
         let mut updates = SpendingLimitUpdates::new();
         assert!(updates.is_empty());
         updates.insert(Address::random(), Address::random(), Address::random());
-        assert!(!updates.is_empty(), "SpendingLimitUpdates should not be empty after insert");
+        assert!(
+            !updates.is_empty(),
+            "SpendingLimitUpdates should not be empty after insert"
+        );
         assert_eq!(updates.len(), 1);
     }
 
@@ -1181,11 +1227,26 @@ mod tests {
 
         updates.insert(account, key_id, token);
 
-        assert!(updates.contains(account, key_id, token), "Should match exact triple");
-        assert!(!updates.contains(other_account, key_id, token), "Should not match different account");
-        assert!(!updates.contains(account, other_key_id, token), "Should not match different key_id");
-        assert!(!updates.contains(account, key_id, other_token), "Should not match different token");
-        assert!(!updates.contains(other_account, other_key_id, other_token), "Should not match unrelated triple");
+        assert!(
+            updates.contains(account, key_id, token),
+            "Should match exact triple"
+        );
+        assert!(
+            !updates.contains(other_account, key_id, token),
+            "Should not match different account"
+        );
+        assert!(
+            !updates.contains(account, other_key_id, token),
+            "Should not match different key_id"
+        );
+        assert!(
+            !updates.contains(account, key_id, other_token),
+            "Should not match different token"
+        );
+        assert!(
+            !updates.contains(other_account, other_key_id, other_token),
+            "Should not match unrelated triple"
+        );
     }
 
     #[test]
@@ -1217,12 +1278,22 @@ mod tests {
         let key_id = Address::random();
         let fee_token = Address::random();
 
-        let subject = KeychainSubject { account, key_id, fee_token };
+        let subject = KeychainSubject {
+            account,
+            key_id,
+            fee_token,
+        };
 
-        assert!(!subject.matches_revoked(&revoked), "Should not match empty revoked keys");
+        assert!(
+            !subject.matches_revoked(&revoked),
+            "Should not match empty revoked keys"
+        );
 
         revoked.insert(account, key_id);
-        assert!(subject.matches_revoked(&revoked), "Should match after insert");
+        assert!(
+            subject.matches_revoked(&revoked),
+            "Should match after insert"
+        );
 
         // Different account should not match
         let other_subject = KeychainSubject {
@@ -1230,7 +1301,10 @@ mod tests {
             key_id,
             fee_token,
         };
-        assert!(!other_subject.matches_revoked(&revoked), "Different account should not match");
+        assert!(
+            !other_subject.matches_revoked(&revoked),
+            "Different account should not match"
+        );
     }
 
     #[test]
@@ -1240,12 +1314,22 @@ mod tests {
         let key_id = Address::random();
         let fee_token = Address::random();
 
-        let subject = KeychainSubject { account, key_id, fee_token };
+        let subject = KeychainSubject {
+            account,
+            key_id,
+            fee_token,
+        };
 
-        assert!(!subject.matches_spending_limit_update(&updates), "Should not match empty updates");
+        assert!(
+            !subject.matches_spending_limit_update(&updates),
+            "Should not match empty updates"
+        );
 
         updates.insert(account, key_id, fee_token);
-        assert!(subject.matches_spending_limit_update(&updates), "Should match after insert");
+        assert!(
+            subject.matches_spending_limit_update(&updates),
+            "Should match after insert"
+        );
 
         // Different fee_token should not match
         let other_subject = KeychainSubject {
@@ -1253,7 +1337,10 @@ mod tests {
             key_id,
             fee_token: Address::random(),
         };
-        assert!(!other_subject.matches_spending_limit_update(&updates), "Different fee_token should not match");
+        assert!(
+            !other_subject.matches_spending_limit_update(&updates),
+            "Different fee_token should not match"
+        );
     }
 }
 

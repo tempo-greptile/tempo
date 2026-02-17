@@ -793,7 +793,10 @@ mod tests {
     fn test_is_active_validator_token_true() {
         let token = address!("1111111111111111111111111111111111111111");
         let cache = AmmLiquidityCache::with_unique_tokens(vec![token]);
-        assert!(cache.is_active_validator_token(&token), "Token in unique_tokens should be active");
+        assert!(
+            cache.is_active_validator_token(&token),
+            "Token in unique_tokens should be active"
+        );
     }
 
     #[test]
@@ -801,14 +804,20 @@ mod tests {
         let token = address!("1111111111111111111111111111111111111111");
         let other = address!("2222222222222222222222222222222222222222");
         let cache = AmmLiquidityCache::with_unique_tokens(vec![token]);
-        assert!(!cache.is_active_validator_token(&other), "Token not in unique_tokens should not be active");
+        assert!(
+            !cache.is_active_validator_token(&other),
+            "Token not in unique_tokens should not be active"
+        );
     }
 
     #[test]
     fn test_is_active_validator_token_empty() {
         let token = address!("1111111111111111111111111111111111111111");
         let cache = AmmLiquidityCache::with_unique_tokens(vec![]);
-        assert!(!cache.is_active_validator_token(&token), "Empty unique_tokens should return false");
+        assert!(
+            !cache.is_active_validator_token(&token),
+            "Empty unique_tokens should return false"
+        );
     }
 
     // ============================================
@@ -841,8 +850,11 @@ mod tests {
         {
             let inner = cache.inner.read();
             // At exactly LAST_SEEN_WINDOW, no eviction should have happened
-            assert_eq!(inner.last_seen_tokens.len(), LAST_SEEN_WINDOW,
-                "At exactly LAST_SEEN_WINDOW, should have {LAST_SEEN_WINDOW} tokens");
+            assert_eq!(
+                inner.last_seen_tokens.len(),
+                LAST_SEEN_WINDOW,
+                "At exactly LAST_SEEN_WINDOW, should have {LAST_SEEN_WINDOW} tokens"
+            );
             assert_eq!(inner.last_seen_validators.len(), LAST_SEEN_WINDOW);
         }
 
@@ -860,8 +872,11 @@ mod tests {
         {
             let inner = cache.inner.read();
             // After exceeding LAST_SEEN_WINDOW, should still be capped at LAST_SEEN_WINDOW
-            assert_eq!(inner.last_seen_tokens.len(), LAST_SEEN_WINDOW,
-                "After exceeding window, should still be {LAST_SEEN_WINDOW}");
+            assert_eq!(
+                inner.last_seen_tokens.len(),
+                LAST_SEEN_WINDOW,
+                "After exceeding window, should still be {LAST_SEEN_WINDOW}"
+            );
             assert_eq!(inner.last_seen_validators.len(), LAST_SEEN_WINDOW);
         }
     }
@@ -895,8 +910,11 @@ mod tests {
 
         let inner = cache.inner.read();
         // Should have processed all 5 headers
-        assert_eq!(inner.last_seen_validators.len(), 5,
-            "Should process all available headers");
+        assert_eq!(
+            inner.last_seen_validators.len(),
+            5,
+            "Should process all available headers"
+        );
     }
 
     // ============================================

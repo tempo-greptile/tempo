@@ -1004,51 +1004,83 @@ mod tests {
         // A chain with no receipts should produce empty updates
         let chain = create_test_chain(vec![create_block_with_txs(1, vec![], vec![])]);
         let updates = TempoPoolUpdates::from_chain(&chain);
-        assert!(updates.is_empty(), "Empty chain should produce empty updates");
+        assert!(
+            updates.is_empty(),
+            "Empty chain should produce empty updates"
+        );
         assert!(!updates.has_invalidation_events());
     }
 
     #[test]
     fn test_has_invalidation_events_with_only_revoked_keys() {
         let mut updates = TempoPoolUpdates::new();
-        assert!(!updates.has_invalidation_events(), "Empty updates should have no invalidation events");
-        updates.revoked_keys.insert(Address::random(), Address::random());
-        assert!(updates.has_invalidation_events(), "Should have invalidation events when revoked_keys is non-empty");
+        assert!(
+            !updates.has_invalidation_events(),
+            "Empty updates should have no invalidation events"
+        );
+        updates
+            .revoked_keys
+            .insert(Address::random(), Address::random());
+        assert!(
+            updates.has_invalidation_events(),
+            "Should have invalidation events when revoked_keys is non-empty"
+        );
     }
 
     #[test]
     fn test_has_invalidation_events_with_only_spending_limit_changes() {
         let mut updates = TempoPoolUpdates::new();
-        updates.spending_limit_changes.insert(Address::random(), Address::random(), Address::random());
-        assert!(updates.has_invalidation_events(), "Should have invalidation events when spending_limit_changes is non-empty");
+        updates.spending_limit_changes.insert(
+            Address::random(),
+            Address::random(),
+            Address::random(),
+        );
+        assert!(
+            updates.has_invalidation_events(),
+            "Should have invalidation events when spending_limit_changes is non-empty"
+        );
     }
 
     #[test]
     fn test_has_invalidation_events_with_only_validator_token_changes() {
         let mut updates = TempoPoolUpdates::new();
-        updates.validator_token_changes.push((Address::random(), Address::random()));
-        assert!(updates.has_invalidation_events(), "Should have invalidation events when validator_token_changes is non-empty");
+        updates
+            .validator_token_changes
+            .push((Address::random(), Address::random()));
+        assert!(
+            updates.has_invalidation_events(),
+            "Should have invalidation events when validator_token_changes is non-empty"
+        );
     }
 
     #[test]
     fn test_has_invalidation_events_with_only_user_token_changes() {
         let mut updates = TempoPoolUpdates::new();
         updates.user_token_changes.insert(Address::random());
-        assert!(updates.has_invalidation_events(), "Should have invalidation events when user_token_changes is non-empty");
+        assert!(
+            updates.has_invalidation_events(),
+            "Should have invalidation events when user_token_changes is non-empty"
+        );
     }
 
     #[test]
     fn test_has_invalidation_events_with_only_blacklist_additions() {
         let mut updates = TempoPoolUpdates::new();
         updates.blacklist_additions.push((1, Address::random()));
-        assert!(updates.has_invalidation_events(), "Should have invalidation events when blacklist_additions is non-empty");
+        assert!(
+            updates.has_invalidation_events(),
+            "Should have invalidation events when blacklist_additions is non-empty"
+        );
     }
 
     #[test]
     fn test_has_invalidation_events_with_only_whitelist_removals() {
         let mut updates = TempoPoolUpdates::new();
         updates.whitelist_removals.push((1, Address::random()));
-        assert!(updates.has_invalidation_events(), "Should have invalidation events when whitelist_removals is non-empty");
+        assert!(
+            updates.has_invalidation_events(),
+            "Should have invalidation events when whitelist_removals is non-empty"
+        );
     }
 
     #[test]
@@ -1056,7 +1088,10 @@ mod tests {
         let mut updates = TempoPoolUpdates::new();
         updates.pause_events.push((Address::random(), true));
         // pause_events are not included in has_invalidation_events
-        assert!(!updates.has_invalidation_events(), "pause_events should not trigger has_invalidation_events");
+        assert!(
+            !updates.has_invalidation_events(),
+            "pause_events should not trigger has_invalidation_events"
+        );
     }
 
     // ============================================
@@ -1066,11 +1101,12 @@ mod tests {
     #[test]
     fn test_track_expiry_with_valid_before() {
         let mut state = TempoPoolState::default();
-        let tx = TxBuilder::aa(Address::random())
-            .valid_before(1000)
-            .build();
+        let tx = TxBuilder::aa(Address::random()).valid_before(1000).build();
         state.track_expiry(tx.inner().as_aa());
-        assert!(!state.expiry_map.is_empty(), "Should track transaction with valid_before");
+        assert!(
+            !state.expiry_map.is_empty(),
+            "Should track transaction with valid_before"
+        );
         assert!(!state.tx_to_expiry.is_empty());
     }
 
@@ -1079,7 +1115,10 @@ mod tests {
         let mut state = TempoPoolState::default();
         let tx = TxBuilder::aa(Address::random()).build();
         state.track_expiry(tx.inner().as_aa());
-        assert!(state.expiry_map.is_empty(), "Should not track tx without valid_before");
+        assert!(
+            state.expiry_map.is_empty(),
+            "Should not track tx without valid_before"
+        );
         assert!(state.tx_to_expiry.is_empty());
     }
 

@@ -5445,7 +5445,11 @@ mod tests {
         let pending_local: Vec<_> = pool
             .get_pending_transactions_by_origin_iter(TransactionOrigin::Local)
             .collect();
-        assert_eq!(pending_local.len(), 1, "Should have exactly 1 pending Local tx");
+        assert_eq!(
+            pending_local.len(),
+            1,
+            "Should have exactly 1 pending Local tx"
+        );
 
         // The queued External tx should not appear as pending
         let pending_ext: Vec<_> = pool
@@ -5469,10 +5473,7 @@ mod tests {
         // Add 3 consecutive transactions (all pending)
         let mut hashes = Vec::new();
         for i in 0..3u64 {
-            let tx = TxBuilder::aa(sender)
-                .nonce_key(nonce_key)
-                .nonce(i)
-                .build();
+            let tx = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(i).build();
             let hash = *tx.hash();
             hashes.push(hash);
             pool.add_transaction(
@@ -5563,7 +5564,10 @@ mod tests {
 
         // Pool should have at most 1 queued tx after discard
         let (_, queued) = pool.pending_and_queued_txn_count();
-        assert!(queued <= 1, "Should have at most 1 queued tx after discard, got {queued}");
+        assert!(
+            queued <= 1,
+            "Should have at most 1 queued tx after discard, got {queued}"
+        );
 
         pool.assert_invariants();
     }
@@ -5600,7 +5604,10 @@ mod tests {
 
         // Pool should have at most 1 pending tx after discard
         let (pending, _) = pool.pending_and_queued_txn_count();
-        assert!(pending <= 1, "Should have at most 1 pending tx after discard, got {pending}");
+        assert!(
+            pending <= 1,
+            "Should have at most 1 pending tx after discard, got {pending}"
+        );
 
         pool.assert_invariants();
     }
@@ -5631,8 +5638,10 @@ mod tests {
 
         // Remove the transaction (sender count should go to 0 and be removed)
         pool.remove_transaction_by_hash(&tx_hash);
-        assert!(!pool.txs_by_sender.contains_key(&sender),
-            "Sender should be removed when count reaches 0");
+        assert!(
+            !pool.txs_by_sender.contains_key(&sender),
+            "Sender should be removed when count reaches 0"
+        );
 
         pool.assert_invariants();
     }
@@ -5649,10 +5658,7 @@ mod tests {
 
         // Add transactions: nonce 0 (pending), nonce 1 (pending), nonce 3 (queued)
         for i in [0u64, 1, 3] {
-            let tx = TxBuilder::aa(sender)
-                .nonce_key(nonce_key)
-                .nonce(i)
-                .build();
+            let tx = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(i).build();
             pool.add_transaction(
                 Arc::new(wrap_valid_tx(tx, TransactionOrigin::Local)),
                 0,
@@ -5673,7 +5679,11 @@ mod tests {
 
         assert_eq!(mined.len(), 2, "Should mine 2 txs (nonce 0, 1)");
         // No promoted since nonce 3 has a gap
-        assert_eq!(promoted.len(), 0, "Nonce 3 still has gap, should not be promoted");
+        assert_eq!(
+            promoted.len(),
+            0,
+            "Nonce 3 still has gap, should not be promoted"
+        );
 
         // Now mine nonce 2 (which doesn't exist) and move to 3
         // nonce 3 should be promoted
@@ -5700,10 +5710,7 @@ mod tests {
         let nonce_key = U256::from(1);
 
         // Add pending tx at nonce 0
-        let tx0 = TxBuilder::aa(sender)
-            .nonce_key(nonce_key)
-            .nonce(0)
-            .build();
+        let tx0 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(0).build();
         pool.add_transaction(
             Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
             0,
@@ -5712,7 +5719,10 @@ mod tests {
         .unwrap();
 
         // Get the slot for this nonce key
-        assert!(!pool.slot_to_seq_id.is_empty(), "Should have a slot tracked");
+        assert!(
+            !pool.slot_to_seq_id.is_empty(),
+            "Should have a slot tracked"
+        );
 
         pool.assert_invariants();
     }
@@ -5728,10 +5738,7 @@ mod tests {
         let nonce_key = U256::from(1);
 
         // Add two txs from same sender: nonce 0, nonce 1
-        let tx0 = TxBuilder::aa(sender)
-            .nonce_key(nonce_key)
-            .nonce(0)
-            .build();
+        let tx0 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(0).build();
         let tx0_hash = *tx0.hash();
         pool.add_transaction(
             Arc::new(wrap_valid_tx(tx0, TransactionOrigin::Local)),
@@ -5740,10 +5747,7 @@ mod tests {
         )
         .unwrap();
 
-        let tx1 = TxBuilder::aa(sender)
-            .nonce_key(nonce_key)
-            .nonce(1)
-            .build();
+        let tx1 = TxBuilder::aa(sender).nonce_key(nonce_key).nonce(1).build();
         pool.add_transaction(
             Arc::new(wrap_valid_tx(tx1, TransactionOrigin::Local)),
             0,
@@ -5772,23 +5776,27 @@ mod tests {
         let first_id = first.transaction.aa_transaction_id().unwrap();
 
         // Mark it invalid
-        let err = InvalidPoolTransactionError::Consensus(
-            InvalidTransactionError::NonceNotConsistent {
+        let err =
+            InvalidPoolTransactionError::Consensus(InvalidTransactionError::NonceNotConsistent {
                 tx: 0,
                 state: 1,
-            },
-        );
+            });
         best.mark_invalid(&first, &err);
 
         // The seq_id should now be in the invalid set
-        assert!(best.invalid.contains(&first_id.seq_id),
-            "mark_invalid should insert seq_id into invalid set");
+        assert!(
+            best.invalid.contains(&first_id.seq_id),
+            "mark_invalid should insert seq_id into invalid set"
+        );
 
         // Getting next tx should skip the same sender's tx (nonce 1)
         // and return the other sender's tx
         let next = best.next().unwrap();
-        assert_ne!(next.sender(), sender,
-            "Should skip invalidated sender's transactions");
+        assert_ne!(
+            next.sender(),
+            sender,
+            "Should skip invalidated sender's transactions"
+        );
         assert_eq!(next.sender(), other_sender);
 
         pool.assert_invariants();
@@ -5830,6 +5838,9 @@ mod tests {
         let mut pool = AA2dPool::default();
         let random_hash = TxHash::random();
         let removed = pool.remove_included_expiring_nonce_txs([random_hash].iter());
-        assert!(removed.is_empty(), "Should not remove anything for unknown hash");
+        assert!(
+            removed.is_empty(),
+            "Should not remove anything for unknown hash"
+        );
     }
 }

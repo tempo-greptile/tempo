@@ -365,7 +365,10 @@ mod tests {
         let result = <MockBestTransactions<&str> as BestPriorityTransactions<
             CoinbaseTipOrdering<crate::transaction::TempoPooledTransaction>,
         >>::next_tx_and_priority(&mut mock);
-        assert!(result.is_some(), "next_tx_and_priority should return Some when items exist");
+        assert!(
+            result.is_some(),
+            "next_tx_and_priority should return Some when items exist"
+        );
         let (item, priority) = result.unwrap();
         assert_eq!(item, "tx_a");
         assert_eq!(priority, Priority::Value(42));
@@ -377,6 +380,9 @@ mod tests {
         let result = <MockBestTransactions<&str> as BestPriorityTransactions<
             CoinbaseTipOrdering<crate::transaction::TempoPooledTransaction>,
         >>::next_tx_and_priority(&mut mock);
-        assert!(result.is_none(), "next_tx_and_priority should return None when empty");
+        assert!(
+            result.is_none(),
+            "next_tx_and_priority should return None when empty"
+        );
     }
 }

@@ -279,7 +279,10 @@ mod tests {
         let mut pool = PausedFeeTokenPool::new();
         let fee_token = Address::random();
         pool.insert_batch(fee_token, vec![]);
-        assert!(pool.is_empty(), "Inserting empty batch should keep pool empty");
+        assert!(
+            pool.is_empty(),
+            "Inserting empty batch should keep pool empty"
+        );
     }
 
     // ============================================
@@ -291,18 +294,19 @@ mod tests {
         let mut pool = PausedFeeTokenPool::new();
         let fee_token = Address::random();
 
-        let entries = vec![
-            PausedEntry {
-                tx: create_valid_tx(Address::random()),
-                valid_before: Some(100),
-            },
-        ];
+        let entries = vec![PausedEntry {
+            tx: create_valid_tx(Address::random()),
+            valid_before: Some(100),
+        }];
 
         pool.insert_batch(fee_token, entries);
 
         // At timestamp 99, should not expire (100 > 99)
         let evicted = pool.evict_expired(99);
-        assert_eq!(evicted, 0, "Should not evict at timestamp before valid_before");
+        assert_eq!(
+            evicted, 0,
+            "Should not evict at timestamp before valid_before"
+        );
         assert_eq!(pool.len(), 1);
 
         // At timestamp 100, should expire (100 > 100 is false, so retained)
@@ -318,12 +322,12 @@ mod tests {
         let fee_token = Address::random();
 
         // Insert 5 entries, 3 will expire
-        let entries: Vec<_> = (0..5).map(|i| {
-            PausedEntry {
+        let entries: Vec<_> = (0..5)
+            .map(|i| PausedEntry {
                 tx: create_valid_tx(Address::random()),
                 valid_before: if i < 3 { Some(50) } else { Some(200) },
-            }
-        }).collect();
+            })
+            .collect();
 
         pool.insert_batch(fee_token, entries);
         assert_eq!(pool.len(), 5);
@@ -378,7 +382,10 @@ mod tests {
         let revoked = crate::RevokedKeys::new();
         let spending = crate::SpendingLimitUpdates::new();
         let count = pool.evict_invalidated(&revoked, &spending);
-        assert_eq!(count, 0, "Should return 0 when both revoked and spending are empty");
+        assert_eq!(
+            count, 0,
+            "Should return 0 when both revoked and spending are empty"
+        );
         assert_eq!(pool.len(), 1);
     }
 
@@ -429,6 +436,9 @@ mod tests {
 
         pool.evict_expired(100);
         // After evicting all entries for a token, the token entry should be cleaned up
-        assert!(pool.is_empty(), "Pool should be empty after evicting all entries");
+        assert!(
+            pool.is_empty(),
+            "Pool should be empty after evicting all entries"
+        );
     }
 }
