@@ -35,7 +35,6 @@ use prometheus_client::metrics::{counter::Counter, gauge::Gauge};
 use rand_core::CryptoRngCore;
 use reth_ethereum::network::NetworkInfo;
 use reth_provider::{BlockNumReader, HeaderProvider};
-use tempo_chainspec::hardfork::TempoHardforks;
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_node::TempoFullNode;
 use tempo_precompiles::{
@@ -51,8 +50,7 @@ use crate::{
         ingress::{GetDkgOutcome, VerifyDealerLog},
     },
     validators::{
-        DecodedValidatorV2, decode_from_contract, is_v2_active, read_validator_config_at_height,
-        v2_activation_height,
+        DecodedValidatorV2, can_use_v2, decode_from_contract, read_validator_config_at_height,
     },
 };
 
@@ -1129,10 +1127,9 @@ where
 
         // Check if next ceremony should be full.
         let next_epoch = state.epoch.next();
-        let will_be_re_dkg =
-            crate::validators::read_re_dkg_epoch(&self.config.execution_node, request.height.get())
-                // in theory it should never fail, but if it does, just stick to reshare.
-                .is_ok_and(|epoch| epoch == next_epoch.get());
+        let will_be_re_dkg = read_re_dkg_epoch(&self.config.execution_node, request.digest)
+            // in theory it should never fail, but if it does, just stick to reshare.
+            .is_ok_and(|epoch| epoch == next_epoch.get());
         info!(
             will_be_re_dkg,
             %next_epoch,
@@ -1592,28 +1589,17 @@ pub(crate) fn read_syncers_if_v2_not_initialized(
     node: &TempoFullNode,
     reference_header: &TempoHeader,
 ) -> eyre::Result<ordered::Set<PublicKey>> {
-    if node
-        .chain_spec()
-        .is_t2_active_at_timestamp(reference_header.timestamp())
+    let best_header = best_header(node).wrap_err("no best header available in execution layer")?;
+    ensure!(
+        best_header.number() >= reference_header.number(),
+        "height of best available header below reference header; node still syncing?"
+    );
+    // Take the best available
+    if can_use_v2(node, &best_header)
+        .wrap_err("could not determine if validator config v2 can be used or not")?
     {
-        let best = node.provider.best_block_number().wrap_err(
-            "no best block number available yet to check val config v2 activation height",
-        )?;
-        debug!(
-            best_height = best,
-            "checking best/latest block available in the execution layer for \
-            validator config v2 activation height"
-        );
-        let v2_activation_height = v2_activation_height(node, best)
-            .wrap_err("unable to read validator config v2 to check its activation height")?;
-        if reference_header.number() >= v2_activation_height {
-            debug!(
-                v2_activation_height,
-                "validator config v2 was already activated; no need to read \
-                syncers from contract; returning empty set",
-            );
-            return Ok(ordered::Set::default());
-        }
+        debug!("validator config v2 active and initialized; no need to explicitly track syncers");
+        return Ok(ordered::Set::default());
     }
 
     let (_read_height, _read_hash, raw_validators) = read_validator_config_at_height(
@@ -1636,7 +1622,14 @@ pub(crate) fn read_syncers_if_v2_not_initialized(
     ))
 }
 
-/// Determines the next players depending on the header timestamp identiifed by `digest`.
+/// Determines the next players depending on the header timestamp identified by `digest`.
+///
+/// This function should be (and practically is) only called when constructing or
+/// verifying a proposal. `digest` should therefore always refer to the parent
+/// parent of the porposal.
+///
+/// It is therefore save to assume that the execution layer should always have
+/// the header and state corresponding to `digest` available.
 fn determine_next_players(
     state: &State,
     node: &TempoFullNode,
@@ -1644,19 +1637,16 @@ fn determine_next_players(
 ) -> eyre::Result<ordered::Set<PublicKey>> {
     let header = node
         .provider
-        .header_by_hash_or_number(reth_ethereum::network::types::HashOrNumber::Hash(digest.0))
+        .header(digest.0)
         .map_err(eyre::Report::new)
         .and_then(|maybe| maybe.ok_or_eyre("hash not known"))
         .wrap_err_with(|| {
             format!("failed reading header for block hash `{digest}` from execution layer")
         })?;
-    let is_t2_hardfork_active = node
-        .chain_spec()
-        .is_t2_active_at_timestamp(header.timestamp());
-    let is_val_conf_v2_active = is_v2_active(node, header.number())
-        .wrap_err("failed reading contrat to determine if validator config v2 is active")?;
-
-    let syncers = if is_t2_hardfork_active && is_val_conf_v2_active {
+    let syncers = if can_use_v2(node, &header)
+        .wrap_err("failed determining if validator config v2 can be used")?
+    {
+        debug!("reading next players from validator config v2 contract");
         read_validator_config_at_height(node, header.number(), |config: &ValidatorConfigV2| {
             let raw = config
                 .get_validators()
@@ -1678,14 +1668,71 @@ fn determine_next_players(
         .wrap_err("failed reading validator config v2")?
         .2
     } else {
+        debug!("using validator config v1 syncers from state");
         state.syncers.clone()
     };
 
-    debug!(
-        is_t2_hardfork_active,
-        is_val_conf_v2_active,
-        ?syncers,
-        "determined syncers"
-    );
+    debug!(?syncers, "determined syncers");
     Ok(syncers)
+}
+
+/// Reads the `nextFullDkgCeremony` epoch value from the ValidatorConfig precompile.
+///
+/// This is used to determine if the next DKG ceremony should be a full ceremony
+/// (new polynomial) instead of a reshare.
+///
+///
+/// This function should be (and practically is) only called when constructing or
+/// verifying a proposal. `digest` should therefore always refer to the parent
+/// parent of the porposal.
+///
+/// It is therefore save to assume that the execution layer should always have
+/// the header and state corresponding to `digest` available.
+#[instrument(
+    skip_all,
+    fields(
+        at_height,
+    ),
+    err,
+    ret(level = Level::INFO)
+)]
+pub(crate) fn read_re_dkg_epoch(node: &TempoFullNode, digest: Digest) -> eyre::Result<u64> {
+    let header = node
+        .provider
+        .header(digest.0)
+        .map_err(eyre::Report::new)
+        .and_then(|maybe| maybe.ok_or_eyre("hash not known"))
+        .wrap_err_with(|| {
+            format!("failed reading header for block hash `{digest}` from execution layer")
+        })?;
+    if can_use_v2(node, &header)
+        .wrap_err("failed determining if validator config v2 can be used")?
+    {
+        read_validator_config_at_height(node, header.number(), |config: &ValidatorConfigV2| {
+            config
+                .get_next_full_dkg_ceremony()
+                .map_err(eyre::Report::new)
+        })
+        .map(|(_, _, epoch)| epoch)
+    } else {
+        read_validator_config_at_height(node, header.number(), |config: &ValidatorConfig| {
+            config
+                .get_next_full_dkg_ceremony()
+                .map_err(eyre::Report::new)
+        })
+        .map(|(_, _, epoch)| epoch)
+    }
+}
+
+/// Returns the header corresponding to the best block number.
+fn best_header(node: &TempoFullNode) -> eyre::Result<TempoHeader> {
+    let h = node
+        .provider
+        .best_block_number()
+        .wrap_err("failed reading best available block number from execution layer")?;
+    node.provider
+        .header_by_number(h)
+        .map_err(eyre::Report::new)
+        .and_then(|maybe| maybe.ok_or_eyre("header not known"))
+        .wrap_err("could not read header for best available block number")
 }

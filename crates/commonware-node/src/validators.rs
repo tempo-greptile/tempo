@@ -1,24 +1,18 @@
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
-    time::Duration,
 };
 
 use alloy_consensus::BlockHeader;
 use alloy_primitives::{Address, B256};
 use commonware_codec::DecodeExt as _;
-use commonware_consensus::types::Height;
 use commonware_cryptography::ed25519::PublicKey;
 use commonware_utils::{TryFromIterator, ordered};
 use eyre::{OptionExt as _, WrapErr as _};
-use prometheus_client::metrics::counter::Counter;
-use reth_ethereum::{
-    evm::revm::{State, database::StateProviderDatabase},
-    network::NetworkInfo,
-};
+use reth_ethereum::evm::revm::{State, database::StateProviderDatabase};
 use reth_node_builder::{Block as _, ConfigureEvm as _};
 use reth_provider::{
-    BlockHashReader as _, BlockIdReader as _, BlockNumReader as _, BlockReader as _, BlockSource,
+    BlockHashReader as _, BlockIdReader as _, BlockReader as _, BlockSource,
     StateProviderFactory as _,
 };
 use tempo_chainspec::hardfork::TempoHardforks as _;
@@ -32,7 +26,7 @@ use tempo_precompiles::{
 use tempo_primitives::TempoHeader;
 use tracing::{Level, info, instrument, warn};
 
-pub(crate) fn v2_activation_height(node: &TempoFullNode, height: u64) -> eyre::Result<u64> {
+pub(crate) fn v2_initialization_height(node: &TempoFullNode, height: u64) -> eyre::Result<u64> {
     read_validator_config_at_height(node, height, |config: &ValidatorConfigV2| {
         config
             .get_initialized_at_height()
@@ -41,107 +35,11 @@ pub(crate) fn v2_activation_height(node: &TempoFullNode, height: u64) -> eyre::R
     .map(|(_, _, activation_height)| activation_height)
 }
 
-pub(crate) fn is_v2_active(node: &TempoFullNode, height: u64) -> eyre::Result<bool> {
+pub(crate) fn is_v2_initialized(node: &TempoFullNode, height: u64) -> eyre::Result<bool> {
     read_validator_config_at_height(node, height, |config: &ValidatorConfigV2| {
         config.is_initialized().map_err(eyre::Report::new)
     })
     .map(|(_, _, activated)| activated)
-}
-
-/// Reads the `nextFullDkgCeremony` epoch value from the ValidatorConfig precompile.
-///
-/// This is used to determine if the next DKG ceremony should be a full ceremony
-/// (new polynomial) instead of a reshare.
-#[instrument(
-    skip_all,
-    fields(
-        at_height,
-    ),
-    err,
-    ret(level = Level::INFO)
-)]
-pub(crate) fn read_re_dkg_epoch(node: &TempoFullNode, at_height: u64) -> eyre::Result<u64> {
-    if at_height
-        >= v2_activation_height(node, at_height).wrap_err(
-            "failed reading contract to determine validator config v2 activation height",
-        )?
-    {
-        read_validator_config_at_height(node, at_height, |config: &ValidatorConfigV2| {
-            config
-                .get_next_full_dkg_ceremony()
-                .map_err(eyre::Report::new)
-        })
-        .map(|(_, _, epoch)| epoch)
-    } else {
-        read_validator_config_at_height(node, at_height, |config: &ValidatorConfig| {
-            config
-                .get_next_full_dkg_ceremony()
-                .map_err(eyre::Report::new)
-        })
-        .map(|(_, _, epoch)| epoch)
-    }
-}
-
-pub(crate) enum ReadTarget {
-    AtLeast { height: Height },
-}
-
-/// Attempts to read the validator config from the smart contract, retrying
-/// until the required block height is available.
-///
-/// Uses the timestamp of `reference_header` to decide whether to read validator
-/// config v1 or v2.
-pub(crate) async fn read_validator_config_with_retry(
-    context: &impl commonware_runtime::Clock,
-    node: &TempoFullNode,
-    reference_header: &TempoHeader,
-    target: ReadTarget,
-    total_attempts: &Counter,
-) -> (u64, B256, Validators) {
-    let mut attempts = 0;
-    const MIN_RETRY: Duration = Duration::from_secs(1);
-    const MAX_RETRY: Duration = Duration::from_secs(30);
-
-    'read_contract: loop {
-        total_attempts.inc();
-        attempts += 1;
-
-        let target_height = match target {
-            ReadTarget::AtLeast { height } => node
-                .provider
-                .best_block_number()
-                .ok()
-                .map(Height::new)
-                .filter(|best| best >= &height)
-                .unwrap_or(height),
-        };
-
-        if let Ok(validators) =
-            read_from_contract_at_height(attempts, node, target_height.get(), reference_header)
-        {
-            break 'read_contract validators;
-        }
-
-        let retry_after = MIN_RETRY.saturating_mul(attempts).min(MAX_RETRY);
-        let is_syncing = node.network.is_syncing();
-        let best_block = node.provider.best_block_number();
-        let blocks_behind = best_block
-            .as_ref()
-            .ok()
-            .map(|best| target_height.get().saturating_sub(*best));
-        tracing::warn_span!("read_validator_config_with_retry").in_scope(|| {
-            warn!(
-                attempts,
-                retry_after = %tempo_telemetry_util::display_duration(retry_after),
-                is_syncing,
-                best_block = %tempo_telemetry_util::display_result(&best_block),
-                %target_height,
-                blocks_behind = %tempo_telemetry_util::display_option(&blocks_behind),
-                "reading validator config from contract failed; will retry",
-            );
-        });
-        context.sleep(retry_after).await;
-    }
 }
 
 /// Reads state from the ValidatorConfig precompile at a given block height.
@@ -216,7 +114,27 @@ pub(crate) enum Validators {
     V2(ordered::Map<PublicKey, DecodedValidatorV2>),
 }
 
-/// Reads the validator config at `height`.
+/// Returns if the validator config v2 can be used exactly at the heigth and
+/// timestamp of `header`.
+///
+///
+/// Validator Config V2 can be used if:
+///
+/// 1. if `header.timestamp` is active at the hardfork timestamp.
+/// 2. if `header.number` is equal or greater than the contract initialization height.
+/// 3. if the contract initialization flag is set.
+pub(crate) fn can_use_v2(node: &TempoFullNode, header: &TempoHeader) -> eyre::Result<bool> {
+    Ok(node
+        .chain_spec()
+        .is_t2_active_at_timestamp(header.timestamp())
+        && is_v2_initialized(node, header.number())
+            .wrap_err("failed reading validator config v2 initialization flag")?
+        && v2_initialization_height(node, header.number())
+            .wrap_err("failed reading validator config v2 initialization height")?
+            <= header.number())
+}
+
+/// Reads the validator config at `read_height`.
 ///
 /// Uses `reference_header` to determine whether to read validators from
 /// validator config v1 or v2.
@@ -226,25 +144,21 @@ pub(crate) enum Validators {
     skip_all,
     fields(
         attempt = _attempt,
-        %height,
+        %read_height,
     ),
-    err
+    err(level = Level::WARN),
 )]
 pub(crate) fn read_from_contract_at_height(
     _attempt: u32,
     node: &TempoFullNode,
-    height: u64,
+    read_height: u64,
     reference_header: &TempoHeader,
 ) -> eyre::Result<(u64, B256, Validators)> {
-    let vals = if node
-        .chain_spec()
-        .is_t2_active_at_timestamp(reference_header.timestamp())
-        && height
-            >= v2_activation_height(node, height).wrap_err(
-                "failed reading from validator config v2 activity state after hardfork activation",
-            )? {
+    let vals = if can_use_v2(node, reference_header)
+        .wrap_err("failed to determine if the v2 validator config contract can be used")?
+    {
         let (read_height, hash, raw_validators) =
-            read_validator_config_at_height(node, height, |config: &ValidatorConfigV2| {
+            read_validator_config_at_height(node, read_height, |config: &ValidatorConfigV2| {
                 config
                     .get_validators()
                     .wrap_err("failed to query contract for validator config")
@@ -275,7 +189,7 @@ pub(crate) fn read_from_contract_at_height(
         )
     } else {
         let (read_height, hash, raw_validators) =
-            read_validator_config_at_height(node, height, |config: &ValidatorConfig| {
+            read_validator_config_at_height(node, read_height, |config: &ValidatorConfig| {
                 config
                     .get_validators()
                     .wrap_err("failed to query contract for validator config")

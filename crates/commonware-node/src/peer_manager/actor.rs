@@ -1,30 +1,32 @@
 use std::net::SocketAddr;
 
 use alloy_consensus::BlockHeader as _;
+use alloy_primitives::B256;
 use commonware_codec::ReadExt as _;
 use commonware_consensus::{
     Heightable as _,
     marshal::Update,
-    types::{Epocher as _, FixedEpocher, Height},
+    types::{Epocher, FixedEpocher, Height},
 };
 use commonware_cryptography::ed25519::PublicKey;
 use commonware_p2p::{AddressableManager, Provider};
 use commonware_runtime::{Clock, ContextCell, Metrics, Spawner, spawn_cell};
-use commonware_utils::{Acknowledgement, acknowledgement::Exact, ordered};
-use eyre::{OptionExt as _, WrapErr as _};
+use commonware_utils::{Acknowledgement, ordered};
+use eyre::{OptionExt as _, WrapErr as _, ensure};
 use futures::{StreamExt as _, channel::mpsc};
 use itertools::Either;
-use prometheus_client::metrics::{counter::Counter, gauge::Gauge};
+use prometheus_client::metrics::gauge::Gauge;
 use reth_ethereum::network::NetworkInfo;
-use reth_provider::HeaderProvider;
+use reth_provider::{BlockNumReader as _, HeaderProvider as _};
 use tempo_chainspec::hardfork::TempoHardforks as _;
 use tempo_dkg_onchain_artifacts::OnchainDkgOutcome;
 use tempo_node::TempoFullNode;
-use tracing::{Span, error, info, info_span, instrument, warn};
+use tempo_primitives::TempoHeader;
+use tracing::{Level, Span, error, info, info_span, instrument, warn};
 
 use crate::{
     consensus::block::Block,
-    validators::{self, Validators, read_validator_config_with_retry},
+    validators::{self, Validators},
 };
 
 use super::ingress::{Message, MessageWithCause};
@@ -41,7 +43,6 @@ where
     last_finalized_height: Height,
     mailbox: mpsc::UnboundedReceiver<MessageWithCause>,
 
-    contract_read_attempts: Counter,
     peers: Gauge,
 
     last_tracked_peer_set: Option<LastTrackedPeerSet>,
@@ -62,12 +63,6 @@ where
         }: super::Config<TPeerManager>,
         mailbox: mpsc::UnboundedReceiver<MessageWithCause>,
     ) -> Self {
-        let contract_read_attempts = Counter::default();
-        context.register(
-            "contract_read_attempts",
-            "how often the actor tried reading the validator config contract",
-            contract_read_attempts.clone(),
-        );
         let peers = Gauge::default();
         context.register(
             "peers",
@@ -81,7 +76,6 @@ where
             epoch_strategy,
             last_finalized_height,
             mailbox,
-            contract_read_attempts,
             peers,
             last_tracked_peer_set: None,
         }
@@ -177,16 +171,9 @@ where
                 format!("boundary block at `{last_boundary}` did not contain a valid DKG outcome")
             })?;
 
-        let (read_height, read_hash, all_validators) = read_validator_config_with_retry(
-            &self.context,
-            &self.execution_node,
-            &header,
-            validators::ReadTarget::AtLeast {
-                height: last_boundary,
-            },
-            &self.contract_read_attempts,
-        )
-        .await;
+        let (read_height, read_hash, all_validators) =
+            read_validator_config(&self.execution_node, &header)
+                .wrap_err("unable to read initial peer set from execution layer")?;
 
         let peers = construct_peer_set(&onchain_outcome, &all_validators);
         self.peers.set(peers.len() as i64);
@@ -209,12 +196,12 @@ where
             .expect("must be access execution layer to get header - just read validator config for")
             .expect("execution layer must have the header - just read validator config for it");
         let last_tracked_peer_seet = LastTrackedPeerSet {
-            id: header.number(),
+            height: header.number(),
             peers,
         };
         self.oracle
             .track(
-                last_tracked_peer_seet.id,
+                last_tracked_peer_seet.height,
                 last_tracked_peer_seet.peers.clone(),
             )
             .await;
@@ -246,9 +233,10 @@ where
             }
             Message::Finalized(update) => match *update {
                 Update::Block(block, ack) => {
-                    self.handle_finalized_block(block, ack)
+                    self.handle_finalized_block(block)
                         .await
                         .wrap_err("failed handling finalized block")?;
+                    ack.acknowledge();
                 }
                 Update::Tip { .. } => {}
             },
@@ -263,27 +251,25 @@ where
         ),
         err,
     )]
-    async fn handle_finalized_block(&mut self, block: Block, ack: Exact) -> eyre::Result<()> {
-        let height = commonware_consensus::Heightable::height(&block);
+    async fn handle_finalized_block(&mut self, block: Block) -> eyre::Result<()> {
         let epoch_info = self
             .epoch_strategy
-            .containing(height)
+            .containing(block.height())
             .expect("epoch strategy covers all heights");
 
-        // After hardfork, read every block. Otherwise, only read on boundary.
-        let read_contract = self
-            .execution_node
-            .chain_spec()
-            .is_t2_active_at_timestamp(block.timestamp())
-            || height == epoch_info.last();
-
-        if read_contract {
+        // Always validator state on the boundary, and if we are past the hardfork.
+        if block.height() == epoch_info.last()
+            || self
+                .execution_node
+                .chain_spec()
+                .is_t2_active_at_timestamp(block.timestamp())
+        {
             // Intentionally bail on parse failure: the last block of every epoch
             // must contain a valid DKG outcome. If it doesn't, something is
             // fundamentally wrong and we surface the error rather than silently
             // running with a stale peer set.
             let header;
-            let extra_data = if height == epoch_info.last() {
+            let extra_data = if block.height() == epoch_info.last() {
                 block.header().extra_data()
             } else {
                 let last_boundary = epoch_info.epoch().previous().map_or(0, |epoch| {
@@ -306,16 +292,18 @@ where
             let onchain_outcome = OnchainDkgOutcome::read(&mut extra_data.as_ref())
                 .wrap_err("could not read DKG outcome from boundary block")?;
 
-            let (_read_height, _read_hash, all_validators) = read_validator_config_with_retry(
-                &self.context,
-                &self.execution_node,
-                block.header(),
-                validators::ReadTarget::AtLeast {
-                    height: block.height(),
-                },
-                &self.contract_read_attempts,
-            )
-            .await;
+            let (_read_height, _read_hash, all_validators) =
+                match read_validator_config(&self.execution_node, block.header()) {
+                    Ok(ret) => ret,
+                    Err(reason) => {
+                        info!(
+                            %reason,
+                            execution_layer.status = self.execution_node.network.is_syncing(),
+                            "unable to read validator config; will retry on next block",
+                        );
+                        return Ok(());
+                    }
+                };
 
             let peers = construct_peer_set(&onchain_outcome, &all_validators);
 
@@ -327,12 +315,12 @@ where
                     }
                 } else {
                     *last_tracked_peer_set = LastTrackedPeerSet {
-                        id: block.height().get(),
+                        height: block.height().get(),
                         peers,
                     };
                     self.oracle
                         .track(
-                            last_tracked_peer_set.id,
+                            last_tracked_peer_set.height,
                             last_tracked_peer_set.peers.clone(),
                         )
                         .await;
@@ -340,7 +328,7 @@ where
             } else {
                 self.oracle.track(block.height().get(), peers.clone()).await;
                 self.last_tracked_peer_set = Some(LastTrackedPeerSet {
-                    id: block.height().get(),
+                    height: block.height().get(),
                     peers,
                 })
             }
@@ -349,7 +337,6 @@ where
                 self.peers.set(tracked.peers.len() as i64);
             }
         }
-        ack.acknowledge();
         Ok(())
     }
 }
@@ -404,6 +391,30 @@ pub(crate) fn construct_peer_set(
 }
 
 struct LastTrackedPeerSet {
-    id: u64,
+    height: u64,
     peers: ordered::Map<PublicKey, commonware_p2p::Address>,
+}
+
+/// Reads the smart contract at `reference_header.number` or higher, if
+/// available.
+#[instrument(skip_all, err(level = Level::INFO))]
+fn read_validator_config(
+    node: &TempoFullNode,
+    reference_header: &TempoHeader,
+) -> eyre::Result<(u64, B256, Validators)> {
+    // TODO: is this too harsh? Should we wait until there is a best block
+    // available at a later point?
+    let best_block_number = node
+        .provider
+        .best_block_number()
+        .wrap_err("provider does not have best block available")?;
+
+    ensure!(
+        best_block_number >= reference_header.number(),
+        "best_block_number `{best_block_number}` is below reference header {}",
+        reference_header.number(),
+    );
+
+    validators::read_from_contract_at_height(1, node, best_block_number, reference_header)
+        .wrap_err("unable to read validators from best block")
 }
