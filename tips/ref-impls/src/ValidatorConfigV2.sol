@@ -94,11 +94,10 @@ contract ValidatorConfigV2 is IValidatorConfigV2 {
     }
 
     /// @inheritdoc IValidatorConfigV2
-    function deactivateValidator(address validatorAddress) external {
-        if (msg.sender != validatorAddress && msg.sender != _owner) {
-            revert Unauthorized();
-        }
-
+    function deactivateValidator(address validatorAddress)
+        external
+        onlyOwnerOrValidator(validatorAddress)
+    {
         uint64 idx = addressToIndex[validatorAddress];
         if (idx == 0) {
             revert ValidatorNotFound();
@@ -174,11 +173,8 @@ contract ValidatorConfigV2 is IValidatorConfigV2 {
         string calldata egress
     )
         external
+        onlyOwnerOrValidator(validatorAddress)
     {
-        if (msg.sender != validatorAddress && msg.sender != _owner) {
-            revert Unauthorized();
-        }
-
         uint64 idx = addressToIndex[validatorAddress];
         if (idx == 0) {
             revert ValidatorNotFound();
