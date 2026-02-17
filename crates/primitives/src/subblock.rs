@@ -485,8 +485,7 @@ mod tests {
     #[test]
     fn test_recovered_subblock_transactions_recovered() {
         use crate::transaction::{
-            AASigned, TempoTransaction, TempoSignature,
-            tempo_transaction::Call,
+            AASigned, TempoSignature, TempoTransaction, tempo_transaction::Call,
             tt_signature::PrimitiveSignature,
         };
 

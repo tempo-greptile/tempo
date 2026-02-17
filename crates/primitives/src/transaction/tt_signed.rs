@@ -648,7 +648,10 @@ mod tests {
         assert_ne!(signed.value(), U256::ZERO);
         assert_ne!(signed.value(), U256::from(100) * U256::from(200));
         // Not 100 - 200 which would underflow to a huge number
-        assert_ne!(signed.value(), U256::from(100).wrapping_sub(U256::from(200)));
+        assert_ne!(
+            signed.value(),
+            U256::from(100).wrapping_sub(U256::from(200))
+        );
 
         // input: returns first call's input
         assert_eq!(signed.input(), &Bytes::from(vec![0xDE, 0xAD]));

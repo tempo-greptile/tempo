@@ -280,16 +280,16 @@ mod tests {
         // + vs - kills: without vs with limits should differ
         assert!(sz_with_limits >= sz_no_limits);
         // * vs + kills: capacity * size_of is not capacity + size_of
-        assert_ne!(sz_with_limits, size_of::<KeyAuthorization>() + cap + size_of::<TokenLimit>());
+        assert_ne!(
+            sz_with_limits,
+            size_of::<KeyAuthorization>() + cap + size_of::<TokenLimit>()
+        );
     }
 
     #[test]
     fn test_signed_key_authorization_size() {
         let auth = make_auth(Some(1000), None);
-        let inner_sig = match sign_hash(
-            &generate_secp256k1_keypair().0,
-            &auth.signature_hash(),
-        ) {
+        let inner_sig = match sign_hash(&generate_secp256k1_keypair().0, &auth.signature_hash()) {
             TempoSignature::Primitive(p) => p,
             _ => panic!("Expected primitive signature"),
         };
@@ -300,7 +300,13 @@ mod tests {
         assert_eq!(sz, expected);
         assert!(sz > 1); // kills return 0 or 1
         // + vs - kills
-        assert_ne!(sz, signed.authorization.size().wrapping_sub(signed.signature.size()));
+        assert_ne!(
+            sz,
+            signed
+                .authorization
+                .size()
+                .wrapping_sub(signed.signature.size())
+        );
         // + vs * kills
         assert_ne!(sz, signed.authorization.size() * signed.signature.size());
     }

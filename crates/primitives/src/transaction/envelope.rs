@@ -980,8 +980,10 @@ mod tests {
         // is_fee_token
         assert!(envelope.is_fee_token());
         // Non-AA variant: is_fee_token false
-        let legacy_env =
-            TempoTxEnvelope::Legacy(Signed::new_unhashed(TxLegacy::default(), Signature::test_signature()));
+        let legacy_env = TempoTxEnvelope::Legacy(Signed::new_unhashed(
+            TxLegacy::default(),
+            Signature::test_signature(),
+        ));
         assert!(!legacy_env.is_fee_token());
 
         // subblock_proposer - should return Some for subblock nonce key prefix

@@ -1681,7 +1681,10 @@ mod tests {
         let expected = size_of::<PrimitiveSignature>() + 50;
         assert_eq!(webauthn_sz, expected);
         // + vs - kills: size_of - 50 is very different
-        assert_ne!(webauthn_sz, size_of::<PrimitiveSignature>().wrapping_sub(50));
+        assert_ne!(
+            webauthn_sz,
+            size_of::<PrimitiveSignature>().wrapping_sub(50)
+        );
         // + vs * kills: size_of * 50 is very different
         assert_ne!(webauthn_sz, size_of::<PrimitiveSignature>() * 50);
     }
@@ -1689,7 +1692,8 @@ mod tests {
     #[test]
     fn test_tempo_signature_size() {
         // Primitive: delegates to PrimitiveSignature::size()
-        let prim = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(Signature::test_signature()));
+        let prim =
+            TempoSignature::Primitive(PrimitiveSignature::Secp256k1(Signature::test_signature()));
         let prim_sz = prim.size();
         assert!(prim_sz > 1);
         assert_eq!(prim_sz, size_of::<PrimitiveSignature>());
@@ -1697,7 +1701,8 @@ mod tests {
         // Keychain: 1 + 20 + inner.size()
         let inner = PrimitiveSignature::Secp256k1(Signature::test_signature());
         let inner_size = inner.size();
-        let keychain = TempoSignature::Keychain(KeychainSignature::new(Address::repeat_byte(0x01), inner));
+        let keychain =
+            TempoSignature::Keychain(KeychainSignature::new(Address::repeat_byte(0x01), inner));
         let kc_sz = keychain.size();
         assert_eq!(kc_sz, 1 + 20 + inner_size);
         assert!(kc_sz > 1);
@@ -1761,7 +1766,10 @@ mod tests {
         let result = verify_p256_signature_internal(&r_dummy, &s_half, &pk_x, &pk_y, &hash);
         // Should NOT fail with "high s value"
         if let Err(e) = &result {
-            assert!(!e.contains("high s value"), "s == P256N_HALF should be accepted (>= vs >)");
+            assert!(
+                !e.contains("high s value"),
+                "s == P256N_HALF should be accepted (>= vs >)"
+            );
         }
     }
 
@@ -1781,7 +1789,10 @@ mod tests {
         exact_data[32] = 0x01; // Set UP flag
         let result = verify_webauthn_data_internal(&exact_data, &tx_hash);
         if let Err(e) = &result {
-            assert!(!e.contains("too short"), "len == MIN_AUTH_DATA_LEN + 32 should not be 'too short'");
+            assert!(
+                !e.contains("too short"),
+                "len == MIN_AUTH_DATA_LEN + 32 should not be 'too short'"
+            );
         }
     }
 }

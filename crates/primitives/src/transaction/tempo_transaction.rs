@@ -2093,8 +2093,7 @@ mod tests {
             + call_sizes
             + tx.access_list.size()
             + tx.key_authorization.as_ref().map_or(0, |k| k.size())
-            + tx
-                .tempo_authorization_list
+            + tx.tempo_authorization_list
                 .iter()
                 .map(|a| a.size())
                 .sum::<usize>();
