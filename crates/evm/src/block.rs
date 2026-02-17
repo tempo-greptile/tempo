@@ -115,9 +115,9 @@ pub(crate) struct TempoBlockExecutor<'a, DB: Database, I> {
     non_payment_gas_left: u64,
     incentive_gas_used: u64,
 
-    /// Tracks full cumulative gas used (execution + storage creation) for receipts.
+    /// Tracks total cumulative gas used (execution + storage creation) for receipts.
     /// This differs from block gas limit accounting which only counts execution gas.
-    cumulative_full_gas_used: u64,
+    cumulative_total_gas_used: u64,
     /// Tracks cumulative storage creation gas used (TIP-1016).
     /// Used to derive execution-only gas for the block header.
     cumulative_storage_creation_gas: u64,
@@ -148,7 +148,7 @@ where
             section: BlockSection::StartOfBlock,
             seen_subblocks: Vec::new(),
             subblock_fee_recipients: ctx.subblock_fee_recipients,
-            cumulative_full_gas_used: 0,
+            cumulative_total_gas_used: 0,
             cumulative_storage_creation_gas: 0,
         }
     }
@@ -415,13 +415,13 @@ where
         // the EVM-level tracking is implemented.
         let storage_creation_gas: u64 = 0;
 
-        let full_gas_used = self.inner.commit_transaction(inner)?;
-        self.cumulative_full_gas_used += full_gas_used;
+        let total_gas_used = self.inner.commit_transaction(inner)?;
+        self.cumulative_total_gas_used += total_gas_used;
         self.cumulative_storage_creation_gas += storage_creation_gas;
 
         // Execution gas excludes storage creation gas (TIP-1016).
         // Only execution gas counts toward protocol limits (block gas limit).
-        let gas_used = full_gas_used - storage_creation_gas;
+        let gas_used = total_gas_used - storage_creation_gas;
 
         // TODO: remove once revm supports emitting logs for reverted transactions
         //
@@ -488,7 +488,7 @@ where
             );
         }
 
-        // The inner executor's gas_used tracks full gas (execution + storage)
+        // The inner executor's gas_used tracks total gas (execution + storage)
         // because that's what goes into receipt cumulative_gas_used. For the
         // block header, we need execution gas only (TIP-1016).
         self.inner.gas_used -= self.cumulative_storage_creation_gas;
@@ -540,9 +540,9 @@ where
         self.section
     }
 
-    /// Get the cumulative full gas used (execution + storage) for assertions.
-    pub(crate) fn cumulative_full_gas_used(&self) -> u64 {
-        self.cumulative_full_gas_used
+    /// Get the cumulative total gas used (execution + storage) for assertions.
+    pub(crate) fn cumulative_total_gas_used(&self) -> u64 {
+        self.cumulative_total_gas_used
     }
 
     /// Get the non-shared gas left for assertions.
@@ -1147,8 +1147,8 @@ mod tests {
     }
 
     #[test]
-    fn test_commit_transaction_tracks_full_cumulative_gas() {
-        // commit_transaction should track cumulative full gas (for receipts)
+    fn test_commit_transaction_tracks_total_cumulative_gas() {
+        // commit_transaction should track cumulative total gas (for receipts)
         let chainspec = test_chainspec();
         let mut db = State::builder().with_bundle_update().build();
         let mut executor = TestExecutorBuilder::default()
@@ -1180,11 +1180,11 @@ mod tests {
 
         // With zero storage creation gas, execution gas equals total gas
         assert_eq!(exec_gas, 21000);
-        assert_eq!(executor.cumulative_full_gas_used(), 21000);
+        assert_eq!(executor.cumulative_total_gas_used(), 21000);
     }
 
     #[test]
-    fn test_cumulative_full_gas_accumulates_across_transactions() {
+    fn test_cumulative_total_gas_accumulates_across_transactions() {
         let chainspec = test_chainspec();
         let mut db = State::builder().with_bundle_update().build();
         let mut executor = TestExecutorBuilder::default()
@@ -1234,9 +1234,9 @@ mod tests {
         };
         executor.commit_transaction(output2).unwrap();
 
-        assert_eq!(executor.cumulative_full_gas_used(), 71000);
+        assert_eq!(executor.cumulative_total_gas_used(), 71000);
 
-        // Receipts should have cumulative full gas
+        // Receipts should have cumulative total gas
         let receipts = executor.receipts();
         assert_eq!(receipts[0].cumulative_gas_used, 21000);
         assert_eq!(receipts[1].cumulative_gas_used, 71000);
@@ -1245,7 +1245,7 @@ mod tests {
     #[test]
     fn test_finish_returns_execution_gas_for_block_header() {
         // BlockExecutionResult.gas_used (used for block header) should be
-        // execution gas only, not full gas including storage creation.
+        // execution gas only, not total gas including storage creation.
         // For now these are equal, but the plumbing ensures correctness
         // when the EVM starts reporting storage gas separately.
         let chainspec = test_chainspec();
@@ -1263,7 +1263,7 @@ mod tests {
             seen_subblocks_signatures: true,
         };
         executor.inner.gas_used += 21000;
-        executor.cumulative_full_gas_used += 21000;
+        executor.cumulative_total_gas_used += 21000;
 
         let (_, result) = executor.finish().unwrap();
         // Block header gas_used should be execution gas
@@ -1273,7 +1273,7 @@ mod tests {
     #[test]
     fn test_non_shared_gas_uses_execution_gas_only() {
         // non_shared_gas_left should be decremented by execution gas,
-        // which currently equals full gas since storage_creation_gas is 0.
+        // which currently equals total gas since storage_creation_gas is 0.
         let chainspec = test_chainspec();
         let mut db = State::builder().with_bundle_update().build();
         let mut executor = TestExecutorBuilder::default()
