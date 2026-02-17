@@ -1736,7 +1736,9 @@ mod tests {
         StorageCtx::enter(&mut storage, || {
             let mut handler = VecHandler::<u32>::new(U256::ZERO, address);
             // Write length manually
-            Slot::<U256>::new(U256::ZERO, address).write(U256::from(16)).unwrap();
+            Slot::<U256>::new(U256::ZERO, address)
+                .write(U256::from(16))
+                .unwrap();
 
             // Write some values via full vec
             let data: Vec<u32> = (0..16).collect();
@@ -1764,7 +1766,8 @@ mod tests {
             assert_eq!(handler.at(2)?.unwrap().read()?, U256::from(300));
 
             Ok::<(), crate::error::TempoPrecompileError>(())
-        }).unwrap();
+        })
+        .unwrap();
     }
 
     // -- PROPTEST STRATEGIES ------------------------------------------------------

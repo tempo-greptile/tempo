@@ -209,7 +209,10 @@ where
 mod tests {
     use super::*;
     use crate::{
-        storage::{Layout, LayoutCtx, PrecompileStorageProvider, StorageCtx, hashmap::HashMapStorageProvider},
+        storage::{
+            Layout, LayoutCtx, PrecompileStorageProvider, StorageCtx,
+            hashmap::HashMapStorageProvider,
+        },
         test_util::setup_storage,
     };
     use proptest::prelude::*;
@@ -505,7 +508,14 @@ mod tests {
 
             // Write distinct values to verify slot arithmetic
             let mut h = <[U256; 5]>::handle(base, LayoutCtx::FULL, address);
-            h.write([U256::from(10), U256::from(20), U256::from(30), U256::from(40), U256::from(50)]).unwrap();
+            h.write([
+                U256::from(10),
+                U256::from(20),
+                U256::from(30),
+                U256::from(40),
+                U256::from(50),
+            ])
+            .unwrap();
 
             // Read back individual elements
             let v0 = handler[0].read().unwrap();

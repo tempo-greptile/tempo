@@ -853,17 +853,13 @@ mod tests {
 
             if lower < RESERVED_SIZE {
                 // Should reject
-                let result = factory.get_token_address(ITIP20Factory::getTokenAddressCall {
-                    sender,
-                    salt,
-                });
+                let result =
+                    factory.get_token_address(ITIP20Factory::getTokenAddressCall { sender, salt });
                 assert!(result.is_err());
             } else {
                 // Should succeed
-                let result = factory.get_token_address(ITIP20Factory::getTokenAddressCall {
-                    sender,
-                    salt,
-                });
+                let result =
+                    factory.get_token_address(ITIP20Factory::getTokenAddressCall { sender, salt });
                 assert!(result.is_ok());
             }
 
@@ -900,7 +896,10 @@ mod tests {
                             salt,
                         },
                     );
-                    assert!(result.is_ok(), "lower_bytes == RESERVED_SIZE should be accepted by < check");
+                    assert!(
+                        result.is_ok(),
+                        "lower_bytes == RESERVED_SIZE should be accepted by < check"
+                    );
                     return Ok(());
                 }
                 if lower < RESERVED_SIZE {

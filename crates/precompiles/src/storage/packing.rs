@@ -920,8 +920,14 @@ mod tests {
         // With `|`, reinserting the same value produces the same word.
         // With `^`, the bits would cancel out to 0.
         let extracted: u8 = extract_from_word(slot2, 0, 1).unwrap();
-        assert_eq!(extracted, existing, "Reinserting same value must preserve it (| not ^)");
-        assert_eq!(slot, slot2, "Word should be identical after re-insert of same value");
+        assert_eq!(
+            extracted, existing,
+            "Reinserting same value must preserve it (| not ^)"
+        );
+        assert_eq!(
+            slot, slot2,
+            "Word should be identical after re-insert of same value"
+        );
     }
 
     // -- PROPERTY TESTS -----------------------------------------------------------

@@ -1942,10 +1942,7 @@ mod tests {
             assert_eq!(remaining, U256::from(1000));
 
             // Revoke the key
-            keychain.revoke_key(
-                account,
-                revokeKeyCall { keyId: key_id },
-            )?;
+            keychain.revoke_key(account, revokeKeyCall { keyId: key_id })?;
 
             // After revocation, remaining limit should be zero on T2
             // With `||`: (expiry==0) || (is_revoked==true) → true → return zero ✓
