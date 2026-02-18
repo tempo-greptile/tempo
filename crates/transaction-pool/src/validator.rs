@@ -463,12 +463,14 @@ where
 
         let gas_limit = tx.gas_limit;
 
-        // Check if gas limit is sufficient for initial gas
-        if gas_limit < init_and_floor_gas.initial_total_gas {
+        // Check if gas limit is sufficient for initial gas (execution + state)
+        let total_intrinsic =
+            init_and_floor_gas.initial_total_gas + init_and_floor_gas.initial_state_gas;
+        if gas_limit < total_intrinsic {
             return Err(
                 TempoPoolTransactionError::InsufficientGasForAAIntrinsicCost {
                     gas_limit,
-                    intrinsic_gas: init_and_floor_gas.initial_total_gas,
+                    intrinsic_gas: total_intrinsic,
                 },
             );
         }
@@ -695,33 +697,11 @@ where
                 );
             }
         } else {
-            // validate intrinsic gas with additional TIP-1000 and T1 checks
+            // validate intrinsic gas with additional TIP-1000 and T1 checks.
+            // For T2+, this also computes/caches intrinsic state gas and validates that
+            // gas_limit covers both execution gas and state gas.
             if let Err(err) = ensure_intrinsic_gas_tempo_tx(&transaction, spec) {
                 return TransactionValidationOutcome::Invalid(transaction, err);
-            }
-
-            // TIP-1016: Compute intrinsic state gas for non-AA T2+ transactions
-            if spec.is_t2() {
-                let gas_params = tempo_gas_params(spec);
-                let mut non_aa_state_gas = 0u64;
-                // nonce == 0 with non-expiring nonce: potential new account creation
-                if transaction.nonce() == 0
-                    && transaction.nonce_key() != Some(TEMPO_EXPIRING_NONCE_KEY)
-                {
-                    non_aa_state_gas += gas_params.get(GasId::new_account_state_gas());
-                }
-                // CREATE transaction state gas (new account + contract metadata)
-                if transaction.is_create() {
-                    non_aa_state_gas += gas_params.get(GasId::new_account_state_gas())
-                        + gas_params.get(GasId::create_state_gas());
-                }
-                // EIP-7702 auth list account creation state gas
-                for auth in transaction.authorization_list().unwrap_or_default() {
-                    if auth.nonce == 0 {
-                        non_aa_state_gas += gas_params.tx_tip1000_auth_account_creation_state_gas();
-                    }
-                }
-                transaction.set_intrinsic_state_gas(non_aa_state_gas);
             }
         }
 
@@ -953,6 +933,9 @@ where
 }
 
 /// Ensures that gas limit of the transaction exceeds the intrinsic gas of the transaction.
+///
+/// For T2+ transactions, also computes and caches the intrinsic state gas, and validates
+/// that gas_limit covers both execution gas and state gas.
 pub fn ensure_intrinsic_gas_tempo_tx(
     tx: &TempoPooledTransaction,
     spec: TempoHardfork,
@@ -990,10 +973,36 @@ pub fn ensure_intrinsic_gas_tempo_tx(
         }
     }
 
+    // TIP-1016: For T2+, compute state gas and validate gas_limit covers both execution + state gas.
+    // State gas is tracked separately via initial_state_gas and does not count against protocol
+    // limits, but must still fit within gas_limit.
+    // For pre-T2, state gas is bundled into initial_total_gas (no split), so we clear
+    // initial_state_gas to avoid double-counting from upstream defaults in initial_tx_gas.
+    if !spec.is_t2() {
+        gas.initial_state_gas = 0;
+    } else {
+        // nonce == 0 with non-expiring nonce: potential new account creation
+        if tx.nonce() == 0 && tx.nonce_key() != Some(TEMPO_EXPIRING_NONCE_KEY) {
+            gas.initial_state_gas += gas_params.get(GasId::new_account_state_gas());
+        }
+        // EIP-7702 auth list account creation state gas
+        for auth in tx.authorization_list().unwrap_or_default() {
+            if auth.nonce == 0 {
+                gas.initial_state_gas += gas_params.tx_tip1000_auth_account_creation_state_gas();
+            }
+        }
+    }
+
     let gas_limit = tx.gas_limit();
-    if gas_limit < gas.initial_total_gas || gas_limit < gas.floor_gas {
+    // TIP-1016: gas_limit must cover both execution gas and state gas
+    let total_intrinsic = gas.initial_total_gas + gas.initial_state_gas;
+    if gas_limit < total_intrinsic || gas_limit < gas.floor_gas {
         Err(InvalidPoolTransactionError::IntrinsicGasTooLow)
     } else {
+        // TIP-1016: Cache intrinsic state gas for T2+ transactions
+        if spec.is_t2() {
+            tx.set_intrinsic_state_gas(gas.initial_state_gas);
+        }
         Ok(())
     }
 }
