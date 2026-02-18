@@ -721,7 +721,7 @@ impl StablecoinDEX {
                 order.tick(),
                 true,
             ) && e.is_system_error()
-                && self.storage.spec().is_t2()
+                && self.storage.spec().is_t1a()
             {
                 return Err(e);
             }
@@ -4331,7 +4331,7 @@ mod tests {
     #[test]
     fn test_flip_order_fill_ignores_business_logic_error() -> eyre::Result<()> {
         // Business logic errors during flip are silently ignored (always).
-        for spec in [TempoHardfork::T1, TempoHardfork::T2] {
+        for spec in [TempoHardfork::T1, TempoHardfork::T1A, TempoHardfork::T2] {
             let mut storage = HashMapStorageProvider::new_with_spec(1, spec);
             StorageCtx::enter(&mut storage, || {
                 let FlipOrderTestCtx {
@@ -4404,9 +4404,9 @@ mod tests {
     }
 
     #[test]
-    fn test_flip_order_fill_reverts_on_system_error_post_t2() -> eyre::Result<()> {
-        // System errors during flip propagate only on T2+. Pre-T2 all errors are ignored.
-        for spec in [TempoHardfork::T1, TempoHardfork::T2] {
+    fn test_flip_order_fill_reverts_on_system_error_post_t1a() -> eyre::Result<()> {
+        // System errors during flip propagate only on T1A+. Pre-T1A all errors are ignored.
+        for spec in [TempoHardfork::T1, TempoHardfork::T1A, TempoHardfork::T2] {
             let mut storage = HashMapStorageProvider::new_with_spec(1, spec);
             StorageCtx::enter(&mut storage, || {
                 let FlipOrderTestCtx {
@@ -4434,8 +4434,8 @@ mod tests {
 
                 let result = exchange.swap_exact_amount_in(bob, base_token, quote_token, amount, 0);
 
-                if spec.is_t2() {
-                    // T2: system errors propagate — swap must revert
+                if spec.is_t1a() {
+                    // T1A+: system errors propagate — swap must revert
                     assert!(
                         result.is_err(),
                         "Swap should revert when flip hits a system error"
@@ -4449,10 +4449,10 @@ mod tests {
                     let alice_quote_after = exchange.balance_of(alice, quote_token)?;
                     assert_eq!(alice_quote_before, alice_quote_after);
                 } else {
-                    // Pre-T2: all flip errors are ignored — swap succeeds
+                    // Pre-T1A: all flip errors are ignored — swap succeeds
                     assert!(
                         result.is_ok(),
-                        "[{spec:?}] Swap should succeed when system error is pre-T2"
+                        "[{spec:?}] Swap should succeed when system error is pre-T1A"
                     );
                 }
 
