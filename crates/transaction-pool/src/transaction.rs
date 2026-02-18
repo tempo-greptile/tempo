@@ -49,6 +49,12 @@ pub struct TempoPooledTransaction {
     /// Set during validation for T2+ transactions. The state gas portion does NOT count
     /// against protocol limits (block/transaction execution gas caps), only against
     /// the user's `gas_limit`.
+    ///
+    /// NOTE: This value is hardfork-specific (gas parameters vary by fork). If a
+    /// transaction survives a hardfork boundary, the cached value may be stale.
+    /// Future fork transitions that change state gas parameters should add pool
+    /// maintenance logic (like `evict_underpriced_transactions_for_t1`) to
+    /// re-validate or evict affected transactions.
     intrinsic_state_gas: OnceLock<u64>,
 }
 
