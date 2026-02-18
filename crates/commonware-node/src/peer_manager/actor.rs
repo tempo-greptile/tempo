@@ -346,10 +346,9 @@ pub(crate) fn construct_peer_set(
     validators: &Validators,
 ) -> commonware_utils::ordered::Map<PublicKey, commonware_p2p::Address> {
     // Dealers are output.players() from the previous epoch's DKG output.
-    // Players are outcome.next_players (the players for the next DKG round).
-    // Syncers are all currently active validators.
+    // Players are outcome.next_players.
     let all_keys = outcome
-        .dealers()
+        .players()
         .iter()
         .chain(outcome.next_players().iter())
         .chain(match validators {
