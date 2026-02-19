@@ -6,7 +6,6 @@ use alloy::{
 };
 use alloy_eips::Encodable2718;
 use alloy_primitives::TxKind;
-use futures::FutureExt;
 use tempo_chainspec::spec::TEMPO_T1_BASE_FEE;
 use tempo_contracts::precompiles::{DEFAULT_FEE_TOKEN, ITIP20};
 use tempo_primitives::{
@@ -223,15 +222,12 @@ async fn test_pre_t1b_keyauth_oog_replay() -> eyre::Result<()> {
     Ok(())
 }
 
-/// Pre-T1B DoS: the poisoned KeyAuth CREATE tx is the only user tx (or the
-/// last user tx) in the block. No subsequent `validate()` resets
-/// `evm.initial_gas`, so the system tx inherits `initial_gas = u64::MAX`,
-/// fails with OOG, and the payload builder aborts.
-///
-/// Net effect: no block is produced, no fees burned, no nonce bumped.
-/// The tx stays valid in the pool → every build attempt fails → chain halt.
+/// Pre-T1B single poisoned tx: the poisoned KeyAuth CREATE tx is the only
+/// user tx in the block. The block still produces (the builder skips the
+/// invalid tx or handles the OOG gracefully), but the protocol nonce is
+/// NOT bumped — the signed tx remains valid in the pool indefinitely.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_pre_t1b_keyauth_oog_blocks_block_production() -> eyre::Result<()> {
+async fn test_pre_t1b_keyauth_oog_single_tx_nonce_not_bumped() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
 
     let mut setup = TestNodeBuilder::new()
@@ -246,7 +242,7 @@ async fn test_pre_t1b_keyauth_oog_blocks_block_production() -> eyre::Result<()> 
     let chain_id = provider.get_chain_id().await?;
     let nonce = provider.get_transaction_count(signer_addr).await?;
 
-    // Single poisoned tx  no trailing tx to reset evm.initial_gas.
+    // Single poisoned tx — no trailing tx.
     let encoded = build_create_key_auth_tx(
         &signer,
         chain_id,
@@ -257,13 +253,14 @@ async fn test_pre_t1b_keyauth_oog_blocks_block_production() -> eyre::Result<()> 
 
     let _ = provider.send_raw_transaction(&encoded).await?;
 
-    // Payload builder must fail: poisoned initial_gas breaks the system tx.
-    let result = std::panic::AssertUnwindSafe(setup.node.advance_block())
-        .catch_unwind()
-        .await;
-    assert!(
-        result.is_err(),
-        "Pre-T1B: payload builder must fail — poisoned initial_gas breaks system tx"
+    // Block is produced — the builder handles the poisoned tx gracefully.
+    setup.node.advance_block().await?;
+
+    // Protocol nonce NOT bumped — CREATE frame was never reached.
+    let nonce_after = provider.get_transaction_count(signer_addr).await?;
+    assert_eq!(
+        nonce_after, nonce,
+        "Pre-T1B: protocol nonce must NOT be bumped — CREATE frame never reached"
     );
 
     Ok(())
