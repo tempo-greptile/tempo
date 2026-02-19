@@ -1282,8 +1282,15 @@ where
                 init_gas.floor_gas = 0u64;
             }
 
-            // Validate gas limit is sufficient for initial gas (execution + state)
-            let total_intrinsic = init_gas.initial_total_gas + init_gas.initial_state_gas;
+            // Validate gas limit is sufficient for initial gas
+            // State gas is only included in the intrinsic check for T2+, since pre-T2
+            // transactions were never validated against state gas.
+            let total_intrinsic = init_gas.initial_total_gas
+                + if spec.is_t2() {
+                    init_gas.initial_state_gas
+                } else {
+                    0
+                };
             if gas_limit < total_intrinsic {
                 return Err(TempoInvalidTransaction::InsufficientGasForIntrinsicCost {
                     gas_limit,
@@ -1536,8 +1543,15 @@ where
         batch_gas.initial_total_gas += nonce_2d_gas;
     }
 
-    // Validate gas limit is sufficient for initial gas (execution + state)
-    let total_intrinsic = batch_gas.initial_total_gas + batch_gas.initial_state_gas;
+    // Validate gas limit is sufficient for initial gas
+    // State gas is only included in the intrinsic check for T2+, since pre-T2
+    // transactions were never validated against state gas.
+    let total_intrinsic = batch_gas.initial_total_gas
+        + if spec.is_t2() {
+            batch_gas.initial_state_gas
+        } else {
+            0
+        };
     if gas_limit < total_intrinsic {
         return Err(TempoInvalidTransaction::InsufficientGasForIntrinsicCost {
             gas_limit,
