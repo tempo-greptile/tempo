@@ -404,9 +404,13 @@ where
         // Calculate the intrinsic gas for the AA transaction
         let gas_params = tempo_gas_params(spec);
 
-        let mut init_and_floor_gas =
-            calculate_aa_batch_intrinsic_gas(&aa_env, &gas_params, Some(tx.access_list.iter()))
-                .map_err(|_| TempoPoolTransactionError::NonZeroValue)?;
+        let mut init_and_floor_gas = calculate_aa_batch_intrinsic_gas(
+            &aa_env,
+            &gas_params,
+            Some(tx.access_list.iter()),
+            spec,
+        )
+        .map_err(|_| TempoPoolTransactionError::NonZeroValue)?;
 
         // Add nonce gas based on hardfork
         // If tx nonce is 0, it's a new key (0 -> 1 transition), otherwise existing key

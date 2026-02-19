@@ -3379,33 +3379,33 @@ async fn test_aa_estimate_gas_matrix() -> eyre::Result<()> {
             },
             expected: ExpectedGasDiff::GreaterThan("p256"),
         },
-        // ~285,926: 3,000 keychain validation + ~30,000 KeyAuthorization (27,000 base +
-        // 3,000 ecrecover) + storage costs for key authorization precompile
+        // T1B+: keychain validation (3k) + sig_gas (3k ecrecover) + SLOAD (2.2k) +
+        // SSTORE (250k) = ~258.2k + warm access overhead ≈ 260k
         GasCase {
             name: "keychain_secp256k1",
             kind: GasCaseKind::Keychain {
                 key_type: None,
                 num_limits: 0,
             },
-            expected: ExpectedGasDiff::Range(285_000..=287_000),
+            expected: ExpectedGasDiff::Range(258_000..=263_000),
         },
-        // ~290,966: keychain_secp256k1 costs + 5,000 P256 signature verification
+        // keychain_secp256k1 costs + 5,000 P256 signature verification
         GasCase {
             name: "keychain_p256",
             kind: GasCaseKind::Keychain {
                 key_type: Some(SignatureType::P256),
                 num_limits: 0,
             },
-            expected: ExpectedGasDiff::Range(290_000..=292_000),
+            expected: ExpectedGasDiff::Range(263_000..=268_000),
         },
-        // ~282,903: ~30,000 KeyAuthorization (27,000 base + 3,000 ecrecover) + storage costs
+        // T1B+: sig_gas (3k) + SLOAD (2.2k) + SSTORE (250k) = ~255.2k + warm access overhead
         GasCase {
             name: "key_auth_secp256k1",
             kind: GasCaseKind::KeyAuth {
                 key_type: SignatureType::Secp256k1,
                 num_limits: 0,
             },
-            expected: ExpectedGasDiff::Range(282_000..=284_000),
+            expected: ExpectedGasDiff::Range(255_000..=260_000),
         },
         // Same range as secp256k1: the authorization signature is always secp256k1
         // from the root key; key_type only describes which key is being authorized.
@@ -3415,16 +3415,16 @@ async fn test_aa_estimate_gas_matrix() -> eyre::Result<()> {
                 key_type: SignatureType::P256,
                 num_limits: 0,
             },
-            expected: ExpectedGasDiff::Range(282_000..=284_000),
+            expected: ExpectedGasDiff::Range(255_000..=260_000),
         },
-        // ~349,426: key_auth_secp256k1 costs + 3 × 22,000 for spending limits
+        // T1B+: key_auth_secp256k1 costs + 3 × SSTORE (250k) for spending limits
         GasCase {
             name: "key_auth_secp256k1_3_limits",
             kind: GasCaseKind::KeyAuth {
                 key_type: SignatureType::Secp256k1,
                 num_limits: 3,
             },
-            expected: ExpectedGasDiff::Range(349_000..=351_000),
+            expected: ExpectedGasDiff::Range(1_010_000..=1_016_000),
         },
     ];
 
@@ -7777,6 +7777,126 @@ async fn run_fill_sign_send_test_p256(test_case: &FillTestCase) -> eyre::Result<
 }
 
 /// E2E matrix: fill -> sign -> send across nonce modes and key types.
+/// Regression test: CREATE + KeyAuthorization nonce bump (T1B fix).
+///
+/// **The bug (T1):** An AA CREATE transaction with a KeyAuthorization uses a
+/// gas-metered precompile call for `authorize_key`. The SSTORE costs can exceed
+/// the remaining gas, causing OutOfGas. The handler then short-circuits execution
+/// before `make_create_frame` bumps the protocol nonce. Since the nonce stays at 0,
+/// the signed transaction can be replayed indefinitely.
+///
+/// **The fix (T1B):** The precompile runs with unlimited gas, eliminating the OOG
+/// path. Gas is accounted for solely in intrinsic gas. The CREATE frame is always
+/// constructed, the nonce is always bumped, and replay is impossible.
+///
+/// This test verifies:
+/// 1. CREATE + KeyAuthorization tx succeeds and deploys a contract
+/// 2. The protocol nonce is bumped (nonce 0 → 1)
+/// 3. Replaying the same signed transaction is rejected (nonce too low)
+#[tokio::test]
+async fn test_t1b_create_nonce_bump_with_key_authorization() -> eyre::Result<()> {
+    reth_tracing::init_test_tracing();
+
+    let (mut setup, provider, root_signer, root_addr) = setup_test_with_funded_account().await?;
+
+    let chain_id = provider.get_chain_id().await?;
+    let nonce = provider.get_transaction_count(root_addr).await?;
+
+    println!("\n=== Testing CREATE + KeyAuthorization Nonce Bump (T1B regression) ===\n");
+    println!("Root address: {root_addr}");
+    println!("Initial nonce: {nonce}");
+
+    // Generate a P256 access key to authorize
+    let (_, access_pub_x, access_pub_y, access_key_addr) = generate_p256_access_key();
+    println!("Access key to authorize: {access_key_addr}");
+
+    // Create key authorization signed by root (secp256k1)
+    let mock_sig = create_mock_p256_sig(access_pub_x, access_pub_y);
+    let key_authorization = create_key_authorization(
+        &root_signer,
+        access_key_addr,
+        mock_sig,
+        chain_id,
+        None, // never expires
+        None, // no spending limits
+    )?;
+
+    // Compute expected contract address BEFORE sending
+    let expected_contract_address = root_addr.create(nonce);
+    println!("Expected contract address: {expected_contract_address}");
+
+    // Simple initcode: PUSH1 0x2a PUSH1 0x00 MSTORE PUSH1 0x20 PUSH1 0x00 RETURN
+    // Stores 42 at memory[0] and returns 32 bytes as runtime code
+    let init_code =
+        Bytes::from_static(&[0x60, 0x2a, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3]);
+
+    // Build AA tx: CREATE call + key_authorization
+    let mut tx = create_basic_aa_tx(
+        chain_id,
+        nonce,
+        vec![Call {
+            to: TxKind::Create,
+            value: U256::ZERO,
+            input: init_code,
+        }],
+        2_000_000,
+    );
+    tx.key_authorization = Some(key_authorization);
+
+    // Sign with root key (secp256k1)
+    let aa_signature = sign_aa_tx_secp256k1(&tx, &root_signer)?;
+    let envelope: TempoTxEnvelope = tx.into_signed(aa_signature).into();
+    let encoded = envelope.encoded_2718();
+
+    // Submit and mine
+    setup.node.rpc.inject_tx(encoded.clone().into()).await?;
+    let payload = setup.node.advance_block().await?;
+    println!(
+        "✓ CREATE + KeyAuth tx mined in block {}",
+        payload.block().inner.number
+    );
+
+    // 1. Verify nonce was bumped
+    let nonce_after = provider.get_transaction_count(root_addr).await?;
+    assert_eq!(
+        nonce_after,
+        nonce + 1,
+        "Protocol nonce must be bumped after CREATE tx with KeyAuthorization"
+    );
+    println!("✓ Nonce bumped: {nonce} → {nonce_after}");
+
+    // 2. Verify contract was deployed at the expected address
+    let deployed_code = provider.get_code_at(expected_contract_address).await?;
+    assert!(
+        !deployed_code.is_empty(),
+        "Contract should be deployed at the expected address"
+    );
+    let mut expected_code = [0u8; 32];
+    expected_code[31] = 0x2a;
+    assert_eq!(
+        deployed_code.as_ref(),
+        &expected_code,
+        "Deployed contract should have expected runtime code (0x2a)"
+    );
+    println!("✓ Contract deployed at {expected_contract_address}");
+
+    // 3. Verify receipt shows success
+    let tx_hash = keccak256(&encoded);
+    assert_receipt_status(&provider, tx_hash, true).await?;
+    println!("✓ Receipt status: success");
+
+    // 4. Verify replay is rejected — same signed tx should fail with nonce-too-low
+    let replay_result = setup.node.rpc.inject_tx(encoded.into()).await;
+    assert!(
+        replay_result.is_err(),
+        "Replay of the same CREATE+KeyAuth tx must be rejected (nonce already bumped)"
+    );
+    println!("✓ Replay rejected: {}", replay_result.unwrap_err());
+
+    println!("\n=== CREATE + KeyAuthorization Nonce Bump Test Passed ===");
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_e2e_fill_sign_send_matrix() -> eyre::Result<()> {
     reth_tracing::init_test_tracing();
