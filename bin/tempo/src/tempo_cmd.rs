@@ -351,6 +351,8 @@ mod tests {
             "50",
             "--max-concurrent-inbound",
             "10",
+            "--backfill-blocks",
+            "1000",
         ])
         .unwrap();
 

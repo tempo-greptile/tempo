@@ -64,6 +64,11 @@ pub(crate) struct P2pProxyArgs {
     /// Maximum number of concurrent incoming connection attempts.
     #[arg(long, default_value_t = 30)]
     max_concurrent_inbound: usize,
+
+    /// Number of recent blocks to backfill into the cache on startup.
+    /// Defaults to the full cache capacity (172,800 blocks ≈ 1 day at 500ms block time).
+    #[arg(long)]
+    backfill_blocks: Option<u64>,
 }
 
 impl P2pProxyArgs {
@@ -94,8 +99,9 @@ impl P2pProxyArgs {
 
         // Spawn the block fetcher service
         let rpc_url = self.rpc_url.clone();
+        let backfill_blocks = self.backfill_blocks.unwrap_or(CACHE_CAPACITY);
         tokio::spawn(async move {
-            if let Err(err) = run_fetcher_service(rpc_url, fetch_rx).await {
+            if let Err(err) = run_fetcher_service(rpc_url, fetch_rx, backfill_blocks).await {
                 error!(%err, "block fetcher service exited with error");
             }
         });
@@ -202,6 +208,7 @@ struct CachedBlock {
 async fn run_fetcher_service(
     rpc_url: String,
     mut fetch_rx: mpsc::Receiver<FetchRequest>,
+    backfill_blocks: u64,
 ) -> Result<()> {
     let provider = ProviderBuilder::new_with_network::<TempoNetwork>()
         .connect(&rpc_url)
@@ -215,7 +222,7 @@ async fn run_fetcher_service(
         .get_block_number()
         .await
         .context("failed to get latest block number")?;
-    let start = latest.saturating_sub(CACHE_CAPACITY.saturating_sub(1));
+    let start = latest.saturating_sub(backfill_blocks.saturating_sub(1));
     info!(latest, start, "backfilling block cache");
 
     for num in start..=latest {
