@@ -551,6 +551,8 @@ where
         result: <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
         evm.logs.clear();
+        // reset initial gas to 0 to avoid gas limit check errors
+        evm.initial_gas = 0;
         if !result.instruction_result().is_ok() {
             evm.logs = evm.journal_mut().take_logs();
         }
@@ -1313,6 +1315,9 @@ where
         evm: &mut Self::Evm,
         error: Self::Error,
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
+        // reset initial gas to 0 to avoid gas limit check errors
+        evm.initial_gas = 0;
+
         // For subblock transactions that failed `collectFeePreTx` call we catch error and treat such transactions as valid.
         if evm.ctx.tx.is_subblock_transaction()
             && let Some(
