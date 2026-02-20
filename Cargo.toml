@@ -130,7 +130,7 @@ reth-db = { git = "https://github.com/paradigmxyz/reth", branch = "tempo/v1.11.0
 reth-db-api = { git = "https://github.com/paradigmxyz/reth", branch = "tempo/v1.11.0" }
 reth-e2e-test-utils = { git = "https://github.com/paradigmxyz/reth", branch = "tempo/v1.11.0" }
 reth-engine-local = { git = "https://github.com/paradigmxyz/reth", branch = "tempo/v1.11.0" }
-reth-engine-tree = { git = "https://github.com/paradigmxyz/reth", branch = "tempo/v1.11.0" }
+reth-engine-tree = { git = "https://github.com/paradigmxyz/reth", branch = "yk/pending-updates-10" }
 reth-errors = { git = "https://github.com/paradigmxyz/reth", branch = "tempo/v1.11.0" }
 reth-eth-wire-types = { git = "https://github.com/paradigmxyz/reth", branch = "tempo/v1.11.0" }
 reth-ethereum = { git = "https://github.com/paradigmxyz/reth", branch = "tempo/v1.11.0" }
