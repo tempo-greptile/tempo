@@ -409,20 +409,6 @@ where
             let gas_spent = frame_result.gas().spent();
             let gas_refunded = frame_result.gas().refunded();
 
-            // DEBUG: Instrument per-call gas
-            if gas_limit == 80690 {
-                eprintln!(
-                    "[GAS-DEBUG] call succeeded: gas_spent={} gas_refunded={} gas_remaining={} gas_limit={} gas_reservoir={} gas_state_gas_spent={} remaining_gas_before={}",
-                    gas_spent,
-                    gas_refunded,
-                    frame_result.gas().remaining(),
-                    frame_result.gas().limit(),
-                    frame_result.gas().reservoir(),
-                    frame_result.gas().state_gas_spent(),
-                    remaining_gas
-                );
-            }
-
             accumulated_gas_refund = accumulated_gas_refund.saturating_add(gas_refunded);
             accumulated_state_gas_spent =
                 accumulated_state_gas_spent.saturating_add(frame_result.gas().state_gas_spent());
@@ -447,18 +433,6 @@ where
         corrected_gas.erase_cost(gas_limit - total_gas_spent);
         corrected_gas.set_refund(accumulated_gas_refund);
         corrected_gas.set_state_gas_spent(accumulated_state_gas_spent);
-
-        // DEBUG: Instrument final batch gas
-        if gas_limit == 80690 {
-            eprintln!(
-                "[GAS-DEBUG] batch done: total_gas_spent={} remaining_gas={} corrected_gas.spent={} corrected_gas.remaining={} init_total_gas={}",
-                total_gas_spent,
-                remaining_gas,
-                corrected_gas.spent(),
-                corrected_gas.remaining(),
-                init_and_floor_gas.initial_total_gas
-            );
-        }
 
         *result.gas_mut() = corrected_gas;
 
@@ -580,28 +554,6 @@ where
         result: <<Self::Evm as EvmTr>::Frame as FrameTr>::FrameResult,
         result_gas: ResultGas,
     ) -> Result<ExecutionResult<Self::HaltReason>, Self::Error> {
-        // DEBUG: Instrument gas for the specific transaction
-        if evm.ctx().tx().gas_limit() == 80690 {
-            eprintln!(
-                "[GAS-DEBUG] execution_result: result_gas.spent={} result_gas.used={} result_gas.floor_gas={} result_gas.final_refunded={} result_gas.intrinsic_gas={} result_gas.state_gas_spent={} result_gas.remaining={}",
-                result_gas.spent(),
-                result_gas.used(),
-                result_gas.floor_gas(),
-                result_gas.final_refunded(),
-                result_gas.intrinsic_gas(),
-                result_gas.state_gas_spent(),
-                result_gas.remaining()
-            );
-            eprintln!(
-                "[GAS-DEBUG] frame_result.gas: spent={} remaining={} refunded={} reservoir={} state_gas_spent={}",
-                result.gas().spent(),
-                result.gas().remaining(),
-                result.gas().refunded(),
-                result.gas().reservoir(),
-                result.gas().state_gas_spent()
-            );
-        }
-
         evm.logs.clear();
         if !result.instruction_result().is_ok() {
             evm.logs = evm.journal_mut().take_logs();
