@@ -142,67 +142,54 @@ impl FeedStateHandle {
     ) -> Result<(), IdentityProofError> {
         // Check if cache already covers this epoch
         let cached = self.identity_cache.read().clone();
-        if let Some(ref cache) = cached {
-            if start_epoch <= cache.from_epoch && start_epoch >= cache.to_epoch {
-                return Ok(());
-            }
+        if let Some(ref cache) = cached
+            && start_epoch <= cache.from_epoch
+            && start_epoch >= cache.to_epoch
+        {
+            return Ok(());
         }
 
         // Identity active at epoch N is set by the last block of epoch N-1
         // (epoch 0 uses its own last block - genesis identity)
         let epoch_outcome = get_outcome(marshal, epocher, start_epoch.saturating_sub(1)).await?;
-        let mut curr_pubkey = epoch_outcome.sharing().public().clone();
-        let epoch_identity = hex::encode(curr_pubkey.encode());
+        let epoch_pubkey = *epoch_outcome.sharing().public();
+        let epoch_identity = hex::encode(epoch_pubkey.encode());
 
         // Fast path: if the identity matches the cached one, no new transitions
         // occurred — just extend the cache's from_epoch forward.
-        if let Some(ref cache) = cached {
-            if start_epoch > cache.from_epoch && epoch_identity == cache.identity {
-                let mut updated = cache.clone();
-                updated.from_epoch = start_epoch;
-                *self.identity_cache.write() = Some(updated);
-                return Ok(());
-            }
+        if let Some(ref cache) = cached
+            && start_epoch > cache.from_epoch
+            && epoch_identity == cache.identity
+        {
+            let mut updated = cache.clone();
+            updated.from_epoch = start_epoch;
+
+            *self.identity_cache.write() = Some(updated);
+            return Ok(());
         }
 
         // Walk backwards to find all identity transitions
         let mut transitions = Vec::new();
+        let mut pubkey = epoch_pubkey;
         let mut search_epoch = start_epoch.saturating_sub(1);
-        let mut connected_to_cache = false;
-
         while search_epoch > 0 {
             // Absorb cached transitions and continue walking past cache.to_epoch.
-            if !connected_to_cache
-                && let Some(ref cache) = cached
+            if let Some(ref cache) = cached
                 && search_epoch <= cache.from_epoch
             {
                 transitions.extend(cache.transitions.iter().cloned());
                 search_epoch = cache.to_epoch;
-                connected_to_cache = true;
-                // Update curr_pubkey for continued walk. The outcome at
-                // cache.to_epoch - 1 determines the identity at cache.to_epoch.
-                if let Ok(o) = get_outcome(marshal, epocher, search_epoch.saturating_sub(1)).await {
-                    curr_pubkey = o.sharing().public().clone();
-                }
-                continue;
+                // We dont continue downwards past to_epoch since the walk only stops if
+                // DKG parsing fails (Err state) or data is unavailable (Pruned). Both which
+                // are not recoverable in the same runtime.
+                break;
             }
 
-            let prev_outcome = match get_outcome(marshal, epocher, search_epoch - 1).await {
-                Ok(o) => o,
-                Err(err) => {
-                    tracing::info!(
-                        ?err,
-                        epoch = search_epoch - 1,
-                        "stopping identity transition walk early (failed to parse outcome)"
-                    );
-                    break;
-                }
-            };
-
-            let prev_pubkey = prev_outcome.sharing().public().clone();
+            let prev_outcome = get_outcome(marshal, epocher, search_epoch - 1).await?;
+            let prev_pubkey = *prev_outcome.sharing().public();
 
             // If keys differ, there was a full DKG at search_epoch
-            if curr_pubkey != prev_pubkey {
+            if pubkey != prev_pubkey {
                 let proof_height = epocher
                     .last(Epoch::new(search_epoch))
                     .expect("fixed epocher is valid for all epochs");
@@ -228,7 +215,7 @@ impl FeedStateHandle {
                 transitions.push(IdentityTransition {
                     transition_epoch: search_epoch,
                     old_identity: hex::encode(prev_pubkey.encode()),
-                    new_identity: hex::encode(curr_pubkey.encode()),
+                    new_identity: hex::encode(pubkey.encode()),
                     proof: Some(TransitionProofData {
                         header: TempoHeaderResponse::from_consensus_header(
                             proof_block.clone_sealed_header(),
@@ -239,7 +226,7 @@ impl FeedStateHandle {
                 });
             }
 
-            curr_pubkey = prev_pubkey;
+            pubkey = prev_pubkey;
             search_epoch -= 1;
         }
 
@@ -248,6 +235,7 @@ impl FeedStateHandle {
             let has_genesis = transitions
                 .last()
                 .is_some_and(|t| t.transition_epoch == 0 && t.proof.is_none());
+
             if !has_genesis {
                 match get_outcome(marshal, epocher, 0).await {
                     Ok(genesis_outcome) => {
@@ -276,12 +264,12 @@ impl FeedStateHandle {
             IdentityTransitionCache {
                 from_epoch: start_epoch.max(c.from_epoch),
                 to_epoch: search_epoch.min(c.to_epoch),
+                transitions: Arc::new(transitions),
                 identity: if start_epoch >= c.from_epoch {
                     epoch_identity
                 } else {
                     c.identity.clone()
                 },
-                transitions: Arc::new(transitions),
             }
         } else {
             IdentityTransitionCache {

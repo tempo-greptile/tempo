@@ -185,8 +185,13 @@ fn get_identity_transition_proof_after_full_dkg() {
             .await
             .unwrap();
 
-        let outcome_before =
-            wait_for_outcome(&context, &validators, first_full_dkg_epoch - 1, epoch_length).await;
+        let outcome_before = wait_for_outcome(
+            &context,
+            &validators,
+            first_full_dkg_epoch - 1,
+            epoch_length,
+        )
+        .await;
         assert!(
             outcome_before.is_next_full_dkg,
             "Epoch {} outcome should have is_next_full_dkg=true",
@@ -210,8 +215,13 @@ fn get_identity_transition_proof_after_full_dkg() {
             .await
             .unwrap();
 
-        let outcome_before_second =
-            wait_for_outcome(&context, &validators, second_full_dkg_epoch - 1, epoch_length).await;
+        let outcome_before_second = wait_for_outcome(
+            &context,
+            &validators,
+            second_full_dkg_epoch - 1,
+            epoch_length,
+        )
+        .await;
         assert!(
             outcome_before_second.is_next_full_dkg,
             "Epoch {} outcome should have is_next_full_dkg=true",
