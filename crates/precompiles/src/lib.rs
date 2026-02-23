@@ -82,7 +82,7 @@ pub trait Precompile {
 /// Tempo-specific precompiles are also registered via [`extend_tempo_precompiles`].
 pub fn tempo_precompiles(cfg: &CfgEnv<TempoHardfork>) -> PrecompilesMap {
     let spec = if cfg.spec.is_t2() {
-        SpecId::OSAKA
+        cfg.spec.into()
     } else {
         SpecId::PRAGUE
     };
