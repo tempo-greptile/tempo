@@ -46,7 +46,9 @@ use alloy::{
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use revm::{
     context::CfgEnv,
+    handler::EthPrecompiles,
     precompile::{PrecompileError, PrecompileId, PrecompileOutput, PrecompileResult},
+    primitives::hardfork::SpecId,
 };
 
 pub use tempo_contracts::precompiles::{
@@ -78,8 +80,6 @@ pub trait Precompile {
 ///
 /// Pre-T2 hardforks use Prague precompiles, T2+ uses Osaka precompiles.
 pub fn tempo_precompiles(hardfork: TempoHardfork) -> PrecompilesMap {
-    use revm::{handler::EthPrecompiles, primitives::hardfork::SpecId};
-
     let spec = if hardfork.is_t2() {
         SpecId::OSAKA
     } else {
