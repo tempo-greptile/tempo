@@ -6,6 +6,10 @@ variable "VERGEN_GIT_SHA_SHORT" {
   default = ""
 }
 
+variable "RUST_PROFILE" {
+  default = "profiling"
+}
+
 group "default" {
   targets = ["tempo", "tempo-bench", "tempo-sidecar", "tempo-xtask"]
 }
@@ -18,7 +22,7 @@ target "chef" {
   context = "."
   platforms = ["linux/amd64", "linux/arm64"]
   args = {
-    RUST_PROFILE = "maxperf-symbols"
+    RUST_PROFILE = "${RUST_PROFILE}"
     RUST_FEATURES = "asm-keccak,jemalloc,otlp"
   }
 }
@@ -31,7 +35,7 @@ target "_common" {
   }
   args = {
     CHEF_IMAGE = "chef"
-    RUST_PROFILE = "maxperf-symbols"
+    RUST_PROFILE = "${RUST_PROFILE}"
     RUST_FEATURES = "asm-keccak,jemalloc,otlp"
     VERGEN_GIT_SHA = "${VERGEN_GIT_SHA}"
     VERGEN_GIT_SHA_SHORT = "${VERGEN_GIT_SHA_SHORT}"
