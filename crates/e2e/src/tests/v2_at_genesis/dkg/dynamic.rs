@@ -17,19 +17,19 @@ use crate::{
 };
 
 #[test_traced]
-fn validator_is_added_to_a_set_of_one() {
+fn validator_is_added_to_a_set_of_two() {
     AssertValidatorIsAdded {
-        how_many_initial: 1,
-        epoch_length: 10,
+        how_many_initial: 2,
+        epoch_length: 20,
     }
     .run();
 }
 
 #[test_traced]
-fn validator_is_added_to_a_set_of_three() {
+fn validator_is_added_to_a_set_of_four() {
     AssertValidatorIsAdded {
-        how_many_initial: 3,
-        epoch_length: 30,
+        how_many_initial: 4,
+        epoch_length: 40,
     }
     .run();
 }
@@ -58,6 +58,7 @@ struct AssertValidatorIsAdded {
 }
 
 impl AssertValidatorIsAdded {
+    #[track_caller]
     fn run(self) {
         let Self {
             how_many_initial,
@@ -192,6 +193,7 @@ struct AssertValidatorIsRemoved {
 }
 
 impl AssertValidatorIsRemoved {
+    #[track_caller]
     fn run(self) {
         let Self {
             how_many_initial,
