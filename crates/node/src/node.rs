@@ -87,8 +87,8 @@ impl NodeTypes for TempoNode {
 #[derive(Debug)]
 pub struct TempoAddOns<
     N: FullNodeComponents,
-    EthB: EthApiBuilder<N>,
-    PVB,
+    EthB: EthApiBuilder<N> = TempoEthApiBuilder,
+    PVB = TempoEngineValidatorBuilder,
     EB = BasicEngineApiBuilder<PVB>,
     EVB = BasicEngineValidatorBuilder<PVB>,
     RpcMiddleware = Identity,
@@ -210,7 +210,7 @@ where
         TempoConsensusBuilder,
     >;
 
-    type AddOns = TempoAddOns<NodeAdapter<N>, TempoEthApiBuilder, TempoEngineValidatorBuilder>;
+    type AddOns = TempoAddOns<NodeAdapter<N>>;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
         Self::components()
