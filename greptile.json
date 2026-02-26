@@ -1,0 +1,158 @@
+{
+  "customContext": {
+    "rules": [
+      {
+        "rule": "Any change to validation logic, gas costs, error handling, or state transitions must be gated behind a hardfork check. Ungated changes break block re-execution and consensus for historical blocks. This includes new authorization checks or gas metering added to existing code paths — they must only activate after the relevant hardfork so pre-hardfork blocks produce identical results.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "All arithmetic on token amounts, prices, fees, and balances must use checked operations (checked_add, checked_mul, checked_div, checked_sub). Never use +=, -=, *, / directly on u128 or U256 values. Unchecked overflow in financial code causes fund loss.",
+        "scope": ["crates/precompiles/**/*.rs", "crates/evm/**/*.rs"]
+      },
+      {
+        "rule": "Do not use saturating_add or saturating_sub in financial calculations. They silently clamp to min/max instead of returning an error, which hides overflow bugs.",
+        "scope": ["crates/precompiles/**/*.rs"]
+      },
+      {
+        "rule": "In financial calculations, round UP amounts the user pays (deposits, escrow, fees) and round DOWN amounts the user receives (withdrawals, refunds, payouts). Mismatched rounding between payment and receipt paths lets users extract value.",
+        "scope": ["crates/precompiles/**/*.rs", "crates/evm/**/*.rs"]
+      },
+      {
+        "rule": "Never use `let _ =` to discard a Result from a state-changing operation. Silently swallowing errors in precompile or consensus code leaves state inconsistent.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "Never use .expect() or .unwrap() in consensus, block building, or precompile code paths. Panics crash the node. Propagate errors with ? or handle them explicitly.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "Use the raw gas consumed metric (not the value after refunds) when calculating total gas costs. Confusing the two gas metrics produces incorrect fee charges.",
+        "scope": ["crates/evm/**/*.rs", "crates/revm/**/*.rs"]
+      },
+      {
+        "rule": "New transaction types (AA, sponsored) need their own gas cost calculations beyond standard Ethereum validation. Each non-secp256k1 signature scheme has different verification costs that must be accounted for in intrinsic gas.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "Any change to the number of storage reads (SLOADs) in a code path changes its gas cost and can break consensus. Short-circuit optimizations that skip SLOADs are consensus-breaking if not hardfork-gated.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "In authorization checks, verify the correct addresses are passed as sender and receiver parameters. Swapping from/to arguments or passing the same address for both silently bypasses blacklists and transfer restrictions.",
+        "scope": ["crates/precompiles/**/*.rs"]
+      },
+      {
+        "rule": "Blacklist and allowlist checks must cover ALL paths that move tokens: transfers, minting, reward claims, DEX order placement, and fee collection. A missing check on any single path is a bypass.",
+        "scope": ["crates/precompiles/**/*.rs"]
+      },
+      {
+        "rule": "Verify that receive-type roles cannot authorize send operations and send-type roles cannot authorize receive operations. Role confusion in authorization checks allows privilege escalation.",
+        "scope": ["crates/precompiles/**/*.rs"]
+      },
+      {
+        "rule": "Never zero a balance or mutate state before an external call that can fail. If the call fails, the state is already corrupted. Validate first, then mutate.",
+        "scope": ["crates/precompiles/**/*.rs"]
+      },
+      {
+        "rule": "Never commit storage changes in precompiles before verifying the operation succeeded and sufficient gas remains. Out-of-gas during precompile execution must not leave partial state changes.",
+        "scope": ["crates/precompiles/**/*.rs"]
+      },
+      {
+        "rule": "On blockchain reorgs, all caches and derived state (e.g., liquidity pools, pending state, price caches) must be invalidated and rebuilt from the canonical chain. Stale data from orphaned blocks causes incorrect behavior.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "When modifying storage mappings, ensure all key dimensions are preserved. Flattening a nested mapping (e.g., (validator, token, amount) to (validator, amount)) loses a dimension and causes cross-key mispayment.",
+        "scope": ["crates/precompiles/**/*.rs"]
+      },
+      {
+        "rule": "When a signing key is revoked, all pending transactions in the mempool signed with that key must be evicted. Stale transactions from revoked keys are a DoS vector.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "All signed messages and authorizations must include chain_id. Missing chain_id allows cross-chain replay attacks.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "When destructuring structs, verify that the `..` catch-all pattern does not silently discard important fields. Newly added fields are invisible if `..` is used. Audit all destructuring sites when adding fields to a struct.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "Transaction pool eviction must be by priority, not by address order. Address-ordered eviction allows targeted displacement attacks where an attacker evicts specific users' transactions.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "Transaction pool maintenance must handle reorg events, not just new block commits. Ignoring reorgs leaves invalidated transactions stuck in the pool.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "Precompiles must validate that the target account is initialized before performing operations. Calling functions on uninitialized precompile accounts causes silent failures.",
+        "scope": ["crates/precompiles/**/*.rs"]
+      },
+      {
+        "rule": "Precompiles must reject delegatecall. Only direct calls should be allowed. Missing delegatecall protection allows attackers to execute precompile logic in the context of another contract.",
+        "scope": ["crates/precompiles/**/*.rs"]
+      },
+      {
+        "rule": "Never use std::time::SystemTime in blockchain logic. Use the block timestamp from the execution context. System time is non-deterministic and breaks consensus.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "All ECDSA signature schemes must be normalized to canonical low-s form (reject s > n/2). Without normalization, both (r, s) and (r, n-s) are valid, enabling signature malleability and transaction hash collisions.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "Config values parsed from JSON or TOML must be assigned and used. Watch for variables prefixed with _ (e.g., _config) which suppress unused warnings — this means the parsed config is silently discarded.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "Cargo feature flags must be propagated through the full dependency chain. Adding a feature to a crate without enabling it in dependent crates causes silent compilation failures or missing functionality.",
+        "scope": ["**/Cargo.toml"]
+      },
+      {
+        "rule": "When a function signature changes (e.g., parameter types, macro to constructor, parameter rename), diff the old and new function bodies to confirm no validation calls were lost. Specifically check: are the same authorization/permission checks still called? Are the same events emitted with the same field values? Rust's type system will not catch semantic removals if the code still compiles.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "When multiplying two values and then dividing (a * b / c), verify that the intermediate product (a * b) fits in the type. For u128 values, the product can exceed u128::MAX even if the final result fits. Use U256 for the intermediate calculation. This applies to all price conversions and any mulDiv pattern.",
+        "scope": ["crates/precompiles/**/*.rs"]
+      },
+      {
+        "rule": "When adding a new field to block headers, transaction envelopes, or consensus messages, verify that the consensus validation code checks the field's value against the locally computed expected value. A field that is computed during block building but not validated during block verification allows arbitrary values to pass consensus.",
+        "scope": ["crates/consensus/**/*.rs", "crates/evm/src/block.rs"]
+      },
+      {
+        "rule": "Do not merge PRs that comment out validation logic, mark failing tests with #[ignore], or leave TODO comments in consensus-critical or financial code paths. Commented-out code in block validation, system transaction processing, or precompile execution is almost always a regression.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "Every in-memory collection that accumulates entries over time (transaction pools, caches, pending maps) must have an explicit size limit and eviction policy. Every variable-length field in transaction types (calls array, access_list, input data, authorization lists) must have maximum size limits enforced during validation.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "Never use `unsafe impl Send` or `unsafe impl Sync` to work around types that are not thread-safe (Rc, RefCell, Cell). Use proper concurrent primitives (Arc, AtomicBool, Mutex, RwLock). Verify that all async calls in the consensus-execution pipeline are properly awaited before proceeding to dependent operations.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "When changing a function's return type from T to Result<T>, audit ALL call sites to ensure they now use the ? operator or explicit error handling. Without ?, the Result is silently discarded or misinterpreted, bypassing the validation the Result was meant to enforce.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "In token accounting and fee calculations, explicitly choose ceiling or floor division — never rely on default integer truncation. Document the rounding direction at each division site. Undirected truncation accumulates errors that drain funds or create insolvency over many transactions.",
+        "scope": ["crates/precompiles/**/*.rs", "crates/evm/**/*.rs"]
+      },
+      {
+        "rule": "Mint events must use the zero address as the sender field, and burn events must use the zero address as the receiver field. Incorrect event fields break block explorers, indexers, and downstream integrations that rely on standard event semantics.",
+        "scope": ["crates/precompiles/**/*.rs"]
+      },
+      {
+        "rule": "Do not use HashMap or HashSet in consensus-critical code paths. Hash iteration order is non-deterministic across runs and platforms, which breaks consensus. Use BTreeMap, BTreeSet, or Vec with explicit sorting to ensure deterministic iteration order.",
+        "scope": ["crates/**/*.rs"]
+      },
+      {
+        "rule": "State-changing precompile calls must include reentrancy guards. Recursive calls through precompiles can exploit intermediate state before the outer call completes. Precompiles that modify balances, approvals, or storage are especially vulnerable.",
+        "scope": ["crates/precompiles/**/*.rs"]
+      }
+    ]
+  }
+}
