@@ -4,39 +4,9 @@
 //! Orders support price-time priority matching, partial fills, and flip orders that
 //! automatically place opposite-side orders when filled.
 
-use alloy::primitives::{Address, B256, U256};
+use alloy::primitives::{Address, B256};
 
 use super::error::OrderError;
-
-/// Order side: Bid (buy) or Ask (sell)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Side {
-    /// Bid order: buying base token with quote token
-    Bid,
-    /// Ask order: selling base token for quote token
-    Ask,
-}
-
-impl Side {
-    /// Returns the opposite side.
-    ///
-    /// Bid flips to Ask, Ask flips to Bid.
-    pub fn flip(self) -> Self {
-        match self {
-            Self::Bid => Self::Ask,
-            Self::Ask => Self::Bid,
-        }
-    }
-}
-
-impl From<Side> for U256 {
-    fn from(side: Side) -> Self {
-        match side {
-            Side::Bid => Self::ZERO,
-            Side::Ask => Self::from(1u8),
-        }
-    }
-}
 
 /// Represents an order in the stablecoin DEX orderbook.
 ///
@@ -70,8 +40,8 @@ pub struct Order {
     maker: Address,
     /// Orderbook key (identifies the trading pair)
     book_key: B256,
-    /// Order side: Bid (buy) or Ask (sell)
-    side: Side,
+    /// Whether this is a bid (true) or ask (false) order
+    is_bid: bool,
     /// Price tick
     tick: i16,
     /// Original order amount
@@ -106,7 +76,7 @@ impl Order {
             order_id,
             maker,
             book_key,
-            side: Side::Bid,
+            is_bid: true,
             tick,
             amount,
             remaining: amount,
@@ -132,7 +102,7 @@ impl Order {
             order_id,
             maker,
             book_key,
-            side: Side::Ask,
+            is_bid: false,
             tick,
             amount,
             remaining: amount,
@@ -157,29 +127,24 @@ impl Order {
         maker: Address,
         book_key: B256,
         amount: u128,
-        side: Side,
+        is_bid: bool,
         tick: i16,
         flip_tick: i16,
     ) -> Result<Self, OrderError> {
         // Validate flip tick constraint
-        match side {
-            Side::Bid => {
-                if flip_tick <= tick {
-                    return Err(OrderError::InvalidBidFlipTick { tick, flip_tick });
-                }
+        if is_bid {
+            if flip_tick <= tick {
+                return Err(OrderError::InvalidBidFlipTick { tick, flip_tick });
             }
-            Side::Ask => {
-                if flip_tick >= tick {
-                    return Err(OrderError::InvalidAskFlipTick { tick, flip_tick });
-                }
-            }
+        } else if flip_tick >= tick {
+            return Err(OrderError::InvalidAskFlipTick { tick, flip_tick });
         }
 
         Ok(Self {
             order_id,
             maker,
             book_key,
-            side,
+            is_bid,
             tick,
             amount,
             remaining: amount,
@@ -205,9 +170,9 @@ impl Order {
         self.book_key
     }
 
-    /// Returns the order side.
-    pub fn side(&self) -> Side {
-        self.side
+    /// Returns whether this is a bid order.
+    pub fn is_bid(&self) -> bool {
+        self.is_bid
     }
 
     /// Returns the original amount.
@@ -230,14 +195,9 @@ impl Order {
         self.tick
     }
 
-    /// Returns true if this is a bid order (buying base token).
-    pub fn is_bid(&self) -> bool {
-        matches!(self.side, Side::Bid)
-    }
-
     /// Returns true if this is an ask order (selling base token).
     pub fn is_ask(&self) -> bool {
-        matches!(self.side, Side::Ask)
+        !self.is_bid
     }
 
     /// Returns true if this is a flip order.
@@ -322,7 +282,7 @@ impl Order {
             order_id: new_order_id,
             maker: self.maker,
             book_key: self.book_key,
-            side: self.side.flip(), // Flip the side
+            is_bid: !self.is_bid,   // Flip the side
             tick: self.flip_tick,   // Old flip_tick becomes new tick
             amount: self.amount,    // Same as original
             remaining: self.amount, // Reset remaining to original amount
@@ -344,31 +304,13 @@ mod tests {
         b256!("0x0000000000000000000000000000000000000000000000000000000000000001");
 
     #[test]
-    fn test_side_flip() {
-        assert_eq!(Side::Bid.flip(), Side::Ask);
-        assert_eq!(Side::Ask.flip(), Side::Bid);
-
-        // Test double flip returns to original
-        assert_eq!(Side::Bid.flip().flip(), Side::Bid);
-        assert_eq!(Side::Ask.flip().flip(), Side::Ask);
-    }
-
-    #[test]
-    fn test_side_into_u256() {
-        let bid: U256 = Side::Bid.into();
-        let ask: U256 = Side::Ask.into();
-        assert_eq!(bid, U256::ZERO);
-        assert_eq!(ask, U256::from(1u8));
-    }
-
-    #[test]
     fn test_new_bid_order() {
         let order = Order::new_bid(1, TEST_MAKER, TEST_BOOK_KEY, 1000, 5);
 
         assert_eq!(order.order_id(), 1);
         assert_eq!(order.maker(), TEST_MAKER);
         assert_eq!(order.book_key(), TEST_BOOK_KEY);
-        assert_eq!(order.side(), Side::Bid);
+        assert!(order.is_bid());
         assert_eq!(order.amount(), 1000);
         assert_eq!(order.remaining(), 1000);
         assert!(order.is_bid());
@@ -383,7 +325,7 @@ mod tests {
         let order = Order::new_ask(1, TEST_MAKER, TEST_BOOK_KEY, 1000, 5);
 
         assert_eq!(order.order_id(), 1);
-        assert_eq!(order.side(), Side::Ask);
+        assert!(!order.is_bid());
         assert!(!order.is_bid());
         assert!(order.is_ask());
         assert!(!order.is_flip());
@@ -396,7 +338,7 @@ mod tests {
             TEST_MAKER,
             TEST_BOOK_KEY,
             1000,
-            Side::Bid,
+            true, // Bid
             5,
             10, // flip_tick > tick for bid
         )
@@ -415,7 +357,7 @@ mod tests {
             TEST_MAKER,
             TEST_BOOK_KEY,
             1000,
-            Side::Ask,
+            false, // Ask
             5,
             2, // flip_tick < tick for ask
         )
@@ -435,7 +377,7 @@ mod tests {
             TEST_MAKER,
             TEST_BOOK_KEY,
             1000,
-            Side::Bid,
+            true, // Bid
             5,
             3, // Invalid: flip_tick <= tick for bid
         );
@@ -450,7 +392,7 @@ mod tests {
             TEST_MAKER,
             TEST_BOOK_KEY,
             1000,
-            Side::Ask,
+            false, // Ask
             5,
             7, // Invalid: flip_tick >= tick for ask
         );
@@ -500,9 +442,9 @@ mod tests {
             TEST_MAKER,
             TEST_BOOK_KEY,
             1000,
-            Side::Bid,
-            5,  // tick
-            10, // flip_tick
+            true, // Bid
+            5,    // tick
+            10,   // flip_tick
         )
         .unwrap();
 
@@ -532,9 +474,9 @@ mod tests {
             TEST_MAKER,
             TEST_BOOK_KEY,
             1000,
-            Side::Ask,
-            10, // tick
-            5,  // flip_tick (< tick for ask)
+            false, // Ask
+            10,    // tick
+            5,     // flip_tick (< tick for ask)
         )
         .unwrap();
 
@@ -558,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_create_flipped_order_not_filled() {
-        let order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, Side::Bid, 5, 10).unwrap();
+        let order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, true, 5, 10).unwrap();
 
         let result = order.create_flipped_order(2);
         assert!(matches!(
@@ -586,8 +528,7 @@ mod tests {
     #[test]
     fn test_multiple_flips() {
         // Test that an order can flip multiple times
-        let mut order =
-            Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, Side::Bid, 5, 10).unwrap();
+        let mut order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, true, 5, 10).unwrap();
 
         // First flip: bid -> ask
         order.fill(1000).unwrap();
@@ -644,8 +585,7 @@ mod tests {
 
     #[test]
     fn test_flipped_order_resets_linked_list_pointers() {
-        let mut order =
-            Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, Side::Bid, 5, 10).unwrap();
+        let mut order = Order::new_flip(1, TEST_MAKER, TEST_BOOK_KEY, 1000, true, 5, 10).unwrap();
 
         // Set linked list pointers on original order
         order.set_prev(100);
